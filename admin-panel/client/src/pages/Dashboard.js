@@ -58,9 +58,7 @@ const Dashboard = () => {
 
   const fetchDashboardData = async () => {
     try {
-      console.log('Fetching dashboard data from: http://localhost:8080/api/admin/dashboard');
       const { data } = await supabase.from('admin_activity').select('*');
-      console.log('Dashboard data response:', data);
       setDashboardData(data);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -96,7 +94,7 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="dashboard-container" style={{ padding: '24px' }}>
+    <div className="dashboard-container">
       <Title level={2}>Dashboard</Title>
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={24} md={24} lg={24}>
