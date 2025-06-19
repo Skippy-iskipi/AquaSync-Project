@@ -187,31 +187,33 @@ const ArchivedFish = () => {
   ];
 
   return (
-    <div className="archived-fish">
-      <div className="header-container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3}>Archived Fish</Title>
-        <Space>
+    <div className="archived-fish w-full max-w-6xl mx-auto px-2 md:px-6 py-4">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4 gap-2">
+        <Title level={3} className="!mb-0 text-left md:text-left">Archived Fish</Title>
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto items-center">
           <Input
             placeholder="Search fish"
             prefix={<SearchOutlined />}
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
-            style={{ width: 200 }}
+            className="w-full sm:w-48"
           />
-        </Space>
+        </div>
       </div>
 
       <Spin spinning={loading}>
-        <Table 
-          dataSource={filteredFishList} 
-          columns={columns} 
+        <Table
+          dataSource={filteredFishList}
+          columns={columns}
           rowKey="id"
+          scroll={{ x: 'max-content' }}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
             pageSizeOptions: ['10', '20', '50'],
           }}
           locale={{ emptyText: 'No archived fish found' }}
+          className="w-full"
         />
       </Spin>
     </div>

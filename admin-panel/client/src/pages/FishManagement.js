@@ -17,7 +17,6 @@ import {
   Tooltip
 } from 'antd';
 import { 
-  PlusOutlined, 
   EditOutlined, 
   InboxOutlined, 
   SearchOutlined,
@@ -293,24 +292,25 @@ const FishManagement = () => {
 
   return (
     <div className="fish-management">
-      <div className="header-container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={3}>Fish Management</Title>
-        <Space>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4 gap-2">
+        <Title level={3} className="!mb-0 text-left md:text-left">Fish Management</Title>
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto items-center">
           <Input
             placeholder="Search fish"
             prefix={<SearchOutlined />}
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
-            style={{ width: 200 }}
+            className="w-full sm:w-48"
           />
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />} 
+          <Button
+            type="primary"
             onClick={showAddModal}
+            className="w-full sm:w-auto flex items-center justify-center"
           >
             Add Fish
           </Button>
-        </Space>
+
+        </div>
       </div>
 
       <Spin spinning={loading}>
@@ -318,11 +318,13 @@ const FishManagement = () => {
           dataSource={filteredFishList} 
           columns={columns} 
           rowKey="id"
+          scroll={{ x: 'max-content' }}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
             pageSizeOptions: ['10', '20', '50'],
           }}
+          className="w-full"
         />
       </Spin>
 
@@ -335,14 +337,15 @@ const FishManagement = () => {
         }}
         footer={null}
         width={800}
+        className="!p-2"
       >
         <Form
           form={form}
           layout="vertical"
           onFinish={handleFormSubmit}
         >
-          <div style={{ display: 'flex', gap: '16px' }}>
-            <div style={{ flex: 1 }}>
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="flex-1">
               <Form.Item
                 name="common_name"
                 label="Common Name"
@@ -413,7 +416,7 @@ const FishManagement = () => {
               </Form.Item>
             </div>
 
-            <div style={{ flex: 1 }}>
+            <div className="flex-1">
               <Form.Item
                 name="habitat_type"
                 label="Habitat Type"
