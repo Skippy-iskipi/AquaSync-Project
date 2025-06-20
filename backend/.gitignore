@@ -1,0 +1,45 @@
+# Python virtual environment
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Model files
+*.pt
+*.pth
+*.h5
+*.pkl
+
+# Training data and temporary files
+training_progress/
+stop_training_signal.txt
+training_plots.png
+
+# IDE specific files
+.vscode/
+.idea/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+
+# Local development settings
+instance/
+.webassets-cache
+
+# Database
+*.db
+*.sqlite3
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/ 
+
+venv/
+
+lib/.env
+
+.env
