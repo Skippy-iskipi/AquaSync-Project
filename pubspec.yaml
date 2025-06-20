@@ -91,9 +91,9 @@ flutter:
     - lib/icons/approve.png
     - lib/icons/tooclose.png
     - lib/icons/toofardark.png
+    - .env
     - lib/icons/multi.png
     - assets/models/
-    - .env
     - lib/icons/discoverfish.jpeg
     - lib/icons/picturefish.jpeg
     - lib/icons/aquarium-pic.jpg
