@@ -15,7 +15,6 @@ import '../widgets/snap_tips_dialog.dart';
 import '../services/openai_service.dart';
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/compatibility_result.dart';
 
 
@@ -46,12 +45,10 @@ class _SyncScreenState extends State<SyncScreen> {
   Future<void>? _initializeControllerFuture;
   bool _isCameraInitialized = false;
   bool _isCompatible = false;
-  bool _hasChecked = false;
   String _fish1Name = '';
   String _fish2Name = '';
   String _fish1ImagePath = '';
   String _fish2ImagePath = '';
-  List<String> _compatibilityReasons = [];
   File? _capturedImage1;
   File? _capturedImage2;
   String? _fish1Base64Image;
@@ -933,7 +930,6 @@ class _SyncScreenState extends State<SyncScreen> {
           // Store initial state values
           setState(() {
             _isCompatible = isCompatible;
-            _hasChecked = true;
             _fish1Name = _selectedFish1!;
             _fish2Name = _selectedFish2!;
             _fish1Base64Image = fish1Base64;
@@ -949,7 +945,6 @@ class _SyncScreenState extends State<SyncScreen> {
               _fish2ImagePath = ApiConfig.getFishImageUrl(_selectedFish2!);
             }
             // Set initial base reasons
-            _compatibilityReasons = baseReasons;
           });
           
           // Show compatibility result dialog that updates when reasons are fetched
@@ -999,10 +994,6 @@ class _SyncScreenState extends State<SyncScreen> {
                   setDialogState(() {
                     currentReasons = detailedReasons;
                     isLoadingDetails = false;
-                  });
-                  // Also update the main screen's state for saving.
-                  setState(() {
-                    _compatibilityReasons = detailedReasons;
                   });
                 }
               }).catchError((e) {
@@ -1298,12 +1289,10 @@ class _SyncScreenState extends State<SyncScreen> {
       _controller2.clear();
       _suggestions1 = [];
       _suggestions2 = [];
-      _hasChecked = false;
       _fish1Name = '';
       _fish2Name = '';
       _fish1ImagePath = '';
       _fish2ImagePath = '';
-      _compatibilityReasons = [];
       _capturedImage1 = null;
       _capturedImage2 = null;
     });
