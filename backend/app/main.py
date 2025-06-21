@@ -168,6 +168,38 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
 
     return not reasons, reasons
 
+@app.on_event("startup")
+async def delayed_model_loading():
+    import logging
+    logging.info("🔥 Delaying model loading until after server binds port")
+    # Example: Download and load models here
+    from pathlib import Path
+    import requests
+
+    # Download EfficientNet model if not present
+    efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
+    efficientnet_path = "app/models/trained_models/efficientnet_b3_fish_classifier.pth"
+    if not Path(efficientnet_path).exists():
+        r = requests.get(efficientnet_url, stream=True)
+        with open(efficientnet_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+    # Download YOLO model if not present
+    yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
+    yolo_path = "app/models/trained_models/yolov8n.pt"
+    if not Path(yolo_path).exists():
+        r = requests.get(yolo_url, stream=True)
+        with open(yolo_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+    # Optionally, load models into memory here (not recommended if memory is tight)
+    # from ultralytics import YOLO
+    # yolo_model = YOLO(yolo_path)
+    # import torch
+    # classifier_model = torch.load(efficientnet_path)
+
 # Create directory for training charts if it doesn't exist
 charts_dir = "app/models/trained_models/training_charts"
 os.makedirs(charts_dir, exist_ok=True)
