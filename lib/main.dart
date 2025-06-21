@@ -88,11 +88,15 @@ class _AuthWrapperState extends State<AuthWrapper> {
         if (session != null) {
           final latestUserResponse = await Supabase.instance.client.auth.getUser();
           if (mounted) {
-            _currentUser = latestUserResponse.user;
-            _isLoadingUser = false;
+            setState(() {
+              _currentUser = latestUserResponse.user;
+              _isLoadingUser = false;
+            });
 
-            final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
-            await logBookProvider.init();
+            // The LogBookProvider now initializes itself automatically.
+            // This call is redundant and has been removed.
+            // final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+            // await logBookProvider.init();
           }
         }
         else { // User has signed out

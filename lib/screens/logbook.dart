@@ -1181,26 +1181,24 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
       itemBuilder: (context, index) {
         final result = compatibilityResults[index];
         return Dismissible(
-          key: Key(result.dateChecked.toString()),
+          key: Key(result.id.toString()),
           background: Container(
-            color: const Color.fromARGB(255, 255, 17, 0),
-            alignment: Alignment.center,
-            child: const Text(
-              'Delete',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-            ),
+            color: Colors.red,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            child: const Icon(Icons.delete, color: Colors.white),
           ),
           direction: DismissDirection.endToStart,
           onDismissed: (direction) {
-            logBookProvider.removeCompatibilityResult(result);
-            showCustomNotification(context, 'Compatibility result removed');
+            // This is handled by the confirmation dialog.
+          },
+          confirmDismiss: (direction) async {
+            _showDeleteConfirmationDialog(logBookProvider.savedCompatibilityResults[index]);
+            return false; // Prevents immediate dismissal
           },
           child: Card(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            elevation: 2,
+            margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
             child: InkWell(
               onTap: () {
                 _showCompatibilityDetails(context, result);
@@ -1574,6 +1572,32 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
           ],
         ],
       ),
+    );
+  }
+
+  void _showDeleteConfirmationDialog(CompatibilityResult result) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Confirm Deletion'),
+          content: const Text('Are you sure you want to remove this compatibility result?'),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            TextButton(
+              child: const Text('Confirm'),
+              onPressed: () {
+                Provider.of<LogBookProvider>(context, listen: false).removeCompatibilityResult(result);
+                Navigator.of(context).pop();
+                showCustomNotification(context, 'Compatibility result removed');
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 }
