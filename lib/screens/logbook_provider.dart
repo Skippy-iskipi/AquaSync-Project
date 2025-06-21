@@ -7,6 +7,7 @@ import '../models/fish_calculation.dart';
 
 class LogBookProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
+  bool _isInitialized = false;
 
   List<WaterCalculation> _savedCalculations = [];
   List<FishCalculation> _savedFishCalculations = [];
@@ -18,30 +19,31 @@ class LogBookProvider with ChangeNotifier {
   List<CompatibilityResult> get savedCompatibilityResults => _savedCompatibilityResults;
   List<FishPrediction> get savedPredictions => _savedPredictions;
 
-  LogBookProvider();
+  LogBookProvider() {
+    init();
+  }
 
-Future<void> init() async {
-  await _loadData();
+  Future<void> init() async {
+    if (_isInitialized) return;
+    _isInitialized = true;
 
-  // Set up listener *after* Supabase is initialized
-  _supabase.auth.onAuthStateChange.listen((data) async {
-    if (data.event == AuthChangeEvent.signedIn || data.event == AuthChangeEvent.initialSession) {
-      final response = await _supabase.auth.getUser();
-      final user = response.user;
-
-      if (user != null) {
-        await _loadData();
-      } else {
-        print('User is null during $data.event');
+    _supabase.auth.onAuthStateChange.listen((data) {
+      final event = data.event;
+      if (event == AuthChangeEvent.signedIn || event == AuthChangeEvent.initialSession) {
+        _loadData();
+      } else if (event == AuthChangeEvent.signedOut) {
         _clearData();
       }
-    } else if (data.event == AuthChangeEvent.signedOut) {
-      _clearData();
+    });
+
+    // The listener above will handle the initial session, so this direct call is redundant
+    // and can cause race conditions. Removing it makes the logic cleaner.
+    /*
+    if (_supabase.auth.currentUser != null) {
+      _loadData();
     }
-  });
-}
-
-
+    */
+  }
 
   // Clear local data when user signs out
   void _clearData() {
@@ -81,17 +83,25 @@ Future<void> init() async {
           .eq('user_id', user.id);
       _savedFishCalculations = fishCalculationsData.map((json) => FishCalculation.fromJson(json)).toList();
 
-      // Load compatibility results
-      final List<dynamic> compatibilityResultsData = await _supabase
-          .from('compatibility_results')
-          .select('*')
-          .eq('user_id', user.id);
-      _savedCompatibilityResults = compatibilityResultsData.map((json) => CompatibilityResult.fromJson(json)).toList();
+      // Load compatibility results by calling the database function
+      final List<dynamic> compatibilityResultsData = await _supabase.rpc('get_compatibility_results');
 
-      print('Loaded compatibility results: $compatibilityResultsData');
+      print('Loaded raw compatibility results data via RPC: $compatibilityResultsData');
+
+      final List<CompatibilityResult> parsedResults = [];
+      for (final json in compatibilityResultsData) {
+        try {
+          parsedResults.add(CompatibilityResult.fromJson(json as Map<String, dynamic>));
+        } catch (e) {
+          print('Error parsing compatibility result item: $json. Error: $e');
+        }
+      }
+      _savedCompatibilityResults = parsedResults;
+      
+      print('Parsed ${_savedCompatibilityResults.length} compatibility results.');
 
     } catch (e) {
-      print('Error loading data from Supabase: \$e');
+      print('Error loading data from Supabase: $e');
       _clearData(); // Clear local data on error
     } finally {
       notifyListeners();
@@ -170,7 +180,7 @@ Future<void> init() async {
       _savedPredictions.removeWhere((p) => p.id == prediction.id);
       notifyListeners();
     } catch (e) {
-      print('Error removing prediction from Supabase: \$e');
+      print('Error removing prediction from Supabase: $e');
     }
   }
 
@@ -194,7 +204,7 @@ Future<void> init() async {
         notifyListeners();
       }
     } catch (e) {
-      print('Error adding water calculation to Supabase: \$e');
+      print('Error adding water calculation to Supabase: $e');
     }
   }
 
@@ -207,7 +217,7 @@ Future<void> init() async {
       _savedCalculations.removeWhere((c) => c.id == calculation.id);
       notifyListeners();
     } catch (e) {
-      print('Error removing water calculation from Supabase: \$e');
+      print('Error removing water calculation from Supabase: $e');
     }
   }
 
@@ -232,7 +242,7 @@ Future<void> init() async {
         notifyListeners();
       }
     } catch (e) {
-      print('Error adding fish calculation to Supabase: \$e');
+      print('Error adding fish calculation to Supabase: $e');
     }
   }
 
@@ -245,7 +255,7 @@ Future<void> init() async {
       _savedFishCalculations.removeWhere((c) => c.id == calculation.id);
       notifyListeners();
     } catch (e) {
-      print('Error removing fish calculation from Supabase: \$e');
+      print('Error removing fish calculation from Supabase: $e');
     }
   }
 
@@ -267,11 +277,13 @@ Future<void> init() async {
       }).select();
 
       if (response.isNotEmpty) {
-        _savedCompatibilityResults.add(CompatibilityResult.fromJson(response.first));
+        // Create a new result from the database response and add it to the local list
+        final newResult = CompatibilityResult.fromJson(response.first);
+        _savedCompatibilityResults.add(newResult);
         notifyListeners();
       }
     } catch (e) {
-      print('Error adding compatibility result to Supabase: \$e');
+      print('Error adding compatibility result to Supabase: $e');
     }
   }
 
@@ -284,7 +296,7 @@ Future<void> init() async {
       _savedCompatibilityResults.removeWhere((r) => r.id == result.id);
       notifyListeners();
     } catch (e) {
-      print('Error removing compatibility result from Supabase: \$e');
+      print('Error removing compatibility result from Supabase: $e');
     }
   }
 
@@ -292,20 +304,55 @@ Future<void> init() async {
     // Return the most recent 5 results, sorted by created_at from Supabase
     final sortedResults = List<CompatibilityResult>.from(_savedCompatibilityResults)
       ..sort((a, b) => (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)));
-    return sortedResults.take(5).toList();
+    return sortedResults;
   }
 
   List<FishCalculation> getRecentFishCalculations() {
     // Return the most recent 5 fish calculations, sorted by created_at from Supabase
     final sortedCalculations = List<FishCalculation>.from(_savedFishCalculations)
       ..sort((a, b) => (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)));
-    return sortedCalculations.take(5).toList();
+    return sortedCalculations;
   }
 
   List<WaterCalculation> getRecentWaterCalculations() {
     // Return the most recent 5 water calculations, sorted by created_at from Supabase
     final sortedCalculations = List<WaterCalculation>.from(_savedCalculations)
       ..sort((a, b) => (b.createdAt ?? DateTime(0)).compareTo(a.createdAt ?? DateTime(0)));
-    return sortedCalculations.take(5).toList();
+    return sortedCalculations;
+  }
+
+  List<dynamic> get allItems {
+    final allItems = [
+      ..._savedPredictions,
+      ..._savedCalculations,
+      ..._savedFishCalculations,
+      ..._savedCompatibilityResults,
+    ]..sort((a, b) {
+        DateTime dateA;
+        DateTime dateB;
+
+        if (a is FishPrediction) {
+          dateA = a.createdAt ?? DateTime(0);
+        } else if (a is WaterCalculation) {
+          dateA = a.dateCalculated;
+        } else if (a is FishCalculation) {
+          dateA = a.dateCalculated;
+        } else {
+          dateA = (a as CompatibilityResult).createdAt ?? DateTime(0);
+        }
+
+        if (b is FishPrediction) {
+          dateB = b.createdAt ?? DateTime(0);
+        } else if (b is WaterCalculation) {
+          dateB = b.dateCalculated;
+        } else if (b is FishCalculation) {
+          dateB = b.dateCalculated;
+        } else {
+          dateB = (b as CompatibilityResult).createdAt ?? DateTime(0);
+        }
+
+        return dateB.compareTo(dateA);
+      });
+    return allItems;
   }
 }

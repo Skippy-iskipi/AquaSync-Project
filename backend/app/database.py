@@ -3,6 +3,9 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 import logging
 import pandas as pd
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -11,6 +14,16 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+# --- SQLAlchemy Setup ---
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+if not SQLALCHEMY_DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable not set. Please add it to your .env file.")
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+# -------------------------
+
 # Initialize Supabase client
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
@@ -18,12 +31,12 @@ supabase: Client = create_client(
 )
 
 def get_db():
-    """Get database client"""
+    """FastAPI dependency to get a database session."""
+    db = SessionLocal()
     try:
-        return supabase
-    except Exception as e:
-        logger.error(f"Error connecting to database: {e}")
-        raise
+        yield db
+    finally:
+        db.close()
 
 def verify_db_schema():
     """Verify that the database schema is correct"""
