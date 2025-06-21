@@ -36,13 +36,20 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late int _selectedIndex;
+  int _selectedIndex = 0;
   int _logBookTabIndex = 0;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialTabIndex;
+    // The LogBookProvider is now self-initializing.
+    // This call is redundant and has been removed to prevent race conditions.
+    /*
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<LogBookProvider>(context, listen: false).init();
+    });
+    */
   }
 
   void _onItemTapped(int index) {
@@ -258,48 +265,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildHomeContent() {
-    final logBookProvider = Provider.of<LogBookProvider>(context);
-    
-    // Get recent items from each type
-    final recentPredictions = logBookProvider.savedPredictions.take(5).toList();
-    final recentWaterCalculations = logBookProvider.getRecentWaterCalculations();
-    final recentFishCalculations = logBookProvider.getRecentFishCalculations();
-    final recentCompatibilityResults = List<CompatibilityResult>.from(logBookProvider.savedCompatibilityResults)
-      ..sort((a, b) => b.dateChecked.compareTo(a.dateChecked));
-    
-    // Combine all recent items
-    final allItems = [
-      ...recentPredictions,
-      ...recentWaterCalculations,
-      ...recentFishCalculations,
-      ...recentCompatibilityResults,
-    ]..sort((a, b) {
-        DateTime dateA;
-        DateTime dateB;
-        
-        if (a is FishPrediction) {
-          dateA = DateTime.now(); // Use current time for FishPrediction
-        } else if (a is WaterCalculation) {
-          dateA = a.dateCalculated;
-        } else if (a is FishCalculation) {
-          dateA = a.dateCalculated;
-        } else {
-          dateA = (a as CompatibilityResult).dateChecked;
-        }
-        
-        if (b is FishPrediction) {
-          dateB = DateTime.now(); // Use current time for FishPrediction
-        } else if (b is WaterCalculation) {
-          dateB = b.dateCalculated;
-        } else if (b is FishCalculation) {
-          dateB = b.dateCalculated;
-        } else {
-          dateB = (b as CompatibilityResult).dateChecked;
-        }
-        
-        return dateB.compareTo(dateA);
-      });
-
     return Container(
       color: Colors.white,
       child: SingleChildScrollView(
@@ -319,21 +284,30 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ),
-            if (allItems.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-                child: Center(
-                  child: Text(
-                    'No recent activities yet',
-                    style: TextStyle(
-                      color: Colors.grey,
-                      fontSize: 16,
+            Consumer<LogBookProvider>(
+              builder: (context, logBookProvider, child) {
+                final allItems = logBookProvider.allItems;
+
+                if (allItems.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                    child: Center(
+                      child: Text(
+                        'No recent activities yet',
+                        style: TextStyle(
+                          color: Colors.grey,
+                          fontSize: 16,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              )
-            else
-              ...allItems.take(5).map((item) => _buildRecentActivityCard(item)).toList(),
+                  );
+                }
+                
+                return Column(
+                  children: allItems.take(5).map((item) => _buildRecentActivityCard(item)).toList(),
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -744,8 +718,6 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
-    
-    print('Current user id: ${Supabase.instance.client.auth.currentUser?.id}');
     
     return Scaffold(
       backgroundColor: Colors.white,

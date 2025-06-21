@@ -43,10 +43,11 @@ class OpenAIService {
     }
 
     final prompt =
-        "Explain in detail why the following fish are incompatible in an aquarium:\n"
-        "Fish 1: $fish1\nFish 2: $fish2\n"
-        "Reasons: ${reasons.join('; ')}\n"
-        "Provide a clear, user-friendly explanation for each reason.";
+        "For each of the following reasons, provide a detailed, user-friendly explanation for why it makes these two fish incompatible for an aquarium. Keep each explanation concise, between 2 to 3 sentences long.\n"
+        "Fish 1: $fish1\n"
+        "Fish 2: $fish2\n"
+        "Reasons to explain:\n- ${reasons.join('\n- ')}\n\n"
+        "Respond ONLY with a JSON object with a single key 'explanations' which holds an array of strings. Each string in the array must be the detailed explanation for the corresponding reason in the order provided.";
 
     final response = await http.post(
       Uri.parse('https://api.openai.com/v1/chat/completions'),
@@ -55,18 +56,25 @@ class OpenAIService {
         'Content-Type': 'application/json',
       },
       body: jsonEncode({
-        'model': 'gpt-3.5-turbo',
+        'model': 'gpt-3.5-turbo-1106',
+        'response_format': { 'type': 'json_object' },
         'messages': [
+          {'role': 'system', 'content': 'You are a helpful assistant designed to output a JSON array of explanations.'},
           {'role': 'user', 'content': prompt}
         ]
       }),
     );
 
     if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final content = data['choices'][0]['message']['content'];
-      // Split explanations by newlines or semicolons for a list
-      return content.split(RegExp(r'[\n;]+')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+      try {
+        final data = jsonDecode(response.body);
+        final content = jsonDecode(data['choices'][0]['message']['content']);
+        final explanations = List<String>.from(content['explanations']);
+        return explanations.where((e) => e.isNotEmpty).toList();
+      } catch (e) {
+        print('Error parsing OpenAI JSON response: $e');
+        return ['Failed to parse detailed explanation from AI.'];
+      }
     } else {
       return ['Error: ${response.statusCode}\n${response.body}'];
     }
