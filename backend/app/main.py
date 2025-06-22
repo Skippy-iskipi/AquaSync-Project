@@ -1,11 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, Tuple
-import pandas as pd
-import joblib
 import torch
 import torch.nn as nn
 from torchvision import transforms
@@ -22,14 +20,11 @@ import logging
 import torchvision.transforms.functional as TF
 import traceback
 import base64
-from sqlalchemy.orm import Session
-from app.database import get_db, SessionLocal, engine
 
 from .supabase_config import get_supabase_client
 from .models import FishSpecies
 from .routes.fish_images import router as fish_images_router
 from .routes.model_management import router as model_management_router
-from .models.trained_model import TrainedModel
 from supabase import Client
 
 # Set up logging
@@ -90,7 +85,17 @@ def parse_range(range_str: Optional[str]) -> Tuple[Optional[float], Optional[flo
     if not range_str:
         return None, None
     try:
-        parts = str(range_str).split('-')
+        # Remove any non-numeric characters except dash and dot
+        range_str = (
+            str(range_str)
+            .replace('°C', '')
+            .replace('C', '')
+            .replace('c', '')
+            .replace('pH', '')
+            .replace('PH', '')
+            .strip()
+        )
+        parts = range_str.split('-')
         if len(parts) == 2:
             return float(parts[0].strip()), float(parts[1].strip())
         return None, None
@@ -309,22 +314,19 @@ def load_classifier_model():
     # Get the active CNN model from database if available, otherwise use default
     model_path = "app/models/trained_models/efficientnet_b3_fish_classifier.pth"
     
-    db: Session = SessionLocal()
     try:
-        active_model = db.query(TrainedModel).filter(
-            TrainedModel.model_type == "cnn",
-            TrainedModel.is_active == True
-        ).first()
+        supabase = get_supabase_client()
+        response = supabase.table('trained_models').select('file_path, version').eq('model_type', 'cnn').eq('is_active', True).limit(1).execute()
         
-        if active_model:
-            model_path = active_model.file_path
-            logger.info(f"Loading active CNN model: {model_path} (version: {active_model.version})")
+        active_model_data = response.data[0] if response.data else None
+        
+        if active_model_data:
+            model_path = active_model_data['file_path']
+            logger.info(f"Loading active CNN model: {model_path} (version: {active_model_data['version']})")
         else:
             logger.info(f"No active model found in database. Using default model: {model_path}")
     except Exception as e:
         logger.error(f"Database error when loading model: {str(e)}")
-    finally:
-        db.close()
     
     # Try multiple approaches to load the model
     try:
@@ -760,7 +762,7 @@ class WaterRequirementsRequest(BaseModel):
     fish_selections: dict[str, int]  # fish name -> quantity
 
 @app.post("/calculate-water-requirements/")
-def calculate_water_requirements(request: WaterRequirementsRequest, db: Session = Depends(get_db)):
+def calculate_water_requirements(request: WaterRequirementsRequest, db: Client = Depends(get_supabase_client)):
     try:
         fish_selections = request.fish_selections
         
@@ -783,7 +785,8 @@ def calculate_water_requirements(request: WaterRequirementsRequest, db: Session 
             if quantity <= 0:
                 continue
 
-            fish_info = db.query(FishSpecies).filter(FishSpecies.common_name == fish_name).first()
+            response = db.table('fish_species').select('*').eq('common_name', fish_name).execute()
+            fish_info = response.data[0] if response.data else None
             
             if not fish_info:
                 return JSONResponse(
@@ -791,22 +794,44 @@ def calculate_water_requirements(request: WaterRequirementsRequest, db: Session 
                     content={"error": f"Fish not found: {fish_name}"}
                 )
             
-            # Parse temperature range
-            temp_min, temp_max = parse_range(fish_info.temperature_range_c)
+            # Parse temperature range (try all possible fields)
+            temp_min, temp_max = parse_range(
+                fish_info.get('temperature_range_c') or
+                fish_info.get('temperature_range_(°c)') or
+                fish_info.get('temperature_range') or
+                None
+            )
             if temp_min is not None:
                 min_temp = max(min_temp, temp_min)
             if temp_max is not None:
                 max_temp = min(max_temp, temp_max)
 
-            # Parse pH range
-            ph_min, ph_max = parse_range(fish_info.ph_range)
+            # Parse pH range (try all possible fields)
+            ph_min, ph_max = parse_range(
+                fish_info.get('ph_range') or
+                fish_info.get('pH_range') or
+                None
+            )
             if ph_min is not None:
                 min_ph = max(min_ph, ph_min)
             if ph_max is not None:
                 max_ph = min(max_ph, ph_max)
 
             # Calculate tank volume
-            min_tank_size = float(fish_info.minimum_tank_size_l)
+            min_tank_size = None
+            for key in ['minimum_tank_size_l', 'minimum_tank_size_(l)', 'minimum_tank_size']:
+                val = fish_info.get(key)
+                if val is not None:
+                    try:
+                        min_tank_size = float(val)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            if min_tank_size is None or min_tank_size <= 0:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Fish '{fish_name}' has invalid or missing minimum tank size in the database."}
+                )
             total_volume += min_tank_size * quantity
 
             # Add fish details to response
@@ -814,8 +839,8 @@ def calculate_water_requirements(request: WaterRequirementsRequest, db: Session 
                 "name": fish_name,
                 "quantity": quantity,
                 "individual_requirements": {
-                    "temperature": fish_info.temperature_range_c,
-                    "pH": fish_info.ph_range,
+                    "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                    "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                     "minimum_tank_size": f"{min_tank_size} L"
                 }
             })
@@ -831,17 +856,17 @@ def calculate_water_requirements(request: WaterRequirementsRequest, db: Session 
                 }
             )
 
-        # Round values for better presentation
-        min_temp = round(min_temp, 1)
-        max_temp = round(max_temp, 1)
-        min_ph = round(min_ph, 1)
-        max_ph = round(max_ph, 1)
+        # If any value is still -inf/inf, set to 'Unknown'
+        min_temp = round(min_temp, 1) if min_temp != float('-inf') else 'Unknown'
+        max_temp = round(max_temp, 1) if max_temp != float('inf') else 'Unknown'
+        min_ph = round(min_ph, 1) if min_ph != float('-inf') else 'Unknown'
+        max_ph = round(max_ph, 1) if max_ph != float('inf') else 'Unknown'
         total_volume = round(total_volume, 1)
 
         return {
             "requirements": {
-                "temperature_range": f"{min_temp}°C - {max_temp}°C",
-                "pH_range": f"{min_ph} - {max_ph}",
+                "temperature_range": f"{min_temp}°C - {max_temp}°C" if min_temp != 'Unknown' and max_temp != 'Unknown' else 'Unknown',
+                "pH_range": f"{min_ph} - {max_ph}" if min_ph != 'Unknown' and max_ph != 'Unknown' else 'Unknown',
                 "minimum_tank_volume": f"{total_volume} L"
             },
             "fish_details": fish_details
@@ -858,7 +883,7 @@ class TankCapacityRequest(BaseModel):
     fish_selections: dict[str, int]  # fish name -> quantity
 
 @app.post("/calculate-fish-capacity/")
-def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(get_db)):
+def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(get_supabase_client)):
     try:
         tank_volume = request.tank_volume
         fish_selections = request.fish_selections
@@ -874,32 +899,40 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(
         max_temp = float('inf')
         min_ph = float('-inf')
         max_ph = float('inf')
-        total_bioload = 0
         fish_details = []
         compatibility_issues = []
         fish_info_map = {}
 
         # First pass: Get fish information and check compatibility
         for fish_name in fish_selections.keys():
-            fish_info = db.query(FishSpecies).filter(FishSpecies.common_name == fish_name).first()
+            response = db.table('fish_species').select('*').eq('common_name', fish_name).execute()
+            fish_info = response.data[0] if response.data else None
             
             if not fish_info:
                 return JSONResponse(
                     status_code=404,
                     content={"error": f"Fish not found: {fish_name}"}
                 )
-            
             fish_info_map[fish_name] = fish_info
             
-            # Parse temperature range
-            temp_min, temp_max = parse_range(fish_info.temperature_range_c)
+            # Parse temperature range (try all possible fields)
+            temp_min, temp_max = parse_range(
+                fish_info.get('temperature_range_c') or
+                fish_info.get('temperature_range_(°c)') or
+                fish_info.get('temperature_range') or
+                None
+            )
             if temp_min is not None:
                 min_temp = max(min_temp, temp_min)
             if temp_max is not None:
                 max_temp = min(max_temp, temp_max)
 
-            # Parse pH range
-            ph_min, ph_max = parse_range(fish_info.ph_range)
+            # Parse pH range (try all possible fields)
+            ph_min, ph_max = parse_range(
+                fish_info.get('ph_range') or
+                fish_info.get('pH_range') or
+                None
+            )
             if ph_min is not None:
                 min_ph = max(min_ph, ph_min)
             if ph_max is not None:
@@ -939,10 +972,23 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(
         # Calculate optimal fish distribution if compatible
         if are_compatible:
             # Calculate the minimum tank size required per fish
-            min_sizes = {
-                name: float(info.minimum_tank_size_l)
-                for name, info in fish_info_map.items()
-            }
+            min_sizes = {}
+            for name, info in fish_info_map.items():
+                min_tank_size = None
+                for key in ['minimum_tank_size_l', 'minimum_tank_size_(l)', 'minimum_tank_size']:
+                    val = info.get(key)
+                    if val is not None:
+                        try:
+                            min_tank_size = float(val)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                if min_tank_size is None or min_tank_size <= 0:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": f"Fish '{name}' has invalid or missing minimum tank size in the database."}
+                    )
+                min_sizes[name] = min_tank_size
 
             # Calculate maximum fish quantities while maintaining balance
             total_space = tank_volume
@@ -951,6 +997,11 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(
             
             # Calculate maximum individual quantities first
             for fish_name, min_size in min_sizes.items():
+                if min_size <= 0:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": f"Fish '{fish_name}' has invalid or missing minimum tank size in the database."}
+                    )
                 max_quantities[fish_name] = int(tank_volume / min_size)
             
             # First, allocate minimum quantities (1 for each species)
@@ -973,7 +1024,7 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(
             total_bioload = 0
             for fish_name, quantity in base_quantities.items():
                 fish_info = fish_info_map[fish_name]
-                min_tank_size = float(fish_info.minimum_tank_size_l)
+                min_tank_size = min_sizes[fish_name]
                 fish_bioload = min_tank_size * quantity
                 total_bioload += fish_bioload
 
@@ -983,18 +1034,32 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(
                     "current_quantity": fish_selections[fish_name],
                     "max_capacity": max_quantities[fish_name],
                     "individual_requirements": {
-                        "temperature": fish_info.temperature_range_c,
-                        "pH": fish_info.ph_range,
+                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                        "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                         "minimum_tank_size": f"{min_tank_size} L"
                     }
                 })
 
         else:
             # If fish are not compatible, calculate individual maximums
+            total_bioload = 0
             for fish_name in fish_selections.keys():
                 fish_info = fish_info_map[fish_name]
-                min_tank_size = float(fish_info.minimum_tank_size_l)
-                max_fish = int(tank_volume / min_tank_size)
+                min_tank_size = None
+                for key in ['minimum_tank_size_l', 'minimum_tank_size_(l)', 'minimum_tank_size']:
+                    val = fish_info.get(key)
+                    if val is not None:
+                        try:
+                            min_tank_size = float(val)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                if min_tank_size is None or min_tank_size <= 0:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": f"Fish '{fish_name}' has invalid or missing minimum tank size in the database."}
+                    )
+                max_fish = int(tank_volume / min_tank_size) if min_tank_size > 0 else float('inf')
                 fish_bioload = min_tank_size * fish_selections[fish_name]
                 total_bioload += fish_bioload
 
@@ -1004,23 +1069,24 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(
                     "current_quantity": fish_selections[fish_name],
                     "max_individual_capacity": max_fish,
                     "individual_requirements": {
-                        "temperature": fish_info.temperature_range_c,
-                        "pH": fish_info.ph_range,
+                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                        "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                         "minimum_tank_size": f"{min_tank_size} L"
                     }
                 })
 
-        # Round values for better presentation
-        min_temp = round(min_temp, 1)
-        max_temp = round(max_temp, 1)
-        min_ph = round(min_ph, 1)
-        max_ph = round(max_ph, 1)
+        # If any value is still -inf/inf, set to 'Unknown'
+        min_temp = round(min_temp, 1) if min_temp != float('-inf') else 'Unknown'
+        max_temp = round(max_temp, 1) if max_temp != float('inf') else 'Unknown'
+        min_ph = round(min_ph, 1) if min_ph != float('-inf') else 'Unknown'
+        max_ph = round(max_ph, 1) if max_ph != float('inf') else 'Unknown'
 
         tank_status = "Adequate"
-        if total_bioload > tank_volume:
-            tank_status = "Overstocked"
-        elif total_bioload < tank_volume * 0.5:
-            tank_status = "Understocked"
+        if isinstance(total_bioload, (int, float)) and isinstance(tank_volume, (int, float)):
+            if total_bioload > tank_volume:
+                tank_status = "Overstocked"
+            elif total_bioload < tank_volume * 0.5:
+                tank_status = "Understocked"
 
         return {
             "tank_details": {
@@ -1029,8 +1095,8 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(
                 "status": tank_status
             },
             "water_conditions": {
-                "temperature_range": f"{min_temp}°C - {max_temp}°C",
-                "pH_range": f"{min_ph} - {max_ph}"
+                "temperature_range": f"{min_temp}°C - {max_temp}°C" if min_temp != 'Unknown' and max_temp != 'Unknown' else 'Unknown',
+                "pH_range": f"{min_ph} - {max_ph}" if min_ph != 'Unknown' and max_ph != 'Unknown' else 'Unknown'
             },
             "fish_details": fish_details,
             "compatibility_issues": compatibility_issues
@@ -1041,6 +1107,21 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Session = Depends(
             status_code=500,
             content={"error": f"Calculation failed: {str(e)}"}
         )
+
+@app.post("/save-fish-calculation/")
+async def save_fish_calculation(payload: dict = Body(...), db: Client = Depends(get_supabase_client)):
+    """
+    Save a fish calculation result to the fish_calculations table in Supabase.
+    Expects a JSON payload matching the table columns.
+    """
+    try:
+        # Optionally, validate required fields here
+        response = db.table('fish_calculations').insert(payload).execute()
+        if hasattr(response, 'error') and response.error:
+            raise HTTPException(status_code=500, detail=str(response.error))
+        return {"success": True, "id": response.data[0]['id'] if response.data else None}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save calculation: {str(e)}")
 
 @app.get("/")
 async def root():
