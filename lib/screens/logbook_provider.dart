@@ -4,6 +4,9 @@ import '../models/fish_prediction.dart';
 import '../models/water_calculation.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_calculation.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import '../config/api_config.dart';
 
 class LogBookProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -354,5 +357,43 @@ class LogBookProvider with ChangeNotifier {
         return dateB.compareTo(dateA);
       });
     return allItems;
+  }
+
+  Future<bool> saveFishCalculationToSupabase(Map<String, dynamic> calculationData) async {
+    final url = ApiConfig.saveFishCalculationEndpoint;
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(calculationData),
+      );
+      if (response.statusCode == 200) {
+        // Optionally parse response for the inserted row ID
+        print('Calculation saved: ${response.body}');
+        return true;
+      } else {
+        print('Failed to save calculation: ${response.body}');
+        return false;
+      }
+    } catch (e) {
+      print('Error saving calculation: $e');
+      return false;
+    }
+  }
+
+  Future<void> fetchFishCalculations() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    final response = await Supabase.instance.client
+        .from('fish_calculations')
+        .select()
+        .eq('user_id', userId)
+        .order('date_calculated', ascending: false);
+
+    _savedFishCalculations = response
+        .map((json) => FishCalculation.fromJson(json))
+        .toList();
+    notifyListeners();
   }
 }
