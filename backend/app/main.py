@@ -168,37 +168,89 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
 
     return not reasons, reasons
 
+# Initialize models as None. They will be loaded during the startup event.
+yolo_model = None
+classifier_model = None
+idx_to_common_name = {}
+class_names = []
+
 @app.on_event("startup")
-async def delayed_model_loading():
-    import logging
-    logging.info("🔥 Delaying model loading until after server binds port")
-    # Example: Download and load models here
-    from pathlib import Path
+async def load_models_on_startup():
+    """
+    Load ML models after the server starts.
+    This prevents a timeout issue on platforms like Render.
+    """
+    global yolo_model, classifier_model, idx_to_common_name, class_names
+    
+    logger.info("Server has started. Loading ML models...")
+
+    # Download models if they don't exist
     import requests
 
-    # Download EfficientNet model if not present
-    efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
+    # EfficientNet model
     efficientnet_path = "app/models/trained_models/efficientnet_b3_fish_classifier.pth"
     if not Path(efficientnet_path).exists():
-        r = requests.get(efficientnet_url, stream=True)
-        with open(efficientnet_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+        logger.info("Downloading EfficientNet model...")
+        efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
+        try:
+            r = requests.get(efficientnet_url, stream=True)
+            r.raise_for_status()
+            with open(efficientnet_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info("EfficientNet model downloaded.")
+        except Exception as e:
+            logger.error(f"Failed to download EfficientNet model: {e}")
+            return # Cannot proceed without model
 
-    # Download YOLO model if not present
-    yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
-    yolo_path = "app/models/trained_models/yolov8n.pt"
+    # YOLO model
+    yolo_path = "yolov8n.pt"  # Load from root where YOLO library expects it
     if not Path(yolo_path).exists():
-        r = requests.get(yolo_url, stream=True)
-        with open(yolo_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+        logger.info("Downloading YOLO model...")
+        yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
+        try:
+            r = requests.get(yolo_url, stream=True)
+            r.raise_for_status()
+            with open(yolo_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info("YOLO model downloaded.")
+        except Exception as e:
+            logger.error(f"Failed to download YOLO model: {e}")
+            return # Cannot proceed without model
 
-    # Optionally, load models into memory here (not recommended if memory is tight)
-    # from ultralytics import YOLO
-    # yolo_model = YOLO(yolo_path)
-    # import torch
-    # classifier_model = torch.load(efficientnet_path)
+    # 1. Load class names from Supabase
+    try:
+        supabase = get_supabase_client()
+        response = supabase.table('fish_species').select('common_name').execute()
+        class_names = sorted(set(fish['common_name'] for fish in response.data if fish.get('common_name')))
+        idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
+        logger.info(f"Successfully loaded {len(class_names)} class names.")
+        if not class_names:
+            raise RuntimeError("class_names is empty! Cannot proceed.")
+    except Exception as e:
+        logger.error(f"Fatal error loading class names: {str(e)}")
+        # If we can't get class names, the app is not usable.
+        # We can't raise an exception here, but we can log and leave models as None.
+        return
+
+    # 2. Load YOLO model
+    try:
+        yolo_model = YOLO("yolov8n.pt") 
+        logger.info("Successfully loaded YOLO model.")
+    except Exception as e:
+        logger.error(f"Error loading YOLO model: {str(e)}")
+
+    # 3. Load Classifier model
+    try:
+        classifier_model = load_classifier_model() # This function already exists in your code
+        if classifier_model:
+            classifier_model.eval()
+            logger.info("Successfully loaded and configured classifier model.")
+        else:
+            raise RuntimeError("Classifier model could not be loaded.")
+    except Exception as e:
+        logger.error(f"Error loading classifier model: {str(e)}")
 
 # Create directory for training charts if it doesn't exist
 charts_dir = "app/models/trained_models/training_charts"
@@ -225,27 +277,6 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
     expose_headers=["*"],  # Expose all headers
 )
-
-# Models for classification and object detection are still loaded at startup.
-# Compatibility models and dataframes are no longer needed.
-
-# Dynamically get class names from fish_species table
-try:
-    supabase = get_supabase_client()
-    response = supabase.table('fish_species').select('common_name').execute()
-    # Get unique class names (case-insensitive, sorted)
-    class_names = sorted(set(fish['common_name'] for fish in response.data if fish.get('common_name')))
-    logger.info(f"Successfully loaded {len(class_names)} class names from fish_species table.")
-except Exception as e:
-    logger.error(f"Error loading class names from fish_species table: {str(e)}")
-    class_names = []
-
-if not class_names:
-    logger.error("class_names is empty! Cannot proceed with prediction. Check your fish_species table.")
-    raise RuntimeError("class_names is empty! Cannot proceed with prediction. Check your fish_species table.")
-
-# Mapping: class_idx -> Common Name
-idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
 
 # Load classifier model and setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -415,6 +446,13 @@ async def predict(
     file: UploadFile = File(..., description="Image file containing a fish to identify"),
     db: Client = Depends(get_supabase_client)
 ):
+    # Check if models are loaded
+    if classifier_model is None or yolo_model is None:
+        raise HTTPException(
+            status_code=503, 
+            detail="Models are not loaded yet, please try again in a moment."
+        )
+
     filename = file.filename.lower()
     ext = filename.split(".")[-1]
     if ext not in ALLOWED_EXTENSIONS:
