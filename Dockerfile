@@ -20,7 +20,7 @@ RUN apt-get update && \
         && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements.txt and install dependencies
-COPY backend/app/requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Copy the rest of your application code
