@@ -7,14 +7,7 @@ class ApiConfig {
   static String get supabaseAnonKey => dotenv.env['SUPABASE_ANON_KEY'] ?? '';
   // List of available server URLs to try in order
   static const List<String> serverUrls = [
-    'http://192.168.76.118:8000',  // Your current IP address (PRIORITY)
-    'http://10.0.2.2:8000',        // Android emulator to host machine
-    'http://localhost:8000',       // Localhost fallback
-    'http://127.0.0.1:8000',       // Loopback fallback
-    'http://192.168.1.3:8000',     // Other possible network IPs
-    'http://172.20.10.2:8000',
-    'http://172.20.10.1:8000',
-    'http://192.168.77.103:8000',
+    'https://aquasync.onrender.com' // Render deployment (PRIORITY)
   ];
   
   // Current active server URL index (starts with the first one)
