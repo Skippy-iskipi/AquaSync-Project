@@ -40,6 +40,19 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
+MAX_FILE_SIZE_MB = 5
+
+transform = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
+
+class FishGroup(BaseModel):
+    fish_names: List[str]
+
 # Helper function to determine if a fish species can coexist with itself
 def can_same_species_coexist(fish_name: str, fish_info: Dict[str, Any]) -> Tuple[bool, str]:
     """
@@ -183,46 +196,44 @@ class_names = []
 async def load_models_on_startup():
     """
     Load ML models after the server starts.
-    This prevents a timeout issue on platforms like Render.
+    Always download models from Supabase URLs instead of loading from local files.
     """
     global yolo_model, classifier_model, idx_to_common_name, class_names
     
     logger.info("Server has started. Loading ML models...")
 
-    # Download models if they don't exist
     import requests
+    import tempfile
 
-    # EfficientNet model
-    efficientnet_path = "app/models/trained_models/efficientnet_b3_fish_classifier.pth"
-    if not Path(efficientnet_path).exists():
-        logger.info("Downloading EfficientNet model...")
-        efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
-        try:
+    # EfficientNet model (fixed bucket URL)
+    efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
+    try:
+        logger.info("Downloading EfficientNet model from Supabase...")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pth") as tmp_file:
             r = requests.get(efficientnet_url, stream=True)
             r.raise_for_status()
-            with open(efficientnet_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            logger.info("EfficientNet model downloaded.")
-        except Exception as e:
-            logger.error(f"Failed to download EfficientNet model: {e}")
-            return # Cannot proceed without model
+            for chunk in r.iter_content(chunk_size=8192):
+                tmp_file.write(chunk)
+            efficientnet_path = tmp_file.name
+        logger.info(f"EfficientNet model downloaded to {efficientnet_path}.")
+    except Exception as e:
+        logger.error(f"Failed to download EfficientNet model: {e}")
+        return # Cannot proceed without model
 
     # YOLO model
-    yolo_path = "yolov8n.pt"  # Load from root where YOLO library expects it
-    if not Path(yolo_path).exists():
-        logger.info("Downloading YOLO model...")
-        yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
-        try:
+    yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
+    try:
+        logger.info("Downloading YOLO model from Supabase...")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
             r = requests.get(yolo_url, stream=True)
             r.raise_for_status()
-            with open(yolo_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            logger.info("YOLO model downloaded.")
-        except Exception as e:
-            logger.error(f"Failed to download YOLO model: {e}")
-            return # Cannot proceed without model
+            for chunk in r.iter_content(chunk_size=8192):
+                tmp_file.write(chunk)
+            yolo_path = tmp_file.name
+        logger.info(f"YOLO model downloaded to {yolo_path}.")
+    except Exception as e:
+        logger.error(f"Failed to download YOLO model: {e}")
+        return # Cannot proceed without model
 
     # 1. Load class names from Supabase
     try:
@@ -235,22 +246,19 @@ async def load_models_on_startup():
             raise RuntimeError("class_names is empty! Cannot proceed.")
     except Exception as e:
         logger.error(f"Fatal error loading class names: {str(e)}")
-        # If we can't get class names, the app is not usable.
-        # We can't raise an exception here, but we can log and leave models as None.
         return
 
-    # 2. Load YOLO model
+    # 2. Load YOLO model from downloaded file
     try:
-        yolo_model = YOLO("yolov8n.pt") 
+        yolo_model = YOLO(yolo_path)
         logger.info("Successfully loaded YOLO model.")
     except Exception as e:
         logger.error(f"Error loading YOLO model: {str(e)}")
 
-    # 3. Load Classifier model
+    # 3. Load Classifier model from downloaded file
     try:
-        classifier_model = load_classifier_model() # This function already exists in your code
+        classifier_model = load_classifier_model(efficientnet_path) # Pass the downloaded path
         if classifier_model:
-            classifier_model.eval()
             logger.info("Successfully loaded and configured classifier model.")
         else:
             raise RuntimeError("Classifier model could not be loaded.")
@@ -299,7 +307,7 @@ def create_classifier_model(num_classes):
     # Keep the model simple - don't modify the architecture
     return model
 
-def load_classifier_model():
+def load_classifier_model(model_path=None):
     """Load the classifier model with proper error handling and fallbacks"""
     global class_names
     
@@ -311,85 +319,26 @@ def load_classifier_model():
     else:
         logger.info("CUDA is not available, using CPU")
     
-    # Get the active CNN model from database if available, otherwise use default
-    model_path = "app/models/trained_models/efficientnet_b3_fish_classifier.pth"
+    # Use the provided model_path (downloaded from Supabase)
+    if model_path is None:
+        logger.error("No model_path provided to load_classifier_model.")
+        return None
     
     try:
-        supabase = get_supabase_client()
-        response = supabase.table('trained_models').select('file_path, version').eq('model_type', 'cnn').eq('is_active', True).limit(1).execute()
-        
-        active_model_data = response.data[0] if response.data else None
-        
-        if active_model_data:
-            model_path = active_model_data['file_path']
-            logger.info(f"Loading active CNN model: {model_path} (version: {active_model_data['version']})")
-        else:
-            logger.info(f"No active model found in database. Using default model: {model_path}")
-    except Exception as e:
-        logger.error(f"Database error when loading model: {str(e)}")
-    
-    # Try multiple approaches to load the model
-    try:
-        # Approach 1: Try loading from checkpoint (most reliable)
-        checkpoint_path = model_path.replace('.pth', '_checkpoint.pth')
-        if os.path.exists(checkpoint_path):
-            logger.info(f"Found checkpoint at {checkpoint_path}, loading from it")
-            checkpoint = torch.load(checkpoint_path, map_location=device)
-            
-            # Get number of classes from checkpoint or fall back to class_names
-            num_classes = checkpoint.get('num_classes', len(class_names))
-            logger.info(f"Creating model with {num_classes} classes from checkpoint")
-            
-            # Create a simple model - don't change the default classifier structure
-            model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-            in_features = model.classifier[1].in_features
-            model.classifier[1] = nn.Linear(in_features, num_classes)
-            
-            # Load the state dict if possible, but don't force it
-            try:
-                if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-                else:
-                    model.load_state_dict(checkpoint, strict=False)
-                logger.info("Loaded weights from checkpoint (non-strict)")
-            except Exception as e:
-                logger.warning(f"Could not load weights from checkpoint: {str(e)}")
-                logger.info("Using model with pretrained backbone only")
-                
-            return model.to(device)
-        
-        # Approach 2: Try loading state dict directly
-        elif os.path.exists(model_path):
-            logger.info(f"Loading model from: {model_path}")
-            
-            # Create a simple model - don't modify the classifier architecture
-            model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-            in_features = model.classifier[1].in_features
-            model.classifier[1] = nn.Linear(in_features, len(class_names))
-            
-            try:
-                # Try to load the state dict, but don't crash if it fails
-                model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
-                logger.info("Successfully loaded model weights (non-strict)")
-            except Exception as e:
-                logger.warning(f"Error loading model weights: {str(e)}")
-                logger.info("Using initialized model with pretrained backbone only")
-                
-            return model.to(device)
-        
-        # Approach 3: Fall back to a default model
-        else:
-            logger.warning(f"Model file not found: {model_path}, using default model")
-            model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-            in_features = model.classifier[1].in_features
-            model.classifier[1] = nn.Linear(in_features, len(class_names))
-            return model.to(device)
-            
+        logger.info(f"Loading model from: {model_path}")
+        model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
+        in_features = model.classifier[1].in_features
+        model.classifier[1] = nn.Linear(in_features, len(class_names))
+        try:
+            model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+            logger.info("Successfully loaded model weights (non-strict)")
+        except Exception as e:
+            logger.warning(f"Error loading model weights: {str(e)}")
+            logger.info("Using initialized model with pretrained backbone only")
+        return model.to(device)
     except Exception as e:
         logger.error(f"Error during model loading: {str(e)}")
         logger.error(traceback.format_exc())
-        
-        # Final fallback - use the most basic model
         logger.warning("Using fallback model with standard architecture")
         model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
         in_features = model.classifier[1].in_features
@@ -403,32 +352,6 @@ if torch.cuda.is_available():
         logger.info(f"  Device {i}: {torch.cuda.get_device_name(i)}")
 else:
     logger.info("CUDA is not available, using CPU")
-
-# Load the classifier model
-classifier_model = load_classifier_model()
-classifier_model.eval()
-
-# Preprocessing pipeline for classifier
-transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
-
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
-MAX_FILE_SIZE_MB = 5
-
-# Request schema for compatibility checking
-class FishGroup(BaseModel):
-    fish_names: List[str]
-
-class FishPair(BaseModel):
-    fish1: str
-    fish2: str
-
-# Load the YOLO model
-yolo_model = YOLO("yolov8n.pt") 
 
 @app.post("/predict", 
     summary="Identify fish species from an image",
@@ -536,7 +459,7 @@ async def predict(
         logger.info(f"Prediction after test-time augmentation: class={class_idx}, raw confidence={score:.4f}, temperature={temperature}")
         
         # Set a confidence threshold to filter out uncertain predictions
-        CONFIDENCE_THRESHOLD = 0.4  # Minimum acceptable confidence
+        CONFIDENCE_THRESHOLD = 0.5  # Minimum acceptable confidence
         
         if score < CONFIDENCE_THRESHOLD:
             logger.warning(f"Low confidence prediction: {score:.4f} below threshold {CONFIDENCE_THRESHOLD}")
