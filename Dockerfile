@@ -20,11 +20,11 @@ RUN apt-get update && \
         && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements.txt and install dependencies
-COPY requirements.txt .
+COPY backend/app/requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Copy the rest of your application code
-COPY . .
+COPY backend/app /app
 
 # Expose the port FastAPI will use
 EXPOSE 8000
