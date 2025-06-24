@@ -19,22 +19,15 @@ import {
   FolderOutlined,
 } from '@ant-design/icons';
 import { TrashIcon } from '@heroicons/react/24/outline';
+import { useAuth } from '../utils/AuthContext';
 
 const { Option } = Select;
 const { useBreakpoint } = Grid;
 
 const DATASET_TYPES = ['train', 'val', 'test'];
 
-// Helper to convert file to base64
-const toBase64 = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = (error) => reject(error);
-  });
-
 const FishImages = () => {
+  const { user } = useAuth();
   const [form] = Form.useForm();
   const [editForm] = Form.useForm();
   const [uploading, setUploading] = useState(false);
@@ -51,8 +44,33 @@ const FishImages = () => {
 
   const fetchImages = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('fish_images_dataset').select('*').order('id', { ascending: false });
-    if (!error) setImages(data || []);
+    try {
+      const { data, error } = await supabase.from('fish_images_dataset').select('*').order('id', { ascending: false });
+      if (error) throw error;
+      if (!data) {
+        setImages([]);
+        setLoading(false);
+        return;
+      }
+      // For each row, get its public URL from storage
+      const imageList = await Promise.all(
+        data.map(async (item) => {
+          let publicUrl = '';
+          if (item.image_path) {
+            const { data: publicUrlData } = supabase.storage.from('fish-images').getPublicUrl(item.image_path);
+            publicUrl = publicUrlData.publicUrl;
+          }
+          return {
+            ...item,
+            publicUrl,
+          };
+        })
+      );
+      setImages(imageList);
+    } catch (err) {
+      message.error('Failed to fetch images.');
+      setImages([]);
+    }
     setLoading(false);
   };
 
@@ -72,49 +90,56 @@ const FishImages = () => {
     try {
       const { common_name, dataset, file } = values;
       const files = file && Array.isArray(file) ? file : [];
-
       if (!files.length) {
         message.error('Please upload at least one image file.');
         setUploading(false);
         return;
       }
-
-      // Prepare all insertions
-      const inserts = await Promise.all(
-        files.map(async (f) => {
-          const selectedFile = f.originFileObj;
-          const base64Image = await toBase64(selectedFile);
-          return {
-            common_name,
-            dataset,
-            image_data: base64Image,
-          };
-        })
-      );
-
-      const { error: dbError } = await supabase.from('fish_images_dataset').insert(inserts);
-
-      if (dbError) {
-        console.error(dbError);
-        message.error('Failed to insert into database.');
-      } else {
+      let successCount = 0;
+      for (const f of files) {
+        const selectedFile = f.originFileObj;
+        // Use filename: <common_name>__<dataset>__<timestamp>.<ext>
+        const ext = selectedFile.name.split('.').pop();
+        const filename = `${common_name}__${dataset}__${Date.now()}.${ext}`;
+        const path = `${user.id}/${filename}`;
+        // 1. Upload to storage
+        const { error: uploadError } = await supabase.storage.from('fish-images').upload(path, selectedFile, { upsert: true });
+        if (uploadError) {
+          message.error(`Failed to upload ${selectedFile.name}`);
+          continue;
+        }
+        // 2. Insert metadata row
+        const { error: dbError } = await supabase.from('fish_images_dataset').insert({
+          common_name,
+          dataset,
+          image_path: path,
+        });
+        if (dbError) {
+          message.error(`Failed to save metadata for ${selectedFile.name}`);
+          // Optionally: remove the uploaded file from storage
+          await supabase.storage.from('fish-images').remove([path]);
+          continue;
+        }
+        successCount++;
+      }
+      if (successCount > 0) {
         message.success('Fish images added to dataset!');
         form.resetFields();
         setModalVisible(false);
         fetchImages();
+      } else {
+        message.error('No images were uploaded.');
       }
     } catch (err) {
-      console.error(err);
       message.error('Unexpected error.');
     } finally {
       setUploading(false);
     }
   };
 
-  // Delete image
+  // Delete image from Supabase Storage and metadata table
   const handleDelete = (img) => {
     let modalInstance = null;
-  
     modalInstance = Modal.confirm({
       title: 'Delete Image',
       content: 'Are you sure you want to delete this image?',
@@ -132,13 +157,12 @@ const FishImages = () => {
           </button>
           <button
             onClick={async () => {
-              const { error } = await supabase.from('fish_images_dataset').delete().eq('id', img.id);
-              if (error) {
-                message.error('Failed to delete image.');
-              } else {
-                message.success('Image deleted!');
-                fetchImages();
-              }
+              // 1. Remove from storage
+              await supabase.storage.from('fish-images').remove([img.image_path]);
+              // 2. Remove from table
+              await supabase.from('fish_images_dataset').delete().eq('id', img.id);
+              message.success('Image deleted!');
+              fetchImages();
               modalInstance.destroy();
             }}
             className="text-red-500 hover:text-red-700 hover:bg-red-500 hover:text-white p-2 rounded transition"
@@ -149,9 +173,8 @@ const FishImages = () => {
       ),
     });
   };
-  
 
-  // Edit image
+  // Edit image (replace file and update metadata)
   const handleEdit = (img) => {
     setEditingImage(img);
     editForm.setFieldsValue({
@@ -165,22 +188,33 @@ const FishImages = () => {
   const handleEditSubmit = async (values) => {
     setUploading(true);
     try {
-      let newImageData = editingImage.image_data;
       const { common_name, dataset, file } = values;
+      let newImagePath = editingImage.image_path;
+      // If a new file is uploaded, replace the old one
       const selectedFile = file && file[0] && file[0].originFileObj;
       if (selectedFile) {
-        newImageData = await toBase64(selectedFile);
+        // Remove old image
+        await supabase.storage.from('fish-images').remove([editingImage.image_path]);
+        // Upload new image
+        const ext = selectedFile.name.split('.').pop();
+        const filename = `${common_name}__${dataset}__${Date.now()}.${ext}`;
+        const path = `${user.id}/${filename}`;
+        const { error: uploadError } = await supabase.storage.from('fish-images').upload(path, selectedFile, { upsert: true });
+        if (uploadError) {
+          message.error('Failed to upload new image.');
+          setUploading(false);
+          return;
+        }
+        newImagePath = path;
       }
-      const { error } = await supabase
-        .from('fish_images_dataset')
-        .update({
-          common_name,
-          dataset,
-          image_data: newImageData,
-        })
-        .eq('id', editingImage.id);
-      if (error) {
-        message.error('Failed to update image.');
+      // Update metadata row
+      const { error: dbError } = await supabase.from('fish_images_dataset').update({
+        common_name,
+        dataset,
+        image_path: newImagePath,
+      }).eq('id', editingImage.id);
+      if (dbError) {
+        message.error('Failed to update image metadata.');
       } else {
         message.success('Image updated!');
         setEditModalVisible(false);
@@ -342,12 +376,12 @@ const FishImages = () => {
             <div className="col-span-full text-center">No images found.</div>
           )}
           {filteredModalImages.map((img) => (
-            <div key={img.id} className="bg-white rounded-lg shadow p-2 flex flex-col">
+            <div key={img.image_path} className="bg-white rounded-lg shadow p-2 flex flex-col">
               <img
                 alt={img.common_name}
-                src={img.image_data}
+                src={img.publicUrl}
                 className="w-full h-36 object-cover rounded mb-2 cursor-pointer"
-                onClick={() => setPreviewImage(img.image_data)}
+                onClick={() => setPreviewImage(img.publicUrl)}
               />
               <div className="flex-1 flex flex-col justify-between">
                 <div className="flex flex-row gap-2 mt-2 justify-end">
@@ -398,7 +432,7 @@ const FishImages = () => {
           <Form.Item label="Current Image">
             {editingImage && (
               <img
-                src={editingImage.image_data}
+                src={editingImage.publicUrl}
                 alt={editingImage.common_name}
                 className="w-full max-h-44 object-contain mb-2"
               />
