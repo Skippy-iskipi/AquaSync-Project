@@ -7,7 +7,6 @@ import {
   UserOutlined,
   InboxOutlined,
   FileOutlined,
-  PictureOutlined,
   MenuOutlined
 } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -60,11 +59,6 @@ const AppLayout = ({ children }) => {
         }
       ]
     },
-    {
-      key: '/fish-images',
-      icon: <PictureOutlined />,
-      label: <Link to="/fish-images">Fish Images</Link>
-    }
   ];
 
   return (
