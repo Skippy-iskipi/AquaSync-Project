@@ -9,15 +9,13 @@ import 'logbook_provider.dart';
 import 'dart:io';
 import '../models/water_calculation.dart';
 import '../models/fish_calculation.dart';
-import 'package:intl/intl.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_prediction.dart';
 import '../screens/calculator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/auth_screen.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import '../config/api_config.dart';
+import '../screens/subscription_page.dart';
+
 
 class HomePage extends StatefulWidget {
   final int initialTabIndex;
@@ -120,7 +118,37 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  // Account type
+                  // Display current plan and upgrade button
+                  FutureBuilder<Object?>(
+                    future: user != null
+                        ? Supabase.instance.client
+                            .from('profiles')
+                            .select('tier_plan')
+                            .eq('id', user.id)
+                            .single()
+                        : Future.value({'tier_plan': 'free'}),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const SizedBox(height: 32, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
+                      }
+                      final data = snapshot.data as Map<String, dynamic>?;
+                      final plan = (data != null && data['tier_plan'] != null)
+                          ? data['tier_plan'] as String
+                          : 'free';
+                      return Column(
+                        children: [
+                          Text(
+                            'Plan: ${plan.isNotEmpty ? plan[0].toUpperCase() + plan.substring(1) : 'Free'}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
@@ -271,26 +299,58 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildExploreSection(),
-            const SizedBox(height: 20),
-            const Padding(
-              padding: EdgeInsets.only(left: 16, top: 24, bottom: 8),
-              child: Text(
-                'Recent Activity',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF006064),
-                ),
+            const SizedBox(height: 24),
+            // Explore Section
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: const [
+                      Icon(Icons.remove_red_eye, color: Color(0xFF00BCD4), size: 22),
+                      SizedBox(width: 8),
+                      Text(
+                        'Explore',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Explore Card
+                  _ModernExploreCard(),
+                ],
+              ),
+            ),
+            const SizedBox(height: 32),
+            // Recent Activity Section
+            Padding(
+              padding: const EdgeInsets.only(left: 20, right: 20, bottom: 8),
+              child: Row(
+                children: const [
+                  Icon(Icons.show_chart, color: Color(0xFF00C853), size: 22),
+                  SizedBox(width: 8),
+                  Text(
+                    'Recent Activity',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF006064),
+                    ),
+                  ),
+                ],
               ),
             ),
             Consumer<LogBookProvider>(
               builder: (context, logBookProvider, child) {
                 final allItems = logBookProvider.allItems;
-
                 if (allItems.isEmpty) {
                   return const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 24),
                     child: Center(
                       child: Text(
                         'No recent activities yet',
@@ -302,418 +362,34 @@ class _HomePageState extends State<HomePage> {
                     ),
                   );
                 }
-                
                 return Column(
-                  children: allItems.take(5).map((item) => _buildRecentActivityCard(item)).toList(),
+                  children: allItems.take(5).map((item) => _ModernRecentActivityCard(item: item, onTap: () {
+                    setState(() {
+                      if (item is CompatibilityResult) {
+                        _selectedIndex = 1;
+                        _logBookTabIndex = 2;
+                      } else if (item is FishPrediction) {
+                        _selectedIndex = 1;
+                        _logBookTabIndex = 0;
+                      } else if (item is WaterCalculation || item is FishCalculation) {
+                        _selectedIndex = 1;
+                        _logBookTabIndex = 1;
+                      }
+                    });
+                  })).toList(),
                 );
               },
             ),
+            const SizedBox(height: 24),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildExploreSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 16.0, right: 16.0, top: 30.0, bottom: 15.0),
-          child: Text(
-            'Explore',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF006064),
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: Row(
-            children: [
-              Expanded(
-                child: _buildExploreCard(
-                  title: 'Salt\nWater Fish',
-                  image: 'lib/icons/saltwater_fish.png',
-                  color: const Color(0xFF00BCD4),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const FishListScreen(
-                          title: 'Salt Water Fish',
-                          isSaltWater: true,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildExploreCard(
-                  title: 'Fresh\nWater Fish',
-                  image: 'lib/icons/freshwater_fish.png',
-                  color: const Color(0xFF00BCD4),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const FishListScreen(
-                          title: 'Fresh Water Fish',
-                          isSaltWater: false,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 
-  Widget _buildExploreCard({
-    required String title,
-    required String image,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 120,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Stack(
-          children: [
-            // Image positioned on the right side
-            Positioned(
-              right: -5,  // Slightly off-screen to the right
-              top: -10,    // Positioned from the top
-              child: SizedBox(
-                width: 130,  // Reduced width
-                height: 130, // Reduced height
-                child: Image.asset(
-                  image,
-                  fit: BoxFit.contain,  // Changed to contain for better proportions
-                ),
-              ),
-            ),
-            // Text at the bottom
-            Positioned(
-              left: 12,
-              bottom: 12,
-              child: Text(
-                '${title.split('\n')[0]}\n${title.split('\n')[1]}',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black,
-                  height: 1.3,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
-  Widget _buildRecentActivityCard(dynamic item) {
-    int logBookTabIndex = 0;
-    Widget leadingWidget;
-    Widget contentWidget;
 
-    if (item is CompatibilityResult) {
-      logBookTabIndex = 2; // Fish Compatibility tab in LogBook
-    } else if (item is FishPrediction) {
-      logBookTabIndex = 0; // Fish Collection tab in LogBook
-    } else if (item is WaterCalculation || item is FishCalculation) {
-      logBookTabIndex = 1; // Fish Calculator tab in LogBook
-    }
-
-    if (item is CompatibilityResult) {
-      logBookTabIndex = 2; // Fish Compatibility tab in LogBook
-      leadingWidget = Container(
-        width: 150,
-        height: 80,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(8),
-                  bottomLeft: Radius.circular(8),
-                ),
-                child: FutureBuilder<http.Response>(
-                  future: http.get(Uri.parse(ApiConfig.getFishImageUrl(item.fish1Name))),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return Container(
-                        color: Colors.grey[200],
-                        child: const Center(child: CircularProgressIndicator()),
-                      );
-                    }
-                    if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
-                      return Container(
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 24),
-                      );
-                    }
-                    final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                    final String? base64Image = jsonData['image_data'];
-                    if (base64Image == null || base64Image.isEmpty) {
-                      return Container(
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 24),
-                      );
-                    }
-                    final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                    return Image.memory(
-                      base64Decode(base64Str),
-                      fit: BoxFit.cover,
-                      height: 80,
-                    );
-                  },
-                ),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: ClipRRect(
-                borderRadius: const BorderRadius.only(
-                  topRight: Radius.circular(8),
-                  bottomRight: Radius.circular(8),
-                ),
-                child: FutureBuilder<http.Response>(
-                  future: http.get(Uri.parse(ApiConfig.getFishImageUrl(item.fish2Name))),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return Container(
-                        color: Colors.grey[200],
-                        child: const Center(child: CircularProgressIndicator()),
-                      );
-                    }
-                    if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
-                      return Container(
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 24),
-                      );
-                    }
-                    final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                    final String? base64Image = jsonData['image_data'];
-                    if (base64Image == null || base64Image.isEmpty) {
-                      return Container(
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 24),
-                      );
-                    }
-                    final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                    return Image.memory(
-                      base64Decode(base64Str),
-                      fit: BoxFit.cover,
-                      height: 80,
-                    );
-                  },
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-      contentWidget = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '${item.fish1Name} & ${item.fish2Name}',
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            item.isCompatible ? 'Compatible' : 'Not Compatible',
-            style: TextStyle(
-              color: item.isCompatible ? Colors.green : Colors.red,
-              fontSize: 14,
-            ),
-          ),
-          Text(
-            DateFormat('MMM d, y').format(item.dateChecked),
-            style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      );
-    } else if (item is FishPrediction) {
-      leadingWidget = Container(
-        width: 150,
-        height: 80,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: ClipRRect(
-          child: Image.file(
-            File(item.imagePath),
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => const Icon(Icons.error),
-          ),
-        ),
-      );
-      contentWidget = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'New Fish Identified',
-            style: TextStyle(
-              color: Color(0xFF006064),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            item.commonName,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
-          ),
-          Text(
-            DateFormat('MMM d, y').format(DateTime.now()),
-            style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      );
-    } else if (item is WaterCalculation) {
-      leadingWidget = Container(
-        width: 70,
-        height: 70,
-        decoration: BoxDecoration(
-          color: Colors.teal.shade50,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Icon(
-          Icons.water_drop,
-          color: Color(0xFF006064),
-          size: 30,
-        ),
-      );
-      contentWidget = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Water Calculator',
-            style: TextStyle(
-              color: Color(0xFF006064),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Tank Volume: ${item.minimumTankVolume}',
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
-          ),
-          Text(
-            DateFormat('MMM d, y').format(item.dateCalculated),
-            style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      );
-    } else if (item is FishCalculation) {
-      leadingWidget = Container(
-        width: 70,
-        height: 70,
-        decoration: BoxDecoration(
-          color: Colors.teal.shade50,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Icon(
-          Icons.water,
-          color: Color(0xFF006064),
-          size: 30,
-        ),
-      );
-      contentWidget = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Fish Calculator',
-            style: TextStyle(
-              color: Color(0xFF006064),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Tank Volume: ${item.tankVolume}',
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
-          ),
-          Text(
-            DateFormat('MMM d, y').format(item.dateCalculated),
-            style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      );
-    } else {
-      return const SizedBox.shrink(); // Return empty widget for unknown types
-    }
-
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-      child: InkWell(
-        onTap: () {
-          setState(() {
-            _selectedIndex = 1; // Set HomePage to LogBook tab
-            _logBookTabIndex = logBookTabIndex; // Set the correct LogBook tab
-          });
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              leadingWidget,
-              const SizedBox(width: 12),
-              Expanded(child: contentWidget),
-              const Icon(Icons.chevron_right),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -736,6 +412,52 @@ class _HomePageState extends State<HomePage> {
         elevation: 2,
         automaticallyImplyLeading: false,
         actions: [
+          FutureBuilder<Object?>(
+            future: () async {
+              final user = Supabase.instance.client.auth.currentUser;
+              if (user != null) {
+                final data = await Supabase.instance.client
+                    .from('profiles')
+                    .select('tier_plan')
+                    .eq('id', user.id)
+                    .single();
+                return data['tier_plan'] ?? 'free';
+              }
+              return 'free';
+            }(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SizedBox(width: 48, height: 32);
+              }
+              final plan = (snapshot.data as String?)?.toLowerCase().replaceAll(' ', '_') ?? 'free';
+              if (plan == 'free') {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF00BFB3),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Upgrade Your Plan',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ),
+                );
+              } else {
+                return const SizedBox.shrink();
+              }
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.account_circle),
             onPressed: () => _showUserInfo(context),
@@ -759,6 +481,180 @@ class _HomePageState extends State<HomePage> {
       bottomNavigationBar: BottomNavigation(
         selectedIndex: _selectedIndex,
         onItemTapped: _onItemTapped,
+      ),
+    );
+  }
+}
+
+// Modern Explore Card Widget
+class _ModernExploreCard extends StatelessWidget {
+  const _ModernExploreCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<LogBookProvider>(
+      builder: (context, logBookProvider, child) {
+        return GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const FishListScreen(
+                  title: 'Fish Collection',
+                  isSaltWater: null,
+                ),
+              ),
+            );
+          },
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF00BCD4), Color(0xFF2196F3)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Fish Collection',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Discover and learn about different fish species',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// Modern Recent Activity Card Widget
+class _ModernRecentActivityCard extends StatelessWidget {
+  final dynamic item;
+  final VoidCallback onTap;
+  const _ModernRecentActivityCard({required this.item, required this.onTap});
+
+  String _relativeTime(DateTime? date) {
+    if (date == null) return '';
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return diff.inMinutes == 1 ? '1 minute ago' : '${diff.inMinutes} minutes ago';
+    if (diff.inHours < 24) return diff.inHours == 1 ? '1 hour ago' : '${diff.inHours} hours ago';
+    if (diff.inDays == 1) return 'Yesterday';
+    return diff.inDays == 1 ? '1 day ago' : '${diff.inDays} days ago';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String title = '';
+    String subtitle = '';
+    String time = '';
+    IconData icon = Icons.info_outline;
+    Color iconColor = Colors.blueAccent;
+    if (item is FishPrediction) {
+      title = item.commonName.isNotEmpty ? item.commonName : 'Fish Captured';
+      subtitle = item.probability.isNotEmpty ? 'Confidence: ${item.probability}' : 'Successfully identified and logged';
+      icon = Icons.remove_red_eye;
+      iconColor = Colors.blueAccent;
+      time = _relativeTime(item.createdAt);
+    } else if (item is WaterCalculation) {
+      title = 'Water Calculator';
+      final fishNames = item.fishSelections.keys.join(', ');
+      subtitle = 'Fish: $fishNames\npH Level: ${item.phRange}\nTemperature: ${item.temperatureRange.replaceAll('Â', '')}';
+      icon = Icons.science;
+      iconColor = Colors.green;
+      time = _relativeTime(item.dateCalculated);
+    } else if (item is FishCalculation) {
+      title = 'Fish Calculator';
+      final fishNames = item.fishSelections.keys.join(', ');
+      subtitle = 'Fish: $fishNames\nTank Volume: ${item.tankVolume}';
+      icon = Icons.water;
+      iconColor = Colors.teal;
+      time = _relativeTime(item.dateCalculated);
+    } else if (item is CompatibilityResult) {
+      title = '${item.fish1Name} & ${item.fish2Name}';
+      subtitle = item.isCompatible ? 'Compatible' : 'Not Compatible';
+      icon = Icons.compare_arrows;
+      iconColor = Colors.deepPurple;
+      time = _relativeTime(item.dateChecked);
+    } else {
+      title = 'Activity';
+      subtitle = 'Details about the activity';
+      icon = Icons.info_outline;
+      iconColor = Colors.grey;
+      time = 'Some time ago';
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: iconColor.withOpacity(0.15),
+              child: Icon(icon, color: iconColor),
+            ),
+            title: Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.black,
+              ),
+            ),
+            subtitle: Text(
+              subtitle,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Colors.black87,
+              ),
+            ),
+            trailing: Text(
+              time,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          ),
+        ),
       ),
     );
   }

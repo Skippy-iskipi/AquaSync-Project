@@ -10,6 +10,7 @@ class CompatibilityResult {
   final List<String> reasons;
   final DateTime dateChecked;
   final DateTime? createdAt;
+  final String savedPlan;
 
   CompatibilityResult({
     this.id,
@@ -21,6 +22,7 @@ class CompatibilityResult {
     required this.reasons,
     required this.dateChecked,
     this.createdAt,
+    this.savedPlan = 'free',
   });
 
   factory CompatibilityResult.fromJson(Map<String, dynamic> json) {
@@ -48,6 +50,7 @@ class CompatibilityResult {
       reasons: parsedReasons,
       dateChecked: DateTime.parse(json['date_checked']),
       createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
+      savedPlan: json['saved_plan'] ?? 'free',
     );
   }
 
@@ -61,6 +64,7 @@ class CompatibilityResult {
       'is_compatible': isCompatible,
       'reasons': reasons,
       'date_checked': dateChecked.toIso8601String(),
+      'saved_plan': savedPlan,
     };
   }
 } 

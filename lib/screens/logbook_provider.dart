@@ -7,6 +7,8 @@ import '../models/fish_calculation.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/api_config.dart';
+import 'package:provider/provider.dart';
+import '../main.dart';
 
 class LogBookProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -109,6 +111,75 @@ class LogBookProvider with ChangeNotifier {
     } finally {
       notifyListeners();
     }
+  }
+
+  // Utility methods for plan-based boundaries
+  static bool canSaveFish(String plan, int savedCount) {
+    if (plan == 'free') return savedCount < 5;
+    if (plan == 'pro') return savedCount < 20;
+    return true;
+  }
+
+  static bool canSyncCompatibility(String plan, int syncCount) {
+    if (plan == 'free') return syncCount < 2;
+    return true;
+  }
+
+  static bool canShowSaveCompatibility(String plan) {
+    return plan == 'pro' || plan == 'pro_plus';
+  }
+
+  static bool canShowDetailedReasons(String plan) {
+    return plan == 'pro' || plan == 'pro_plus';
+  }
+
+  static bool canShowMoreDetailedBreakdown(String plan) {
+    return plan == 'pro_plus';
+  }
+
+  // Modified addPredictions to enforce plan boundaries
+  Future<bool> addPredictionsWithPlan(BuildContext context, List<FishPrediction> predictions) async {
+    final plan = Provider.of<UserPlanProvider>(context, listen: false).plan;
+    final savedCount = _savedPredictions.length;
+    if (!canSaveFish(plan, savedCount)) {
+      _showUpgradeDialog(context, 'You have reached the limit for saving fish in your current plan.');
+      return false;
+    }
+    return await addPredictions(predictions);
+  }
+
+  // Modified addCompatibilityResult to enforce plan boundaries
+  Future<void> addCompatibilityResultWithPlan(BuildContext context, CompatibilityResult result) async {
+    final plan = Provider.of<UserPlanProvider>(context, listen: false).plan;
+    final syncCount = _savedCompatibilityResults.length;
+    if (!canSyncCompatibility(plan, syncCount)) {
+      _showUpgradeDialog(context, 'You have reached the limit for compatibility checks in your current plan.');
+      return;
+    }
+    await addCompatibilityResult(result);
+  }
+
+  void _showUpgradeDialog(BuildContext context, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Upgrade Your Plan'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/subscription');
+            },
+            child: const Text('Upgrade'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<bool> addPredictions(List<FishPrediction> predictions) async {
@@ -277,6 +348,7 @@ class LogBookProvider with ChangeNotifier {
         'reasons': result.reasons, // TEXT[]
         'date_checked': result.dateChecked.toIso8601String(),
         'created_at': DateTime.now().toIso8601String(),
+        'saved_plan': result.savedPlan, // Save the plan at the time of saving
       }).select();
 
       if (response.isNotEmpty) {
@@ -395,5 +467,10 @@ class LogBookProvider with ChangeNotifier {
         .map((json) => FishCalculation.fromJson(json))
         .toList();
     notifyListeners();
+  }
+
+  // Get the count of compatibility checks made by the user
+  int getCompatibilityChecksCount() {
+    return _savedCompatibilityResults.length;
   }
 }

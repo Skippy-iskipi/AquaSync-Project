@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../services/auth_service.dart';
 import 'homepage.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -49,10 +50,17 @@ class _AuthScreenState extends State<AuthScreen> {
         }
       } else {
         // For signup, do not navigate immediately. Inform user to check email.
-        await _authService.signUpWithEmail(
+        final response = await _authService.signUpWithEmail(
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
+        // Insert into profiles table
+        final userId = response.user?.id;
+        if (userId != null) {
+          await Supabase.instance.client
+              .from('profiles')
+              .insert({'id': userId, 'tier_plan': 'free'});
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(

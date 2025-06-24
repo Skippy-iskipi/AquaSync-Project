@@ -16,6 +16,8 @@ import '../services/openai_service.dart';
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
 import '../models/compatibility_result.dart';
+import '../screens/subscription_page.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 
 class SyncScreen extends StatefulWidget {
@@ -53,12 +55,16 @@ class _SyncScreenState extends State<SyncScreen> {
   File? _capturedImage2;
   String? _fish1Base64Image;
   String? _fish2Base64Image;
+  int _compatibilityChecksCount = 0;
+  String _userPlan = 'free';
   
   @override
   void initState() {
     super.initState();
     // Try to connect to server and load data
     _checkServerAndLoadData();
+    _loadUserPlan();
+    _loadCompatibilityChecksCount();
     
     if (widget.initialFish != null) {
       setState(() {
@@ -889,13 +895,113 @@ class _SyncScreenState extends State<SyncScreen> {
     await _showCameraPreview(isFirstFish);
   }
 
+  Future<void> _loadUserPlan() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      final data = await Supabase.instance.client
+          .from('profiles')
+          .select('tier_plan')
+          .eq('id', user.id)
+          .single();
+      setState(() {
+        _userPlan = data['tier_plan'] ?? 'free';
+      });
+    }
+  }
+
+  Future<void> _loadCompatibilityChecksCount() async {
+    if (_userPlan == 'free') {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        try {
+          final data = await Supabase.instance.client
+              .from('profiles')
+              .select('compatibility_checks_count')
+              .eq('id', user.id)
+              .single();
+          setState(() {
+            _compatibilityChecksCount = data['compatibility_checks_count'] ?? 0;
+          });
+        } catch (e) {
+          print('Error loading compatibility checks count: $e');
+          setState(() {
+            _compatibilityChecksCount = 0;
+          });
+        }
+      }
+    }
+  }
+
+  Future<void> _incrementCompatibilityChecksCount() async {
+    if (_userPlan == 'free') {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        try {
+          await Supabase.instance.client
+              .from('profiles')
+              .update({
+                'compatibility_checks_count': _compatibilityChecksCount + 1
+              })
+              .eq('id', user.id);
+          setState(() {
+            _compatibilityChecksCount++;
+          });
+        } catch (e) {
+          print('Error incrementing compatibility checks count: $e');
+        }
+      }
+    }
+  }
+
+  bool _canCheckCompatibility() {
+    if (_userPlan == 'free' && _compatibilityChecksCount >= 2) {
+      _showUpgradeDialog('You have reached the limit of 2 compatibility checks for the free plan. Upgrade to Pro or Pro Plus for unlimited checks!');
+      return false;
+    }
+    return true;
+  }
+
+  void _showUpgradeDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Upgrade Required'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00ACC1),
+              ),
+              child: const Text('Upgrade Now'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _checkCompatibility() async {
+    if (!_canCheckCompatibility()) {
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
 
     try {
-      // Use the new failover method for more reliable API access
       final response = await ApiConfig.makeRequestWithFailover(
         endpoint: '/check-group',
         method: 'POST',
@@ -917,7 +1023,6 @@ class _SyncScreenState extends State<SyncScreen> {
           final isCompatible = firstResult['compatibility'] == 'Compatible';
           final baseReasons = List<String>.from(firstResult['reasons']);
 
-          // Extract and clean base64 images from API response
           String? fish1Base64 = firstResult['fish1_image'];
           String? fish2Base64 = firstResult['fish2_image'];
           if (fish1Base64 != null && fish1Base64.contains(',')) {
@@ -927,7 +1032,6 @@ class _SyncScreenState extends State<SyncScreen> {
             fish2Base64 = fish2Base64.split(',')[1];
           }
 
-          // Store initial state values
           setState(() {
             _isCompatible = isCompatible;
             _fish1Name = _selectedFish1!;
@@ -944,10 +1048,13 @@ class _SyncScreenState extends State<SyncScreen> {
             } else if (_fish2ImagePath.isEmpty) {
               _fish2ImagePath = ApiConfig.getFishImageUrl(_selectedFish2!);
             }
-            // Set initial base reasons
           });
           
-          // Show compatibility result dialog that updates when reasons are fetched
+          // Increment the count before showing results
+          if (_userPlan == 'free') {
+            await _incrementCompatibilityChecksCount();
+          }
+          
           if (mounted) {
             _showCompatibilityDialog(isCompatible, baseReasons);
           }
@@ -970,10 +1077,12 @@ class _SyncScreenState extends State<SyncScreen> {
   }
 
   void _showCompatibilityDialog(bool isCompatible, List<String> baseReasons) {
-    // This state is local to the dialog and will not be affected by parent rebuilds.
     List<String> currentReasons = baseReasons;
-    bool isLoadingDetails = !isCompatible;
+    bool isLoadingDetails = false;
     bool hasFetched = false;
+
+    // Normalize plan string for robust comparison
+    String normalizedPlan = _userPlan.trim().toLowerCase().replaceAll(' ', '_');
 
     showDialog(
       context: context,
@@ -981,16 +1090,16 @@ class _SyncScreenState extends State<SyncScreen> {
       builder: (BuildContext dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            // Fetch detailed reasons only once.
-            if (!hasFetched && !isCompatible) {
-              hasFetched = true; // Prevents re-fetching on rebuilds.
+            // Only fetch detailed reasons for Pro Plus
+            if (!hasFetched && !isCompatible && (normalizedPlan == 'pro_plus' || normalizedPlan == 'proplus')) {
+              hasFetched = true;
+              isLoadingDetails = true;
               OpenAIService.explainIncompatibilityReasons(
                 _fish1Name,
                 _fish2Name,
                 baseReasons,
               ).then((detailedReasons) {
                 if (mounted) {
-                  // Update the dialog's state with the new reasons.
                   setDialogState(() {
                     currentReasons = detailedReasons;
                     isLoadingDetails = false;
@@ -1075,7 +1184,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           ],
                         ),
                       ),
-                      if (currentReasons.isNotEmpty)
+                      if (_userPlan != 'free' && currentReasons.isNotEmpty)
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(24),
@@ -1163,38 +1272,41 @@ class _SyncScreenState extends State<SyncScreen> {
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: ElevatedButton(
-                                      onPressed: () {
-                                        final logbookProvider = Provider.of<LogBookProvider>(context, listen: false);
-                                        final newResult = CompatibilityResult(
-                                          fish1Name: _fish1Name,
-                                          fish1ImagePath: _fish1ImagePath,
-                                          fish2Name: _fish2Name,
-                                          fish2ImagePath: _fish2ImagePath,
-                                          isCompatible: _isCompatible,
-                                          reasons: currentReasons,
-                                          dateChecked: DateTime.now(),
-                                        );
-                                        logbookProvider.addCompatibilityResult(newResult);
-                                        Navigator.of(dialogContext).pop();
-                                        showCustomNotification(context, 'Result saved to Log Book');
-                                      },
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF00ACC1),
-                                        foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(vertical: 12),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8),
+                                  if (_userPlan != 'free') ...[
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: ElevatedButton(
+                                        onPressed: () {
+                                          final logbookProvider = Provider.of<LogBookProvider>(context, listen: false);
+                                          final newResult = CompatibilityResult(
+                                            fish1Name: _fish1Name,
+                                            fish1ImagePath: _fish1ImagePath,
+                                            fish2Name: _fish2Name,
+                                            fish2ImagePath: _fish2ImagePath,
+                                            isCompatible: _isCompatible,
+                                            reasons: currentReasons,
+                                            dateChecked: DateTime.now(),
+                                            savedPlan: _userPlan,
+                                          );
+                                          logbookProvider.addCompatibilityResult(newResult);
+                                          Navigator.of(dialogContext).pop();
+                                          showCustomNotification(context, 'Result saved to Log Book');
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF00ACC1),
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(vertical: 12),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                        ),
+                                        child: const Text(
+                                          'Save',
+                                          style: TextStyle(fontSize: 16),
                                         ),
                                       ),
-                                      child: const Text(
-                                        'Save',
-                                        style: TextStyle(fontSize: 16),
-                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ],
                               ),
                             ],
