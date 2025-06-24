@@ -19,6 +19,7 @@ import 'dart:convert';
 import '../config/api_config.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'dart:typed_data';
+import '../services/openai_service.dart';
 
 
 class LogBook extends StatefulWidget {
@@ -843,6 +844,9 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   ),
                 ),
               ),
+              confirmDismiss: (direction) async {
+                return await _showDeleteConfirmationDialogFishPrediction(prediction);
+              },
               onDismissed: (direction) {
                 logBookProvider.removePrediction(prediction);
                 showCustomNotification(context, '${prediction.commonName} removed from collection');
@@ -945,6 +949,28 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 
+  Future<bool> _showDeleteConfirmationDialogFishPrediction(FishPrediction prediction) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Confirm Deletion'),
+          content: Text('Are you sure you want to remove ${prediction.commonName} from your collection?'),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+            ),
+            TextButton(
+              child: const Text('Confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
+
   Widget _buildCalculatorTab() {
     return Consumer<LogBookProvider>(
       builder: (context, provider, child) {
@@ -1032,6 +1058,9 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   ),
                 ),
               ),
+              confirmDismiss: (direction) async {
+                return await _showDeleteConfirmationDialogCalculation(calculation);
+              },
               onDismissed: (direction) {
                 if (calculation is WaterCalculation) {
                   provider.removeWaterCalculation(calculation);
@@ -1117,6 +1146,35 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 
+  Future<bool> _showDeleteConfirmationDialogCalculation(dynamic calculation) async {
+    String title = 'Confirm Deletion';
+    String content = 'Are you sure you want to remove this calculation?';
+    if (calculation is WaterCalculation) {
+      content = 'Are you sure you want to remove this water calculation?';
+    } else if (calculation is FishCalculation) {
+      content = 'Are you sure you want to remove this fish calculation?';
+    }
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(content),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+            ),
+            TextButton(
+              child: const Text('Confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
+
   Widget _buildFishCompatibilityTab() {
     final logBookProvider = Provider.of<LogBookProvider>(context);
     final compatibilityResults = List<CompatibilityResult>.from(logBookProvider.savedCompatibilityResults)
@@ -1183,18 +1241,24 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
         return Dismissible(
           key: Key(result.id.toString()),
           background: Container(
-            color: Colors.red,
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 20),
-            child: const Icon(Icons.delete, color: Colors.white),
+            color: const Color.fromARGB(255, 255, 17, 0),
+            alignment: Alignment.center,
+            child: const Text(
+              'Delete',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
           ),
           direction: DismissDirection.endToStart,
-          onDismissed: (direction) {
-            // This is handled by the confirmation dialog.
-          },
           confirmDismiss: (direction) async {
-            _showDeleteConfirmationDialog(logBookProvider.savedCompatibilityResults[index]);
-            return false; // Prevents immediate dismissal
+            return await _showDeleteConfirmationDialogCompatibility(result);
+          },
+          onDismissed: (direction) {
+            logBookProvider.removeCompatibilityResult(result);
+            showCustomNotification(context, 'Compatibility result removed');
           },
           child: Card(
             elevation: 2,
@@ -1335,7 +1399,33 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 
+  Future<bool> _showDeleteConfirmationDialogCompatibility(CompatibilityResult result) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Confirm Deletion'),
+          content: const Text('Are you sure you want to remove this compatibility result?'),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+            ),
+            TextButton(
+              child: const Text('Confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
+
   void _showCompatibilityDetails(BuildContext context, CompatibilityResult result) {
+    // Normalize plan string for robust comparison
+    String normalizedPlan = result.savedPlan.trim().toLowerCase().replaceAll(' ', '_');
+    bool showDetailed = normalizedPlan == 'pro_plus' || normalizedPlan == 'proplus';
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => Scaffold(
@@ -1366,59 +1456,47 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              final fish1Details = snapshot.data?[0];
-              final fish2Details = snapshot.data?[1];
-
               return SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(24),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    const SizedBox(height: 24),
-                    // Fish 1 Details Card
-                    _buildDetailedFishCard(
+                    // Fish 1
+                    _FishImageAndName(
                       fishName: result.fish1Name,
-                      fishDetails: fish1Details,
                       imagePath: ApiConfig.getFishImageUrl(result.fish1Name),
                     ),
-                    const SizedBox(height: 24),
-                    // Fish 2 Details Card
-                    _buildDetailedFishCard(
+                    const SizedBox(height: 16),
+                    const Icon(Icons.compare_arrows, size: 32, color: Color(0xFF006064)),
+                    const SizedBox(height: 16),
+                    // Fish 2
+                    _FishImageAndName(
                       fishName: result.fish2Name,
-                      fishDetails: fish2Details,
                       imagePath: ApiConfig.getFishImageUrl(result.fish2Name),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 32),
                     // Compatibility Result Card
                     Card(
                       elevation: 2,
                       child: Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(20),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            const Text(
-                              'Compatibility Result',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF006064),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
                             Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(
-                                  result.isCompatible ? Icons.check_circle : Icons.error,
+                                  result.isCompatible ? Icons.check_circle : Icons.cancel,
                                   color: result.isCompatible ? Colors.green : Colors.red,
-                                  size: 24,
+                                  size: 28,
                                 ),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 10),
                                 Text(
                                   result.isCompatible ? 'Compatible' : 'Not Compatible',
                                   style: TextStyle(
-                                    fontSize: 18,
+                                    fontSize: 20,
                                     fontWeight: FontWeight.bold,
                                     color: result.isCompatible ? Colors.green : Colors.red,
                                   ),
@@ -1426,9 +1504,10 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                               ],
                             ),
                             if (!result.isCompatible && result.reasons.isNotEmpty) ...[
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 18),
                               const Text(
                                 'Incompatibility Reasons:',
+                                textAlign: TextAlign.left,
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
@@ -1436,29 +1515,71 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              ...result.reasons.map((reason) => Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Icon(
-                                      Icons.error_outline,
-                                      color: Colors.red,
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        reason,
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          color: Colors.black87,
+                              if (showDetailed) ...[
+                                FutureBuilder<List<String>>(
+                                  future: OpenAIService.explainIncompatibilityReasons(
+                                    result.fish1Name,
+                                    result.fish2Name,
+                                    result.reasons,
+                                  ),
+                                  builder: (context, snapshot) {
+                                    if (snapshot.connectionState == ConnectionState.waiting) {
+                                      return const Center(child: CircularProgressIndicator());
+                                    }
+                                    final detailedReasons = snapshot.data ?? result.reasons;
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: detailedReasons.map((reason) => Padding(
+                                        padding: const EdgeInsets.only(bottom: 8),
+                                        child: Row(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Icon(
+                                              Icons.error_outline,
+                                              color: Colors.red,
+                                              size: 20,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                reason,
+                                                style: const TextStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.black87,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )).toList(),
+                                    );
+                                  },
+                                ),
+                              ] else ...[
+                                ...result.reasons.map((reason) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Icon(
+                                        Icons.error_outline,
+                                        color: Colors.red,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          reason,
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.black87,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              )),
+                                    ],
+                                  ),
+                                )),
+                              ],
                             ],
                           ],
                         ),
@@ -1474,130 +1595,63 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 
-  Widget _buildDetailedFishCard({
+  Widget _FishImageAndName({
     required String fishName,
     required String imagePath,
-    Map<String, dynamic>? fishDetails,
   }) {
-    return Card(
-      elevation: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Fish Image
-          ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-            child: FutureBuilder<http.Response>(
-              future: http.get(Uri.parse(ApiConfig.getFishImageUrl(fishName))),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Container(
-                    height: 200,
-                    color: Colors.grey[300],
-                    child: const Center(child: CircularProgressIndicator()),
-                  );
-                }
-                if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
-                  return Container(
-                    height: 200,
-                    color: Colors.grey[300],
-                    child: const Icon(Icons.error, size: 40, color: Colors.grey),
-                  );
-                }
-                final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                final String? base64Image = jsonData['image_data'];
-                if (base64Image == null || base64Image.isEmpty) {
-                  return Container(
-                    height: 200,
-                    color: Colors.grey[300],
-                    child: const Icon(Icons.error, size: 40, color: Colors.grey),
-                  );
-                }
-                final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                return Image.memory(
-                  base64Decode(base64Str),
-                  height: 200,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                );
-              },
-            ),
-          ),
-          // Fish Name and Details
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    fishName,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF006064),
-                    ),
-                  ),
-                ),
-                if (fishDetails != null && fishDetails['recommended_quantity'] != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      'Recommended: ${fishDetails['recommended_quantity']}',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          if (fishDetails != null) ...[
-            const SizedBox(height: 8),
-            // Scientific Name
-            if (fishDetails['Scientific Name'] != null)
-              Text(
-                'Scientific Name: ${fishDetails['Scientific Name']}',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontStyle: FontStyle.italic,
-                ),
+    return Column(
+      children: [
+        FutureBuilder<http.Response>(
+          future: http.get(Uri.parse(imagePath)),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return Container(
+                height: 200,
+                width: 320,
+                color: Colors.grey[200],
+                child: const Center(child: CircularProgressIndicator()),
+              );
+            }
+            if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
+              return Container(
+                height: 200,
+                width: 320,
+                color: Colors.grey[200],
+                child: const Icon(Icons.error, size: 40, color: Colors.grey),
+              );
+            }
+            final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
+            final String? base64Image = jsonData['image_data'];
+            if (base64Image == null || base64Image.isEmpty) {
+              return Container(
+                height: 200,
+                width: 320,
+                color: Colors.grey[200],
+                child: const Icon(Icons.error, size: 40, color: Colors.grey),
+              );
+            }
+            final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.memory(
+                base64Decode(base64Str),
+                height: 200,
+                width: 320,
+                fit: BoxFit.cover,
               ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  void _showDeleteConfirmationDialog(CompatibilityResult result) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Confirm Deletion'),
-          content: const Text('Are you sure you want to remove this compatibility result?'),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            TextButton(
-              child: const Text('Confirm'),
-              onPressed: () {
-                Provider.of<LogBookProvider>(context, listen: false).removeCompatibilityResult(result);
-                Navigator.of(context).pop();
-                showCustomNotification(context, 'Compatibility result removed');
-              },
-            ),
-          ],
-        );
-      },
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        Text(
+          fishName,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF006064),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -20,6 +20,8 @@ import '../widgets/snap_tips_dialog.dart';
 import '../services/openai_service.dart';
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../screens/subscription_page.dart';
 
 class CaptureScreen extends StatefulWidget {
   const CaptureScreen({super.key});
@@ -35,6 +37,10 @@ class CaptureScreenState extends State<CaptureScreen> {
   bool _isLoading = false;
   bool _isCameraAvailable = false;
 
+  // Plan-based state
+  String _userPlan = 'free';
+  int _savedCapturesCount = 0;
+
   String get apiUrl => ApiConfig.predictEndpoint;
 
   @override
@@ -43,6 +49,69 @@ class CaptureScreenState extends State<CaptureScreen> {
     if (!kIsWeb) {
       _initializeCamera();
     }
+    _loadUserPlanAndCount();
+  }
+
+  Future<void> _loadUserPlanAndCount() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    String plan = 'free';
+    int count = 0;
+    if (user != null) {
+      try {
+        final data = await Supabase.instance.client
+            .from('profiles')
+            .select('tier_plan')
+            .eq('id', user.id)
+            .single();
+        plan = (data['tier_plan'] ?? 'free').toString().toLowerCase().replaceAll(' ', '_');
+      } catch (_) {}
+      try {
+        // Count saved captures from logbook provider
+        final provider = Provider.of<LogBookProvider>(context, listen: false);
+        count = provider.savedPredictions.length;
+      } catch (_) {}
+    }
+    setState(() {
+      _userPlan = plan;
+      _savedCapturesCount = count;
+    });
+  }
+
+  bool _canSave() {
+    if (_userPlan == 'free' && _savedCapturesCount >= 5) return false;
+    if (_userPlan == 'pro' && _savedCapturesCount >= 20) return false;
+    return true;
+  }
+
+  void _showUpgradeDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Upgrade Required'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00ACC1),
+              ),
+              child: const Text('Upgrade Now'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _initializeCamera() async {
@@ -486,19 +555,19 @@ class CaptureScreenState extends State<CaptureScreen> {
   }
 
   void _savePredictions(List<FishPrediction> predictions) async {
+    if (!_canSave()) {
+      _showUpgradeDialog(_userPlan == 'free'
+        ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro or Pro Plus for more!'
+        : 'You have reached the limit of 20 saved captures for the Pro plan. Upgrade to Pro Plus for unlimited!');
+      return;
+    }
     final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
-    
     try {
       final bool saved = await logBookProvider.addPredictions(predictions);
-
       if (saved) {
         if (mounted) {
           showCustomNotification(context, 'Fish saved to collection');
-          
-          // Wait for 1.5 seconds to ensure notification is visible
           await Future.delayed(const Duration(milliseconds: 1500));
-          
-          // Navigate to homepage if the widget is still mounted
           if (mounted) {
             Navigator.pushAndRemoveUntil(
               context,
@@ -520,6 +589,8 @@ class CaptureScreenState extends State<CaptureScreen> {
         showCustomNotification(context, 'Error saving fish to collection');
       }
     }
+    // Refresh plan/count after save
+    await _loadUserPlanAndCount();
   }
 
   void _showPredictionResults(XFile imageFile, List<FishPrediction> predictions) {
@@ -595,18 +666,13 @@ class CaptureScreenState extends State<CaptureScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          
-                          // Description section - moved above Basic Information
                           DescriptionWidget(
                             description: highestPrediction.description,
                             maxLines: 3,
                           ),
-                          
-                          // Add fish images grid right after description
                           const SizedBox(height: 20),
                           FishImagesGrid(fishName: highestPrediction.commonName),
-                          
-                          const SizedBox(height: 30), // Space between description and basic info
+                          const SizedBox(height: 30),
                           const Text(
                             'Basic Information',
                             style: TextStyle(
@@ -615,14 +681,13 @@ class CaptureScreenState extends State<CaptureScreen> {
                               color: Color(0xFF006064),
                             ),
                           ),
-                          const SizedBox(height: 20), // Increased spacing
+                          const SizedBox(height: 20),
                           _buildDetailRow('Water Type', highestPrediction.waterType),
                           _buildDetailRow('Maximum Size', highestPrediction.maxSize),
                           _buildDetailRow('Temperament', highestPrediction.temperament),
                           _buildDetailRow('Care Level', highestPrediction.careLevel),
                           _buildDetailRow('Lifespan', highestPrediction.lifespan),
-                          const SizedBox(height: 40), // Increased spacing
-                          
+                          const SizedBox(height: 40),
                           const Text(
                             'Habitat Information',
                             style: TextStyle(
@@ -631,13 +696,12 @@ class CaptureScreenState extends State<CaptureScreen> {
                               color: Color(0xFF006064),
                             ),
                           ),
-                          const SizedBox(height: 20), // Increased spacing
+                          const SizedBox(height: 20),
                           _buildDetailRow('Temperature Range', highestPrediction.temperatureRange.isNotEmpty ? highestPrediction.temperatureRange : 'Unknown'),
                           _buildDetailRow('pH Range', highestPrediction.phRange.isNotEmpty ? highestPrediction.phRange : 'Unknown'),
                           _buildDetailRow('Minimum Tank Size', highestPrediction.minimumTankSize.isNotEmpty ? highestPrediction.minimumTankSize : 'Unknown'),
                           _buildDetailRow('Social Behavior', highestPrediction.socialBehavior.isNotEmpty ? highestPrediction.socialBehavior : 'Unknown'),
-                          const SizedBox(height: 40), // Increased spacing
-                          
+                          const SizedBox(height: 40),
                           const Text(
                             'Diet Information',
                             style: TextStyle(
@@ -646,33 +710,57 @@ class CaptureScreenState extends State<CaptureScreen> {
                               color: Color(0xFF006064),
                             ),
                           ),
-                          const SizedBox(height: 20), // Increased spacing
+                          const SizedBox(height: 20),
                           _buildDetailRow('Diet Type', highestPrediction.diet),
                           _buildDetailRow('Preferred Food', highestPrediction.preferredFood),
                           _buildDetailRow('Feeding Frequency', highestPrediction.feedingFrequency),
-                          const SizedBox(height: 40), // Increased spacing
-                          
+                          const SizedBox(height: 40),
                           Row(
                             children: [
-                              Expanded(
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF006064),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(vertical: 16),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
+                              if (_canSave()) ...[
+                                Expanded(
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF006064),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      _savePredictions([highestPrediction]);
+                                    },
+                                    child: const Text(
+                                      'Save',
+                                      style: TextStyle(fontSize: 18),
                                     ),
                                   ),
-                                  onPressed: () {
-                                    _savePredictions([highestPrediction]);
-                                  },
-                                  child: const Text(
-                                    'Save',
-                                    style: TextStyle(fontSize: 18),
+                                ),
+                              ],
+                              if (!_canSave()) ...[
+                                Expanded(
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.grey[400],
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      _showUpgradeDialog(_userPlan == 'free'
+                                        ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro or Pro Plus for more!'
+                                        : 'You have reached the limit of 20 saved captures for the Pro plan. Upgrade to Pro Plus for unlimited!');
+                                    },
+                                    child: const Text(
+                                      'Upgrade to Save',
+                                      style: TextStyle(fontSize: 18),
+                                    ),
                                   ),
                                 ),
-                              ),
+                              ],
                               const SizedBox(width: 16),
                               Expanded(
                                 child: ElevatedButton(
@@ -687,7 +775,6 @@ class CaptureScreenState extends State<CaptureScreen> {
                                   onPressed: () {
                                     final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
                                     logBookProvider.addPredictions([highestPrediction]);
-                                    
                                     Navigator.pushReplacement(
                                       context,
                                       MaterialPageRoute(
