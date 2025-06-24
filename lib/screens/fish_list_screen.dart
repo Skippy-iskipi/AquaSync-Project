@@ -9,12 +9,12 @@ import '../services/openai_service.dart'; // Import OpenAI service
 
 class FishListScreen extends StatefulWidget {
   final String title;
-  final bool isSaltWater;
+  final bool? isSaltWater;
 
   const FishListScreen({
     super.key,
     required this.title,
-    required this.isSaltWater,
+    this.isSaltWater,
   });
 
   @override
@@ -27,6 +27,12 @@ class _FishListScreenState extends State<FishListScreen> {
   bool isLoading = true;
   String? error;
   final TextEditingController _searchController = TextEditingController();
+
+  // Add filter state
+  Map<String, bool> waterTypeFilters = {'Freshwater': false, 'Saltwater': false};
+  Map<String, bool> temperamentFilters = {'Peaceful': false, 'Semi-aggressive': false, 'Aggressive': false};
+  Map<String, bool> socialBehaviorFilters = {'Schooling': false, 'Solitary': false, 'Community': false};
+  Map<String, bool> dietFilters = {'Omnivore': false, 'Carnivore': false, 'Herbivore': false};
 
   @override
   void initState() {
@@ -87,8 +93,9 @@ class _FishListScreenState extends State<FishListScreen> {
           fishList = data
               .map<Map<String, dynamic>>((item) => item as Map<String, dynamic>)
               .where((fish) => 
-                (widget.isSaltWater && fish['water_type'] == 'Saltwater') ||
-                (!widget.isSaltWater && fish['water_type'] == 'Freshwater'))
+                widget.isSaltWater == null ||
+                (widget.isSaltWater == true && fish['water_type'] == 'Saltwater') ||
+                (widget.isSaltWater == false && fish['water_type'] == 'Freshwater'))
               .toList();
           filteredFishList = fishList;
           isLoading = false;
@@ -328,7 +335,6 @@ class _FishListScreenState extends State<FishListScreen> {
                         ),
                         const SizedBox(height: 20), // Increased spacing
                         _buildDetailRow('Diet Type', fish['diet'] ?? 'Unknown'),
-                        _buildDetailRow('Preferred Food', fish['preferred_food'] ?? 'Unknown'),
                         _buildDetailRow('Feeding Frequency', fish['feeding_frequency'] ?? 'Unknown'),
                       ],
                     ),
@@ -417,8 +423,147 @@ class _FishListScreenState extends State<FishListScreen> {
     );
   }
   
+  void _openFilterModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: MediaQuery.of(context).viewInsets,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Filter Fish', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Active Filters', style: TextStyle(fontWeight: FontWeight.w600)),
+                          TextButton(
+                            onPressed: () {
+                              setModalState(() {
+                                waterTypeFilters.updateAll((key, value) => false);
+                                temperamentFilters.updateAll((key, value) => false);
+                                socialBehaviorFilters.updateAll((key, value) => false);
+                                dietFilters.updateAll((key, value) => false);
+                              });
+                            },
+                            child: const Text('Clear All'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      const Text('Water Type', style: TextStyle(fontWeight: FontWeight.w600)),
+                      ...waterTypeFilters.keys.map((type) => CheckboxListTile(
+                        title: Text(type),
+                        value: waterTypeFilters[type],
+                        onChanged: (val) {
+                          setModalState(() => waterTypeFilters[type] = val ?? false);
+                        },
+                        controlAffinity: ListTileControlAffinity.leading,
+                        dense: true,
+                      )),
+                      const Divider(),
+                      const Text('Temperament', style: TextStyle(fontWeight: FontWeight.w600)),
+                      ...temperamentFilters.keys.map((type) => CheckboxListTile(
+                        title: Text(type),
+                        value: temperamentFilters[type],
+                        onChanged: (val) {
+                          setModalState(() => temperamentFilters[type] = val ?? false);
+                        },
+                        controlAffinity: ListTileControlAffinity.leading,
+                        dense: true,
+                      )),
+                      const Divider(),
+                      const Text('Social Behavior', style: TextStyle(fontWeight: FontWeight.w600)),
+                      ...socialBehaviorFilters.keys.map((type) => CheckboxListTile(
+                        title: Text(type),
+                        value: socialBehaviorFilters[type],
+                        onChanged: (val) {
+                          setModalState(() => socialBehaviorFilters[type] = val ?? false);
+                        },
+                        controlAffinity: ListTileControlAffinity.leading,
+                        dense: true,
+                      )),
+                      const Divider(),
+                      const Text('Diet', style: TextStyle(fontWeight: FontWeight.w600)),
+                      ...dietFilters.keys.map((type) => CheckboxListTile(
+                        title: Text(type),
+                        value: dietFilters[type],
+                        onChanged: (val) {
+                          setModalState(() => dietFilters[type] = val ?? false);
+                        },
+                        controlAffinity: ListTileControlAffinity.leading,
+                        dense: true,
+                      )),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            setState(() {}); // To trigger filter in main list
+                            Navigator.pop(context);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF006064),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Text('Apply Filters'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  List<Map<String, dynamic>> get _filteredFishListWithFilters {
+    List<Map<String, dynamic>> list = filteredFishList;
+    // Water type
+    if (waterTypeFilters.containsValue(true)) {
+      list = list.where((fish) => waterTypeFilters[fish['water_type']] == true).toList();
+    }
+    // Temperament
+    if (temperamentFilters.containsValue(true)) {
+      list = list.where((fish) => temperamentFilters[fish['temperament']] == true).toList();
+    }
+    // Social Behavior
+    if (socialBehaviorFilters.containsValue(true)) {
+      list = list.where((fish) => socialBehaviorFilters[fish['social_behavior']] == true).toList();
+    }
+    // Diet
+    if (dietFilters.containsValue(true)) {
+      list = list.where((fish) => dietFilters[fish['diet']] == true).toList();
+    }
+    return list;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    
     return Scaffold(
       resizeToAvoidBottomInset: false,
       backgroundColor: Colors.white,
@@ -437,6 +582,13 @@ class _FishListScreenState extends State<FishListScreen> {
         ),
         backgroundColor: Colors.white,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.filter_alt_outlined, color: Color(0xFF006064)),
+            onPressed: _openFilterModal,
+            tooltip: 'Filter',
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -498,7 +650,7 @@ class _FishListScreenState extends State<FishListScreen> {
                           ],
                         ),
                       )
-                    : filteredFishList.isEmpty
+                    : _filteredFishListWithFilters.isEmpty
                         ? Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
@@ -524,105 +676,139 @@ class _FishListScreenState extends State<FishListScreen> {
                               horizontal: 16,
                               vertical: 8,
                             ),
-                            itemCount: filteredFishList.length,
+                            itemCount: _filteredFishListWithFilters.length,
                             itemBuilder: (context, index) {
-                              final fish = filteredFishList[index];
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: 12),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                elevation: 0,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.06),
-                                        spreadRadius: 1.5,
-                                        blurRadius: 0,
-                                        offset: const Offset(0, 6),
-                                      ),
-                                    ],
-                                  ),
-                                  child: InkWell(
-                                    onTap: () {
-                                      _showFishDetails(fish);
-                                    },
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(12),
-                                      child: Row(
-                                        children: [
-                                          buildFishListImage(fish['common_name']),
-                                          const SizedBox(width: 16),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  fish['common_name'] ?? '',
-                                                  style: const TextStyle(
-                                                    fontSize: 18,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: Colors.black,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  fish['scientific_name'] ?? '',
-                                                  style: TextStyle(
-                                                    fontSize: 12,
-                                                    fontStyle: FontStyle.italic,
-                                                    color: Colors.grey[600],
-                                                  ),
-                                                ),
-                                                // Add description snippet if available
-                                                if (fish['description'] != null && fish['description'].toString().isNotEmpty)
-                                                  Text(
-                                                    fish['description'].toString().length > 60
-                                                        ? '${fish['description'].toString().substring(0, 60)}...'
-                                                        : fish['description'].toString(),
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: Colors.grey[600],
-                                                    ),
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                  ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  'Size: ${fish['max_size']} cm length',
-                                                  style: const TextStyle(
-                                                    fontSize: 14,
-                                                    color: Colors.black87,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  'Life Span: ${fish['lifespan']}',
-                                                  style: const TextStyle(
-                                                    fontSize: 14,
-                                                    color: Colors.black87,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          Icon(
-                                            Icons.arrow_forward_ios,
-                                            color: Colors.grey[400],
-                                            size: 16,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                              final fish = _filteredFishListWithFilters[index];
+                              return _ModernFishCard(
+                                fish: fish,
+                                onTap: () => _showFishDetails(fish),
+                                buildFishListImage: buildFishListImage,
                               );
                             },
                           ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// Modern Fish Card Widget
+class _ModernFishCard extends StatelessWidget {
+  final Map<String, dynamic> fish;
+  final VoidCallback onTap;
+  final Widget Function(String?) buildFishListImage;
+  const _ModernFishCard({required this.fish, required this.onTap, required this.buildFishListImage});
+
+  @override
+  Widget build(BuildContext context) {
+    List<Widget> tags = [];
+    if (fish['water_type'] != null) {
+      tags.add(_FishTag(label: fish['water_type'], color: fish['water_type'] == 'Freshwater' ? Colors.teal : Colors.blueAccent));
+    }
+    if (fish['temperament'] != null) {
+      tags.add(_FishTag(label: fish['temperament'], color: Colors.orangeAccent));
+    }
+    if (fish['social_behavior'] != null) {
+      tags.add(_FishTag(label: fish['social_behavior'], color: Colors.green));
+    }
+    if (fish['diet'] != null) {
+      tags.add(_FishTag(label: fish['diet'], color: Colors.brown));
+    }
+    return Card(
+      margin: const EdgeInsets.only(bottom: 18),
+      color: const Color(0xFFF5F7FA),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: Colors.grey.withOpacity(0.13), width: 1.2),
+      ),
+      elevation: 0,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.all(2),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                  spreadRadius: 0,
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  buildFishListImage(fish['common_name']),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          fish['common_name'] ?? '',
+                          style: const TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          fish['scientific_name'] ?? '',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontStyle: FontStyle.italic,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 7,
+                          runSpacing: 2,
+                          children: tags,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FishTag extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _FishTag({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      margin: const EdgeInsets.only(bottom: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+        ),
       ),
     );
   }

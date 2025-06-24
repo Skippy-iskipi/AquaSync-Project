@@ -7,6 +7,7 @@ import 'screens/auth_screen.dart';
 import 'services/auth_service.dart';
 import 'screens/email_not_confirmed_screen.dart'; // Import the new screen
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'screens/subscription_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +28,7 @@ void main() async {
       providers: [
         ChangeNotifierProvider<LogBookProvider>(create: (_) => LogBookProvider()),
         Provider<AuthService>(create: (_) => AuthService()),
+        ChangeNotifierProvider<UserPlanProvider>(create: (_) => UserPlanProvider()),
       ],
       child: const MyApp(),
     ),
@@ -66,6 +68,8 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> {
   User? _currentUser; // State to hold the current user
   bool _isLoadingUser = true; // State to manage loading
+  bool _hasSeenWelcome = false;
+  bool _hasSeenSubscription = false;
 
   @override
   void initState() {
@@ -78,39 +82,25 @@ class _AuthWrapperState extends State<AuthWrapper> {
     authService.onAuthStateChange.listen((data) async {
       if (!mounted) return;
 
-      print('Auth State Change Detected: ${data.event}'); // Debug print
-
       setState(() {
         _isLoadingUser = true;
       });
 
       final session = data.session;
-        if (session != null) {
-          final latestUserResponse = await Supabase.instance.client.auth.getUser();
-          if (mounted) {
-            setState(() {
-              _currentUser = latestUserResponse.user;
-              _isLoadingUser = false;
-            });
-
-            // The LogBookProvider now initializes itself automatically.
-            // This call is redundant and has been removed.
-            // final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
-            // await logBookProvider.init();
-          }
+      if (session != null) {
+        final latestUserResponse = await Supabase.instance.client.auth.getUser();
+        if (mounted) {
+          setState(() {
+            _currentUser = latestUserResponse.user;
+            _isLoadingUser = false;
+          });
         }
-        else { // User has signed out
-        print('No session found (signed out), redirecting to AuthScreen...'); // Debug print
+      } else {
         if (mounted) {
           setState(() {
             _currentUser = null;
             _isLoadingUser = false;
           });
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const AuthScreen()),
-            (route) => false,
-          );
-          print('Navigation to AuthScreen triggered.'); // Debug print
         }
       }
     });
@@ -150,7 +140,33 @@ class _AuthWrapperState extends State<AuthWrapper> {
   @override
   Widget build(BuildContext context) {
     if (_isLoadingUser) {
-      return const WelcomeScreen(); // Show WelcomeScreen while loading user data
+      return WelcomeScreen(
+        onFinish: () {
+          setState(() {
+            _hasSeenWelcome = true;
+          });
+        },
+      );
+    }
+
+    if (!_hasSeenWelcome) {
+      return WelcomeScreen(
+        onFinish: () {
+          setState(() {
+            _hasSeenWelcome = true;
+          });
+        },
+      );
+    }
+
+    if (!_hasSeenSubscription) {
+      return SubscriptionPage(
+        onPlanSelected: () {
+          setState(() {
+            _hasSeenSubscription = true;
+          });
+        },
+      );
     }
 
     if (_currentUser != null) {
@@ -167,7 +183,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
 }
 
 class WelcomeScreen extends StatefulWidget {
-  const WelcomeScreen({super.key});
+  final VoidCallback? onFinish;
+  const WelcomeScreen({super.key, this.onFinish});
 
   @override
   State<WelcomeScreen> createState() => _WelcomeScreenState();
@@ -177,6 +194,9 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
 
+  void _finish() {
+    if (widget.onFinish != null) widget.onFinish!();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -244,12 +264,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
             top: 48,
             right: 24,
             child: TextButton(
-              onPressed: () {
-                Navigator.pushReplacement(
-                  context, 
-                  MaterialPageRoute(builder: (context) => const HomePage()),
-                );
-              },
+              onPressed: _finish,
               style: TextButton.styleFrom(
                 backgroundColor: Colors.white.withOpacity(0.8),
                 shape: RoundedRectangleBorder(
@@ -379,8 +394,8 @@ class ImageFeatureCard extends StatelessWidget {
                       ElevatedButton(
                         onPressed: () {
                           Navigator.pushReplacement(
-                            context, 
-                            MaterialPageRoute(builder: (context) => const HomePage()),
+                            context,
+                            MaterialPageRoute(builder: (context) => const SubscriptionPage()),
                           );
                         },
                         style: ElevatedButton.styleFrom(
@@ -487,3 +502,22 @@ class FeatureScreen extends StatelessWidget {
     );
   }
 }
+
+class UserPlanProvider with ChangeNotifier {
+  String _plan = 'free';
+  String get plan => _plan;
+
+  Future<void> fetchPlan() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      final data = await Supabase.instance.client
+          .from('profiles')
+          .select('tier_plan')
+          .eq('id', user.id)
+          .single();
+      _plan = data['tier_plan'] ?? 'free';
+      notifyListeners();
+    }
+  }
+}
+
