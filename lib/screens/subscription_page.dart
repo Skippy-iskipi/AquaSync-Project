@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'auth_screen.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SubscriptionPage extends StatelessWidget {
   final VoidCallback? onPlanSelected;
@@ -82,6 +86,42 @@ class SubscriptionPage extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class SubscriptionService {
+  static const String backendUrl = 'http://192.168.76.120:8000';
+
+  static Future<Map<String, dynamic>> createPaymentIntent({
+    required String userId,
+    required String tierPlan,
+    List<String> paymentMethods = const ['card', 'gcash', 'grab_pay', 'paymaya'],
+  }) async {
+    try {
+      final uri = Uri.parse('$backendUrl/create-payment-intent');
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'user_id': userId,
+          'tier_plan': tierPlan,
+          'payment_methods': paymentMethods,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+        if (responseData['checkout_url'] != null) {
+          return responseData;
+        } else {
+          throw Exception('No checkout URL provided by the server');
+        }
+      } else {
+        throw Exception('Failed to create payment intent: ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Error during payment process: $e');
+    }
   }
 }
 
@@ -171,12 +211,72 @@ class _TierCard extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  if (onPlanSelected != null) onPlanSelected!();
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (context) => const AuthScreen()),
+                onPressed: () async {
+                  if (tier['name'] == 'Free') {
+                    if (onPlanSelected != null) onPlanSelected!();
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (context) => const AuthScreen()),
+                    );
+                    return;
+                  }
+                  final userId = Supabase.instance.client.auth.currentUser?.id;
+                  if (userId == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('You must be logged in to subscribe.')),
+                    );
+                    return;
+                  }
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (_) => const Center(child: CircularProgressIndicator()),
                   );
+                  try {
+                    final result = await SubscriptionService.createPaymentIntent(
+                      userId: userId,
+                      tierPlan: tier['name'].toLowerCase().replaceAll(' ', '_'),
+                    );
+                    Navigator.pop(context); // Remove loading
+
+                    final paymentUrl = result['checkout_url'];
+                    if (paymentUrl != null) {
+                      if (await canLaunch(paymentUrl)) {
+                        await launch(paymentUrl, forceSafariVC: true, forceWebView: true);
+                      } else {
+                        throw 'Could not launch $paymentUrl';
+                      }
+                    } else {
+                      showDialog(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          title: const Text('Payment Intent Created'),
+                          content: Text('Intent ID: \n${result['payment_intent_id']}'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('OK'),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    Navigator.pop(context); // Remove loading
+                    showDialog(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        title: const Text('Error'),
+                        content: Text(e.toString()),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('OK'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.teal[700],
@@ -195,4 +295,4 @@ class _TierCard extends StatelessWidget {
       ),
     );
   }
-} 
+}
