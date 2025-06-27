@@ -9,6 +9,7 @@ import 'screens/email_not_confirmed_screen.dart'; // Import the new screen
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'screens/subscription_page.dart';
 
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   print('Starting main()');
@@ -75,6 +76,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   void initState() {
     super.initState();
     _setupAuthListener();
+
   }
 
   void _setupAuthListener() {
@@ -136,6 +138,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
       }
     }
   }
+
+
 
   @override
   Widget build(BuildContext context) {

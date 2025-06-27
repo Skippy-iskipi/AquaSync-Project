@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Body
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Body, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +20,8 @@ import logging
 import torchvision.transforms.functional as TF
 import traceback
 import base64
+import requests
+from datetime import datetime, timezone, timedelta
 
 from .supabase_config import get_supabase_client
 from .models import FishSpecies
@@ -52,6 +54,11 @@ transform = transforms.Compose([
 
 class FishGroup(BaseModel):
     fish_names: List[str]
+
+class CreatePaymentIntentRequest(BaseModel):
+    user_id: str
+    tier_plan: str
+    payment_methods: List[str] = ["card", "gcash", "grab_pay", "paymaya"]
 
 # Helper function to determine if a fish species can coexist with itself
 def can_same_species_coexist(fish_name: str, fish_info: Dict[str, Any]) -> Tuple[bool, str]:
@@ -1055,6 +1062,201 @@ async def root():
             "classifier": "/predict"
         }
     }
+
+PAYMONGO_SECRET_KEY = os.getenv("PAYMONGO_SECRET_KEY")  # Set this in your environment
+
+# --- Payment & Subscription Utilities ---
+def create_subscription(db, user_id, tier_plan, payment_intent_id):
+    now = datetime.now(timezone.utc)
+    next_billing = now + timedelta(days=30)
+    db.table('subscriptions').insert({
+        "user_id": user_id,
+        "tier_plan": tier_plan,
+        "status": "pending",
+        "paymongo_payment_id": payment_intent_id,
+        "start_date": now.isoformat(),
+        "next_billing_date": next_billing.isoformat()
+    }).execute()
+
+def expire_subscriptions_and_notify(db: Client):
+    now = datetime.now(timezone.utc).isoformat()
+    expired = db.table('subscriptions')\
+        .select('*')\
+        .eq('status', 'active')\
+        .lt('next_billing_date', now)\
+        .execute()
+    expired_user_ids = []
+    for sub in expired.data:
+        user_id = sub['user_id']
+        db.table('subscriptions').update({
+            'status': 'expired',
+            'end_date': now
+        }).eq('id', sub['id']).execute()
+        db.table('profiles').update({
+            'tier_plan': 'free'
+        }).eq('id', user_id).execute()
+        expired_user_ids.append(user_id)
+        logger.info(f"Subscription expired for user {user_id}")
+    return expired_user_ids
+
+# --- Expose Expiry Logic as Endpoint ---
+@app.post("/expire-subscriptions")
+async def expire_subscriptions_endpoint(db: Client = Depends(get_supabase_client)):
+    # TODO: Add authentication/authorization for admin or scheduled job
+    expired_user_ids = expire_subscriptions_and_notify(db)
+    return {"expired_user_ids": expired_user_ids, "message": "Expired subscriptions processed. Notify these users in the frontend."}
+
+# --- Webhook Signature Verification ---
+def verify_paymongo_signature(request: Request) -> bool:
+    # Placeholder: PayMongo may use a secret or HMAC signature. Adjust as per their docs.
+    signature = request.headers.get('Paymongo-Signature')
+    if not signature:
+        logger.warning("No Paymongo-Signature header found in webhook request.")
+        return False
+    # TODO: Implement actual signature verification logic here
+    # For now, just log and accept
+    logger.info(f"Received Paymongo-Signature: {signature}")
+    return True
+
+# --- Payment Intent Endpoint (refactored) ---
+@app.post("/create-payment-intent")
+async def create_payment_intent(
+    user_id: str,
+    tier_plan: str,
+    payment_methods: Optional[List[str]] = Query(
+        default=["card", "gcash", "grab_pay", "paymaya"],
+        description="List of allowed payment methods"
+    ),
+    db: Client = Depends(get_supabase_client)
+):
+    plan_amounts = {
+        "pro": 9900,
+        "pro_plus": 19900
+    }
+    if tier_plan not in plan_amounts:
+        raise HTTPException(status_code=400, detail="Invalid plan selected.")
+    
+    valid_methods = {"card", "gcash", "grab_pay", "paymaya", "billease", "dob"}
+    for method in payment_methods:
+        if method not in valid_methods:
+            raise HTTPException(status_code=400, detail=f"Invalid payment method: {method}")
+    
+    amount = plan_amounts[tier_plan]
+    
+    # Create payment session directly instead of payment intent
+    payload = {
+        "data": {
+            "attributes": {
+                "amount": amount,
+                "payment_method_types": payment_methods,
+                "currency": "PHP",
+                "description": f"{tier_plan.capitalize()} Subscription for user {user_id}",
+                "success_url": "aquasync://payment/success",
+                "cancel_url": "aquasync://payment/cancel",
+                "line_items": [{
+                    "name": f"{tier_plan.capitalize()} Subscription",
+                    "amount": amount,
+                    "currency": "PHP",
+                    "quantity": 1
+                }]
+            }
+        }
+    }
+    
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "authorization": f"Basic {base64.b64encode((PAYMONGO_SECRET_KEY + ':').encode()).decode()}"
+    }
+    
+    # Create payment session
+    response = requests.post(
+        "https://api.paymongo.com/v1/payment_sessions",
+        json=payload,
+        headers=headers
+    )
+    
+    if response.status_code not in (200, 201):
+        logger.error(f"PayMongo error: {response.text}")
+        raise HTTPException(status_code=500, detail=f"PayMongo error: {response.text}")
+    
+    session_data = response.json()["data"]
+    checkout_url = session_data["attributes"]["checkout_url"]
+    session_id = session_data["id"]
+    
+    # Save pending subscription
+    try:
+        create_subscription(db, user_id, tier_plan, session_id)
+    except Exception as e:
+        logger.error(f"Error saving subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to save subscription.")
+    
+    return JSONResponse(content={
+        "checkout_url": checkout_url,
+        "session_id": session_id,
+        "amount": amount,
+        "tier_plan": tier_plan
+    })
+
+# --- Webhook Handler (refactored & improved) ---
+@app.post("/paymongo/webhook")
+async def paymongo_webhook(request: Request, db: Client = Depends(get_supabase_client)):
+    # Webhook signature verification
+    if not verify_paymongo_signature(request):
+        logger.warning("Webhook signature verification failed. Processing anyway for dev, but block in prod.")
+    try:
+        payload = await request.json()
+        event_type = payload.get("data", {}).get("type")
+        attributes = payload.get("data", {}).get("attributes", {})
+        payment_id = payload.get("data", {}).get("id")
+        logger.info(f"Received PayMongo webhook: {event_type} for payment_id={payment_id}")
+        response = db.table('subscriptions').select('*').eq('paymongo_payment_id', payment_id).execute()
+        if not response.data:
+            logger.warning(f"No subscription found for payment_id {payment_id}")
+            return {"received": True}
+        subscription = response.data[0]
+        user_id = subscription['user_id']
+        now = datetime.now(timezone.utc)
+        next_billing = now + timedelta(days=30)
+        if event_type == "payment.paid":
+            db.table('subscriptions').update({
+                'status': 'active',
+                'last_payment_date': now.isoformat(),
+                'next_billing_date': next_billing.isoformat()
+            }).eq('paymongo_payment_id', payment_id).execute()
+            db.table('profiles').update({
+                'tier_plan': subscription['tier_plan']
+            }).eq('id', user_id).execute()
+            logger.info(f"Subscription activated for user {user_id}")
+        elif event_type == "payment.failed":
+            db.table('subscriptions').update({
+                'status': 'failed'
+            }).eq('paymongo_payment_id', payment_id).execute()
+            logger.info(f"Subscription payment failed for payment_id {payment_id}")
+        elif event_type == "payment.expired":
+            db.table('subscriptions').update({
+                'status': 'expired',
+                'end_date': now.isoformat()
+            }).eq('paymongo_payment_id', payment_id).execute()
+            db.table('profiles').update({
+                'tier_plan': 'free'
+            }).eq('id', user_id).execute()
+            logger.info(f"Subscription expired for user {user_id} via webhook event.")
+        elif event_type == "payment.refunded":
+            db.table('subscriptions').update({
+                'status': 'refunded',
+                'end_date': now.isoformat()
+            }).eq('paymongo_payment_id', payment_id).execute()
+            db.table('profiles').update({
+                'tier_plan': 'free'
+            }).eq('id', user_id).execute()
+            logger.info(f"Subscription refunded for user {user_id} via webhook event.")
+        else:
+            logger.info(f"Unhandled PayMongo event type: {event_type}")
+        return {"received": True}
+    except Exception as e:
+        logger.error(f"Error handling PayMongo webhook: {str(e)}")
+        return {"error": str(e)}
 
 
 
