@@ -23,6 +23,11 @@ venv/
 # Atom
 .atom/
 
+# Python virtual environments
+.venv/
+venv/
+
+
 # VS Code (uncomment if needed)
 # .vscode/
 
