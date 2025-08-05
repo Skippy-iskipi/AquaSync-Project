@@ -93,4 +93,5 @@ node_modules/
 
 # Allow example environment files
 !.env.example
+.env.*
 
