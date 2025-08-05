@@ -88,6 +88,9 @@ node_modules/
 .env.development
 .env.production
 .env.test
+# Ignore all .env files
+*.env
+
 # Allow example environment files
 !.env.example
 
