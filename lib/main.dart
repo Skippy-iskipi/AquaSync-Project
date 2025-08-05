@@ -1,25 +1,41 @@
 import 'package:flutter/material.dart';
-import 'screens/homepage.dart'; // Import the new homepage file
+import 'screens/homepage.dart';
 import 'package:provider/provider.dart';
-import 'screens/logbook_provider.dart'; // Adjust the import as necessary
+import 'screens/logbook_provider.dart';
+import 'providers/user_plan_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/auth_screen.dart';
 import 'services/auth_service.dart';
-import 'screens/email_not_confirmed_screen.dart'; // Import the new screen
+import 'screens/email_not_confirmed_screen.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'screens/subscription_page.dart';
-
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   print('Starting main()');
+  
+  try {
   await dotenv.load();
   print('Loaded .env');
+    
+    final supabaseUrl = dotenv.env['SUPABASE_URL'];
+    final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY'];
+    
+    print('Supabase URL: ${supabaseUrl ?? 'NOT FOUND'}');
+    print('Supabase Anon Key: ${supabaseAnonKey != null ? 'FOUND' : 'NOT FOUND'}');
+    
+    if (supabaseUrl == null || supabaseAnonKey == null) {
+      throw Exception('Missing Supabase configuration in .env file');
+    }
+    
   await Supabase.initialize(
-    url: dotenv.env['SUPABASE_URL']!,
-    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
+      url: supabaseUrl,
+      anonKey: supabaseAnonKey,
   );
   print('Initialized Supabase');
+  } catch (error) {
+    print('Error during initialization: $error');
+    // Continue with the app but Supabase features won't work
+  }
 
   print('Initialized LogBookProvider');
    print('Current user id: ${Supabase.instance.client.auth.currentUser?.id}');
@@ -46,12 +62,11 @@ class MyApp extends StatelessWidget {
       title: 'AquaSync',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00BFB3), // Teal color from your design
+          seedColor: const Color(0xFF00BFB3),
         ),
         useMaterial3: true,
       ),
       home: const AuthWrapper(),
-      // Defining routes without admin
       routes: {
         '/home': (context) => const HomePage(),
       },
@@ -67,27 +82,47 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  User? _currentUser; // State to hold the current user
-  bool _isLoadingUser = true; // State to manage loading
-  bool _hasSeenWelcome = false;
-  bool _hasSeenSubscription = false;
+  User? _currentUser;
+  bool _isLoadingUser = true;
+  bool _hasSeenOnboarding = false;
 
   @override
   void initState() {
     super.initState();
     _setupAuthListener();
-
   }
 
   void _setupAuthListener() {
     final authService = Provider.of<AuthService>(context, listen: false);
     authService.onAuthStateChange.listen((data) async {
       if (!mounted) return;
-
+      
+      print('Auth state changed: ${data.event}'); // Debug log
+      print('Auth data: ${data.toString()}'); // Debug log
+      
+      // Handle email confirmation and sign in
+      if (data.event == AuthChangeEvent.signedIn) {
+        print('User signed in event detected'); // Debug log
+        final user = data.session?.user;
+        
+        if (user != null && user.emailConfirmedAt != null) {
+          print('Email confirmation detected'); // Debug log
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Email confirmed successfully! Welcome to AquaSync!'),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+        }
+      }
+      
       setState(() {
         _isLoadingUser = true;
       });
-
+      
       final session = data.session;
       if (session != null) {
         final latestUserResponse = await Supabase.instance.client.auth.getUser();
@@ -96,6 +131,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
             _currentUser = latestUserResponse.user;
             _isLoadingUser = false;
           });
+          // Fetch user's plan when they sign in
+          Provider.of<UserPlanProvider>(context, listen: false).fetchPlan();
         }
       } else {
         if (mounted) {
@@ -106,28 +143,24 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
       }
     });
-
-    // Also handle initial session check here to set _currentUser properly on app start
     _checkInitialSession();
   }
 
-  // This function will check the initial session state when the app starts
-  // It handles cases where the session might already exist from a previous run
   Future<void> _checkInitialSession() async {
     if (!mounted) return;
-
     setState(() {
       _isLoadingUser = true;
     });
-
     final session = Supabase.instance.client.auth.currentSession;
     if (session != null) {
       final latestUserResponse = await Supabase.instance.client.auth.getUser();
       if (mounted) {
         setState(() {
-          _currentUser = latestUserResponse.user; // User is considered authenticated if session exists
+          _currentUser = latestUserResponse.user;
           _isLoadingUser = false;
         });
+        // Fetch user's plan when they sign in
+        Provider.of<UserPlanProvider>(context, listen: false).fetchPlan();
       }
     } else {
       if (mounted) {
@@ -139,42 +172,21 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
   }
 
-
-
   @override
   Widget build(BuildContext context) {
     if (_isLoadingUser) {
-      return WelcomeScreen(
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (!_hasSeenOnboarding) {
+      return OnboardingScreen(
         onFinish: () {
           setState(() {
-            _hasSeenWelcome = true;
+            _hasSeenOnboarding = true;
           });
         },
       );
     }
-
-    if (!_hasSeenWelcome) {
-      return WelcomeScreen(
-        onFinish: () {
-          setState(() {
-            _hasSeenWelcome = true;
-          });
-        },
-      );
-    }
-
-    if (!_hasSeenSubscription) {
-      return SubscriptionPage(
-        onPlanSelected: () {
-          setState(() {
-            _hasSeenSubscription = true;
-          });
-        },
-      );
-    }
-
     if (_currentUser != null) {
-      // Check if email is confirmed
       if (_currentUser!.emailConfirmedAt != null) {
         return const HomePage();
       } else {
@@ -186,105 +198,137 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 }
 
-class WelcomeScreen extends StatefulWidget {
+class OnboardingScreen extends StatefulWidget {
   final VoidCallback? onFinish;
-  const WelcomeScreen({super.key, this.onFinish});
+  const OnboardingScreen({super.key, this.onFinish});
 
   @override
-  State<WelcomeScreen> createState() => _WelcomeScreenState();
+  State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _WelcomeScreenState extends State<WelcomeScreen> {
-  final PageController _pageController = PageController();
+class _OnboardingScreenState extends State<OnboardingScreen> {
+  final PageController _controller = PageController();
   int _currentPage = 0;
 
-  void _finish() {
-    if (widget.onFinish != null) widget.onFinish!();
+  final List<_OnboardingPageData> _pages = [
+    _OnboardingPageData(
+      imageAsset: 'lib/icons/Identify_Fishes.png',
+      headline: 'Identify fishes',
+      description: 'Unlimited Identification',
+    ),
+    _OnboardingPageData(
+      imageAsset: 'lib/icons/Document_Fishes.png',
+      headline: 'Document fishes',
+      description: 'Save Fish Compatibility',
+    ),
+    _OnboardingPageData(
+      imageAsset: 'lib/icons/More_Recommendation.png',
+      headline: 'More Recommendation',
+      description: 'Helps build suitable fish environment',
+    ),
+    _OnboardingPageData(
+      imageAsset: 'lib/icons/Create_Aquarium.png',
+      headline: 'Create your\nPerfect Aquarium',
+      description: '',
+      buttonText: 'Get Started',
+    ),
+  ];
+
+  void _nextPage() {
+    if (_currentPage < _pages.length - 1) {
+      _controller.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
+    } else {
+      if (widget.onFinish != null) widget.onFinish!();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Column(
+              children: [
+                const SizedBox(height: 32),
+                const Center(
+                  child: _AquaSyncTitle(),
+                ),
+                const SizedBox(height: 18),
+                Expanded(
+                  child: PageView.builder(
+                    controller: _controller,
+                    itemCount: _pages.length,
+                    onPageChanged: (i) => setState(() => _currentPage = i),
+                    itemBuilder: (context, i) {
+                      final data = _pages[i];
+                      return _OnboardingCard(
+                        data: data,
+                        isLast: i == _pages.length - 1,
+                        onButton: _nextPage,
+                        currentPage: _currentPage,
+                        totalPages: _pages.length,
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+            if (_currentPage < _pages.length - 1)
+              Positioned(
+                top: 16,
+                right: 16,
+                child: TextButton(
+                  onPressed: () {
+                    if (widget.onFinish != null) widget.onFinish!();
+                  },
+                  child: const Text(
+                    'Skip',
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AquaSyncTitle extends StatelessWidget {
+  const _AquaSyncTitle();
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 32.0, top: 0, bottom: 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Full screen PageView
-          PageView(
-            controller: _pageController,
-            onPageChanged: (index) {
-              setState(() {
-                _currentPage = index;
-              });
-            },
-            children: const [
-              ImageFeatureCard(
-                imagePath: 'lib/icons/discoverfish.jpeg',
-                title: 'Discover Fish',
-                description: 'Browse our extensive database of freshwater and saltwater fish species. Get detailed information about their care requirements, compatibility, and more.',
-              ),
-              ImageFeatureCard(
-                imagePath: 'lib/icons/picturefish.jpeg',
-                title: 'Scan & Identify',
-                description: 'Use our advanced AI technology to instantly identify fish species through your camera. Get accurate results and detailed information about the identified fish.',
-              ),
-              ImageFeatureCard(
-                imagePath: 'lib/icons/aquarium-pic.jpg',
-                title: 'Fish Compatibility Checker',
-                description: 'Determine which fish can safely live together in your aquarium. Get instant compatibility results based on water parameters, temperament, and habitat needs.',
-              ),
-              ImageFeatureCard(
-                imagePath: 'lib/icons/logbook-pic.jpg',
-                title: 'Save & Track Results',
-                description: 'Keep a personal record of all your identified fish, compatibility checks, and recommended setups. Easily access your history whenever you need it.',
-                isLastCard: true,
+          const Text(
+            'Welcome to',
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                'AquaSync',
+                style: TextStyle(
+                  fontSize: 50,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF009688),
+                ),
               ),
             ],
-          ),
-          
-          // Page indicator overlay at bottom center
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 24,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(4, (index) {
-                return Container(
-                  width: 8,
-                  height: 8,
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _currentPage == index
-                        ? const Color(0xFF006064)
-                        : Colors.white.withOpacity(0.5),
-                  ),
-                );
-              }),
-            ),
-          ),
-          
-          // Skip button at top right
-          Positioned(
-            top: 48,
-            right: 24,
-            child: TextButton(
-              onPressed: _finish,
-              style: TextButton.styleFrom(
-                backgroundColor: Colors.white.withOpacity(0.8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              ),
-              child: const Text(
-                'Skip',
-                style: TextStyle(
-                  color: Color(0xFF006064),
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
           ),
         ],
       ),
@@ -292,170 +336,134 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   }
 }
 
-class ImageFeatureCard extends StatelessWidget {
-  final String imagePath;
-  final String title;
+class _OnboardingPageData {
+  final String? imageAsset;
+  final String headline;
   final String description;
-  final bool isLastCard;
-
-  const ImageFeatureCard({
-    super.key,
-    required this.imagePath,
-    required this.title,
+  final String? buttonText;
+  _OnboardingPageData({
+    this.imageAsset,
+    required this.headline,
     required this.description,
-    this.isLastCard = false,
+    this.buttonText,
+  });
+}
+
+class _OnboardingCard extends StatelessWidget {
+  final _OnboardingPageData data;
+  final bool isLast;
+  final VoidCallback onButton;
+  final int currentPage;
+  final int totalPages;
+  const _OnboardingCard({
+    required this.data,
+    required this.isLast,
+    required this.onButton,
+    required this.currentPage,
+    required this.totalPages,
   });
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final cardHeight = screenHeight - 150; // Allow space for indicators
-    final textCardHeight = screenHeight * 0.30; // 25% of screen height
-    
-    return Stack(
-      children: [
-        // Full height background image with proper fit and quality
-        Container(
-          height: cardHeight,
-          width: screenWidth,
-          margin: const EdgeInsets.symmetric(vertical: 16),
-          decoration: BoxDecoration(
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 10,
-                offset: const Offset(0, 5),
+    final double cardWidth = MediaQuery.of(context).size.width;
+    final double cardHeight = MediaQuery.of(context).size.height - 120;
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        width: cardWidth,
+        height: cardHeight,
+        decoration: const BoxDecoration(
+          color: Color(0xFFB2EBF2),
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(28),
+            topRight: Radius.circular(28),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Spacer(flex: 2),
+              if (data.imageAsset != null)
+                Center(
+                  child: Image.asset(
+                    data.imageAsset!,
+                    width: 150,
+                    height: 150,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              const SizedBox(height: 36),
+              Center(
+                child: Text(
+                  data.headline,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+              if (data.description.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                Center(
+                  child: Text(
+                    data.description,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+              if (data.buttonText != null) ...[
+                const SizedBox(height: 32),
+                Center(
+                  child: SizedBox(
+                    width: 200,
+                    child: ElevatedButton(
+                      onPressed: onButton,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00BFB3),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                      ),
+                      child: Text(
+                        data.buttonText!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const Spacer(flex: 3),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(totalPages, (i) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 16),
+                  width: currentPage == i ? 16 : 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: currentPage == i ? const Color(0xFF00BFB3) : Colors.black12,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                )),
               ),
             ],
           ),
-          child: ClipRRect(
-            child: Image.asset(
-              imagePath,
-              fit: BoxFit.fill,
-              width: double.infinity,
-              height: double.infinity,
-              filterQuality: FilterQuality.high,
-              cacheHeight: (cardHeight * 2).toInt(), // Higher resolution for caching
-              cacheWidth: (screenWidth * 2).toInt(),
-            ),
-          ),
         ),
-        
-        // Overlapping text card with top rounded corners - 100% width
-        Positioned(
-          bottom: 16,
-          left: 0,
-          right: 0,
-          child: Container(
-            height: textCardHeight,
-            width: screenWidth,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 10,
-                  offset: const Offset(0, -5),
-                ),
-              ],
-            ),
-            child: isLastCard 
-                ? Column(
-                    children: [
-                      // Title with teal color and centered
-                      Text(
-                        title,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      // Description
-                      Expanded(
-                        child: SingleChildScrollView(
-                          child: Text(
-                            description,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: Colors.black87,
-                              height: 1.4,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      // Get Started button for the last card
-                      ElevatedButton(
-                        onPressed: () {
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(builder: (context) => const SubscriptionPage()),
-                          );
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF00ACC1),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 32, 
-                            vertical: 12,
-                          ),
-                          minimumSize: const Size(200, 45),
-                        ),
-                        child: const Text(
-                          'Get Started',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ) 
-                : Column(
-                    children: [
-                      // Title with teal color and centered
-                      Text(
-                        title,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      // Description with smaller text, dark gray and aligned left
-                      Expanded(
-                        child: SingleChildScrollView(
-                          child: Text(
-                            description,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: Colors.black87,
-                              height: 1.4,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -507,21 +515,5 @@ class FeatureScreen extends StatelessWidget {
   }
 }
 
-class UserPlanProvider with ChangeNotifier {
-  String _plan = 'free';
-  String get plan => _plan;
 
-  Future<void> fetchPlan() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user != null) {
-      final data = await Supabase.instance.client
-          .from('profiles')
-          .select('tier_plan')
-          .eq('id', user.id)
-          .single();
-      _plan = data['tier_plan'] ?? 'free';
-      notifyListeners();
-    }
-  }
-}
 

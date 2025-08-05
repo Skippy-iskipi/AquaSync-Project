@@ -7,7 +7,8 @@ import {
   UserOutlined,
   InboxOutlined,
   FileOutlined,
-  MenuOutlined
+  MenuOutlined,
+  TeamOutlined
 } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../utils/AuthContext';
@@ -59,6 +60,11 @@ const AppLayout = ({ children }) => {
         }
       ]
     },
+    {
+      key: '/users',
+      icon: <TeamOutlined />,
+      label: <Link to="/users">User Management</Link>
+    }
   ];
 
   return (

@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../services/auth_service.dart';
 import 'homepage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'in_app_password_reset_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -54,13 +55,8 @@ class _AuthScreenState extends State<AuthScreen> {
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
-        // Insert into profiles table
-        final userId = response.user?.id;
-        if (userId != null) {
-          await Supabase.instance.client
-              .from('profiles')
-              .insert({'id': userId, 'tier_plan': 'free'});
-        }
+        // Profile will be automatically created by database trigger
+        // No need to manually insert into profiles table
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -111,6 +107,20 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Future<void> _showForgotPasswordDialog() async {
+    // Navigate directly to the in-app password reset screen
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const InAppPasswordResetScreen(),
+      ),
+    );
+  }
+
+
+
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -127,14 +137,14 @@ class _AuthScreenState extends State<AuthScreen> {
                   // Logo
                   Image.asset(
                     'lib/icons/AquaSync_Logo.png',
-                    height: 120,
-                    width: 120,
+                    height: 160,
+                    width: 160,
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 12),
                   
                   // Title
                   Text(
-                    _isLogin ? 'Welcome Back!' : 'Create Account',
+                    _isLogin ? 'Welcome to AquaSync' : 'Create Account',
                     style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
@@ -188,6 +198,34 @@ class _AuthScreenState extends State<AuthScreen> {
                       return null;
                     },
                   ),
+                  
+                  // Forgot Password link (only show in login mode)
+                  if (_isLogin)
+                    Column(
+                      children: [
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: _isLoading ? null : _showForgotPasswordDialog,
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              'Forgot Password?',
+                              style: TextStyle(
+                                color: Color(0xFF00ACC1),
+                                fontSize: 14,
+                                decoration: TextDecoration.underline,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      ],
+                    ),
+                  
                   const SizedBox(height: 24),
 
                   // Error message

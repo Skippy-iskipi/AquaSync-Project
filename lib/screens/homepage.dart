@@ -6,6 +6,7 @@ import '../screens/logbook.dart';
 import '../screens/fish_list_screen.dart';
 import 'package:provider/provider.dart';
 import 'logbook_provider.dart';
+import '../providers/user_plan_provider.dart';
 import 'dart:io';
 import '../models/water_calculation.dart';
 import '../models/fish_calculation.dart';
@@ -15,6 +16,8 @@ import '../screens/calculator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/auth_screen.dart';
 import '../screens/subscription_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../widgets/guide_overlay.dart';
 
 
 class HomePage extends StatefulWidget {
@@ -36,11 +39,13 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   int _logBookTabIndex = 0;
+  bool _showGuide = false;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialTabIndex;
+    _checkFirstTime();
     // The LogBookProvider is now self-initializing.
     // This call is redundant and has been removed to prevent race conditions.
     /*
@@ -48,6 +53,24 @@ class _HomePageState extends State<HomePage> {
       Provider.of<LogBookProvider>(context, listen: false).init();
     });
     */
+  }
+
+  Future<void> _checkFirstTime() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool hasSeenGuide = prefs.getBool('hasSeenGuide') ?? false;
+    if (!hasSeenGuide) {
+      setState(() {
+        _showGuide = true;
+      });
+    }
+  }
+
+  void _finishGuide() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hasSeenGuide', true);
+    setState(() {
+      _showGuide = false;
+    });
   }
 
   void _onItemTapped(int index) {
@@ -62,217 +85,17 @@ class _HomePageState extends State<HomePage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        height: MediaQuery.of(context).size.height * 0.7,
+      builder: (modalContext) => Container(
+        height: MediaQuery.of(modalContext).size.height * 0.7,
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        child: Column(
-          children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            // Profile section
-            Container(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                children: [
-                  // Profile picture
-                  Container(
-                    width: 100,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF00BFB3),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 4),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.person,
-                      size: 50,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // Email
-                  Text(
-                    user?.email ?? 'No email',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF006064),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // Display current plan and upgrade button
-                  FutureBuilder<Object?>(
-                    future: user != null
-                        ? Supabase.instance.client
-                            .from('profiles')
-                            .select('tier_plan')
-                            .eq('id', user.id)
-                            .single()
-                        : Future.value({'tier_plan': 'free'}),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const SizedBox(height: 32, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
-                      }
-                      final data = snapshot.data as Map<String, dynamic>?;
-                      final plan = (data != null && data['tier_plan'] != null)
-                          ? data['tier_plan'] as String
-                          : 'free';
-                      return Column(
-                        children: [
-                          Text(
-                            'Plan: ${plan.isNotEmpty ? plan[0].toUpperCase() + plan.substring(1) : 'Free'}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                        ],
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            // Settings options
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                children: [
-                  _buildSettingItem(
-                    icon: Icons.person_outline,
-                    title: 'Edit Profile',
-                    onTap: () {
-                      // TODO: Implement edit profile
-                      Navigator.pop(context);
-                    },
-                  ),
-                  _buildSettingItem(
-                    icon: Icons.notifications_outlined,
-                    title: 'Notifications',
-                    onTap: () {
-                      // TODO: Implement notifications settings
-                      Navigator.pop(context);
-                    },
-                  ),
-                  _buildSettingItem(
-                    icon: Icons.security_outlined,
-                    title: 'Privacy & Security',
-                    onTap: () {
-                      // TODO: Implement privacy settings
-                      Navigator.pop(context);
-                    },
-                  ),
-                  _buildSettingItem(
-                    icon: Icons.help_outline,
-                    title: 'Help & Support',
-                    onTap: () {
-                      // TODO: Implement help & support
-                      Navigator.pop(context);
-                    },
-                  ),
-                  _buildSettingItem(
-                    icon: Icons.info_outline,
-                    title: 'About',
-                    onTap: () {
-                      // TODO: Implement about section
-                      Navigator.pop(context);
-                    },
-                  ),
-                ],
-              ),
-            ),
-            // Logout button
-            Container(
-              padding: const EdgeInsets.all(16),
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  await Supabase.instance.client.auth.signOut();
-                  if (context.mounted) {
-                    Navigator.of(context).pop(); // Close bottom sheet
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (context) => const AuthScreen()),
-                      (route) => false,
-                    );
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF006064),
-                  foregroundColor: Colors.white,
-                  elevation: 2,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  minimumSize: const Size(double.infinity, 50),
-                ),
-                icon: const Icon(Icons.logout, size: 24),
-                label: const Text(
-                  'Logout',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+        child: _UserProfileSheet(user: user),
       ),
     );
   }
 
-  Widget _buildSettingItem({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: const Color(0xFF00BFB3).withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(
-          icon,
-          color: const Color(0xFF00BFB3),
-          size: 20,
-        ),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      trailing: const Icon(
-        Icons.chevron_right,
-        color: Colors.grey,
-      ),
-      onTap: onTap,
-    );
-  }
 
   Widget _getSelectedScreen() {
     switch (_selectedIndex) {
@@ -396,91 +219,91 @@ class _HomePageState extends State<HomePage> {
     final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
     
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: Text(
-          _selectedIndex == 0 ? 'AquaSync' :
-          _selectedIndex == 1 ? 'Log Book' :
-          _selectedIndex == 2 ? 'Calculator' : 'Sync',
-          style: const TextStyle(
-            color: Color(0xFF006064),
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: Colors.white,
-        elevation: 2,
-        automaticallyImplyLeading: false,
-        actions: [
-          FutureBuilder<Object?>(
-            future: () async {
-              final user = Supabase.instance.client.auth.currentUser;
-              if (user != null) {
-                final data = await Supabase.instance.client
-                    .from('profiles')
-                    .select('tier_plan')
-                    .eq('id', user.id)
-                    .single();
-                return data['tier_plan'] ?? 'free';
-              }
-              return 'free';
-            }(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const SizedBox(width: 48, height: 32);
-              }
-              final plan = (snapshot.data as String?)?.toLowerCase().replaceAll(' ', '_') ?? 'free';
-              if (plan == 'free') {
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+      body: Stack(
+        children: [
+          Scaffold(
+            backgroundColor: Colors.white,
+            appBar: AppBar(
+              title: Text(
+                _selectedIndex == 0 ? 'AquaSync' :
+                _selectedIndex == 1 ? 'Log Book' :
+                _selectedIndex == 2 ? 'Calculator' : 'Sync',
+                style: const TextStyle(
+                  color: Color(0xFF006064),
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              backgroundColor: Colors.white,
+              elevation: 2,
+              automaticallyImplyLeading: false,
+              actions: [
+                Consumer<UserPlanProvider>(
+                  builder: (context, userPlanProvider, child) {
+                    final plan = userPlanProvider.plan.toLowerCase().replaceAll(' ', '_');
+                    if (plan == 'free') {
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+                            );
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00BFB3),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            elevation: 0,
+                          ),
+                          child: const Text(
+                            'Upgrade Your Plan',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                        ),
                       );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00BFB3),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      'Upgrade Your Plan',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                  ),
+                    } else {
+                      return const SizedBox.shrink();
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.account_circle),
+                  onPressed: () => _showUserInfo(context),
+                  tooltip: 'Account',
+                ),
+              ],
+            ),
+            body: _getSelectedScreen(),
+            floatingActionButton: isKeyboardVisible ? null : FloatingActionButton(
+              key: GuideOverlay.captureKey,
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const CaptureScreen()),
                 );
-              } else {
-                return const SizedBox.shrink();
-              }
-            },
+              },
+              backgroundColor: Colors.white,
+              shape: const CircleBorder(),
+              child: Image.asset('lib/icons/capture_icon.png', width: 60, height: 60),
+            ),
+            floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+            bottomNavigationBar: BottomNavigation(
+              selectedIndex: _selectedIndex,
+              onItemTapped: _onItemTapped,
+              exploreKey: GuideOverlay.exploreKey,
+              logbookKey: GuideOverlay.logbookKey,
+              calculatorKey: GuideOverlay.calculatorKey,
+              syncKey: GuideOverlay.syncKey,
+            ),
           ),
-          IconButton(
-            icon: const Icon(Icons.account_circle),
-            onPressed: () => _showUserInfo(context),
-            tooltip: 'Account',
-          ),
+          if (_showGuide)
+            GuideOverlay(
+              onFinish: _finishGuide,
+            ),
         ],
-      ),
-      body: _getSelectedScreen(),
-      floatingActionButton: isKeyboardVisible ? null : FloatingActionButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const CaptureScreen()),
-          );
-        },
-        backgroundColor: Colors.white,
-        shape: const CircleBorder(),
-        child: Image.asset('lib/icons/capture_icon.png', width: 60, height: 60),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: BottomNavigation(
-        selectedIndex: _selectedIndex,
-        onItemTapped: _onItemTapped,
       ),
     );
   }
@@ -654,6 +477,146 @@ class _ModernRecentActivityCard extends StatelessWidget {
             ),
             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// Add this new widget below HomePageState
+class _UserProfileSheet extends StatelessWidget {
+  final dynamic user;
+  const _UserProfileSheet({required this.user});
+
+  Future<Map<String, dynamic>> _fetchProfile() async {
+    if (user == null) return {};
+    try {
+      final data = await Supabase.instance.client
+          .from('profiles')
+          .select('first_name, last_name, email')
+          .eq('id', user.id)
+          .maybeSingle();
+      return data ?? {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final double modalHeight = 320;
+    return Padding(
+      padding: MediaQuery.of(context).viewInsets + const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: SizedBox(
+        height: modalHeight,
+        child: Consumer<UserPlanProvider>(
+          builder: (context, userPlanProvider, child) {
+            return FutureBuilder<Map<String, dynamic>>(
+              future: _fetchProfile(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final profile = snapshot.data ?? {};
+                final String tierPlan = userPlanProvider.plan;
+                final String email = (profile['email'] ?? user?.email ?? '').toString();
+
+                return Column(
+                  mainAxisSize: MainAxisSize.max,
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Container(
+                      width: 90,
+                      height: 90,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF00BCD4), Color(0xFF2196F3)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 4),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 10,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.person,
+                        size: 48,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      email.isNotEmpty ? email : 'No Email',
+                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00BCD4).withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'Plan: ${tierPlan[0].toUpperCase()}${tierPlan.substring(1)}',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: const Color(0xFF006064),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          Navigator.of(context).pop();
+                          await Supabase.instance.client.auth.signOut();
+                          Navigator.of(context).pushAndRemoveUntil(
+                            MaterialPageRoute(builder: (context) => const AuthScreen()),
+                            (route) => false,
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF006064),
+                          foregroundColor: Colors.white,
+                          elevation: 2,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          minimumSize: const Size(double.infinity, 50),
+                        ),
+                        icon: const Icon(Icons.logout, size: 24),
+                        label: const Text(
+                          'Logout',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         ),
       ),
     );

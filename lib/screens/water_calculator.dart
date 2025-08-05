@@ -8,6 +8,7 @@ import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import 'dart:async';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../services/openai_service.dart';
 
 class FishCard {
   final TextEditingController controller;
@@ -38,6 +39,8 @@ class _WaterCalculatorState extends State<WaterCalculator> {
   List<String> _availableFish = [];
   bool _isLoading = false;
   Map<String, dynamic>? _calculationResult;
+  Map<String, String>? _careRecommendationsMap; // Per-fish recommendations
+  bool _isGeneratingRecommendations = false;
 
   @override
   void initState() {
@@ -61,6 +64,155 @@ class _WaterCalculatorState extends State<WaterCalculator> {
     });
   }
 
+Widget buildRecommendationsList({
+  required List<String> fishNames,
+  required List<String> scientificNames,
+  required Map<String, String> recommendations,
+}) {
+  return ListView.builder(
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    itemCount: fishNames.length,
+    itemBuilder: (context, index) {
+      final fishName = fishNames[index];
+      final sciName = scientificNames[index];
+      final recText = recommendations[fishName];
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0.97, end: 1),
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+          builder: (context, scale, child) {
+            return Transform.scale(
+              scale: scale,
+              child: Card(
+                elevation: 3,
+                color: isDark ? const Color(0xFF00363A) : Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(color: const Color(0xFF00BCD4).withOpacity(0.18), width: 1.2),
+                ),
+                child: Theme(
+                  data: Theme.of(context).copyWith(
+                    dividerColor: Colors.transparent,
+                    splashColor: Colors.transparent,
+                    highlightColor: Colors.transparent,
+                  ),
+                  child: ExpansionTile(
+                    tilePadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+                    collapsedIconColor: const Color(0xFF00BCD4),
+                    iconColor: const Color(0xFF00BCD4),
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE0F7FA),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        FontAwesomeIcons.fish,
+                        color: Color(0xFF00BCD4),
+                        size: 20,
+                      ),
+                    ),
+                    title: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            fishName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 17,
+                              color: Color(0xFF006064),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (sciName.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8.0),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00BCD4).withOpacity(0.10),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                sciName,
+                                style: const TextStyle(fontSize: 12, color: Color(0xFF006064)),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                        child: recText != null && recText.trim().isNotEmpty
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: recText.split('\n').map((line) {
+                                  final isOxygen = line.toLowerCase().contains('oxygen');
+                                  final isFiltration = line.toLowerCase().contains('filtration');
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Icon(
+                                          isOxygen
+                                              ? Icons.bubble_chart
+                                              : isFiltration
+                                                  ? Icons.filter_alt
+                                                  : Icons.info_outline,
+                                          color: isOxygen
+                                              ? const Color(0xFF00BCD4)
+                                              : isFiltration
+                                                  ? const Color(0xFF006064)
+                                                  : Colors.grey,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            line,
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              color: isOxygen
+                                                  ? const Color(0xFF00BCD4)
+                                                  : isFiltration
+                                                      ? const Color(0xFF006064)
+                                                      : Colors.black87,
+                                              fontWeight: isOxygen || isFiltration ? FontWeight.w500 : FontWeight.normal,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              )
+                            : Row(
+                                children: const [
+                                  Icon(Icons.info_outline, color: Colors.grey, size: 20),
+                                  SizedBox(width: 10),
+                                  Text('No data available.', style: TextStyle(color: Colors.grey)),
+                                ],
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    },
+  );
+}
+
   void _removeFishCard(int id) {
     setState(() {
       // Find the card index
@@ -80,6 +232,42 @@ class _WaterCalculatorState extends State<WaterCalculator> {
       }
     });
   }
+
+
+Future<void> _generateAllRecommendations() async {
+  setState(() {
+    _isGeneratingRecommendations = true;
+    _careRecommendationsMap = null;
+  });
+
+  final fishNames = _fishSelections.keys.toList();
+  final scientificNames = List<String>.filled(fishNames.length, '');
+
+  Map<String, String> recommendations = {};
+  try {
+    for (int i = 0; i < fishNames.length; i++) {
+      final rec = await OpenAIService.generateOxygenAndFiltrationNeeds(fishNames[i], scientificNames[i]);
+      // rec is expected to be a Map<String, String> with keys 'oxygen_needs' and 'filtration_needs'
+      String display = '';
+      if (rec['oxygen_needs'] != null && rec['oxygen_needs']!.isNotEmpty) {
+        display += 'Oxygen Needs: ${rec['oxygen_needs']!}\n';
+      }
+      if (rec['filtration_needs'] != null && rec['filtration_needs']!.isNotEmpty) {
+        display += 'Filtration Needs: ${rec['filtration_needs']!}';
+      }
+      if (display.isEmpty) display = 'No data available.';
+      recommendations[fishNames[i]] = display.trim();
+    }
+  } catch (e) {
+    print('Error generating oxygen/filtration needs: $e');
+  }
+
+  setState(() {
+    _careRecommendationsMap = recommendations;
+    _isGeneratingRecommendations = false;
+  });
+}
+
 
   Future<void> _loadFishSpecies() async {
     setState(() => _isLoading = true);
@@ -189,6 +377,9 @@ class _WaterCalculatorState extends State<WaterCalculator> {
       setState(() {
         _calculationResult = responseData;
       });
+
+      // After calculation, generate care recommendations for all fish
+      await _generateAllRecommendations();
 
     } catch (e) {
       print('Error calculating requirements: $e');
@@ -339,7 +530,7 @@ class _WaterCalculatorState extends State<WaterCalculator> {
                         onPressed: () {
                           final fishName = card.controller.text;
                           if (fishName.isEmpty) return;
-                          
+
                           setState(() {
                             final currentCount = _fishSelections[fishName] ?? 0;
                             if (currentCount <= 1) {
@@ -444,39 +635,146 @@ class _WaterCalculatorState extends State<WaterCalculator> {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      // Fish List
-                      ..._fishSelections.entries.map((entry) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE0F7FA),
-                                borderRadius: BorderRadius.circular(8),
+                      // Fish List with care recommendations
+                      ..._fishSelections.entries.map((entry) {
+                        final fishName = entry.key;
+                        final count = entry.value;
+                        final recText = _careRecommendationsMap != null ? _careRecommendationsMap![fishName] : null;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Card(
+                            elevation: 0,
+                            margin: EdgeInsets.zero,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Theme(
+                              data: Theme.of(context).copyWith(
+                                dividerColor: Colors.transparent,
+                                splashColor: Colors.transparent,
+                                highlightColor: Colors.transparent,
                               ),
-                              child: Text(
-                                entry.value.toString(),
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF006064),
+                              child: ExpansionTile(
+                                tilePadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                collapsedIconColor: const Color(0xFF00BCD4),
+                                iconColor: const Color(0xFF00BCD4),
+                                leading: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE0F7FA),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    count.toString(),
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF006064),
+                                    ),
+                                  ),
                                 ),
+                                title: Text(
+                                  fishName,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.black87,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                children: [
+                                  if (_isGeneratingRecommendations)
+                                    const Padding(
+                                      padding: EdgeInsets.all(16.0),
+                                      child: Center(child: CircularProgressIndicator()),
+                                    )
+                                  else if (recText != null && recText.trim().isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: recText.split('\n').map((line) {
+                                          final isOxygen = line.toLowerCase().contains('oxygen needs:');
+                                          final isFiltration = line.toLowerCase().contains('filtration needs:');
+                                          if (isOxygen || isFiltration) {
+                                            final label = isOxygen ? 'Oxygen Needs:' : 'Filtration Needs:';
+                                            final idx = line.indexOf(':');
+                                            String desc = idx != -1 && idx + 1 < line.length ? line.substring(idx + 1).trim() : '';
+                                            // Remove Moderate/High/Low/Very High/Very Low/Medium etc. from the start of the description
+                                            final levelPattern = RegExp(r'^(very\s+)?(high|low|moderate|medium)\b[\s\-:]*', caseSensitive: false);
+                                            desc = desc.replaceFirst(levelPattern, '');
+                                            return Padding(
+                                              padding: const EdgeInsets.only(bottom: 6),
+                                              child: Row(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Icon(
+                                                    isOxygen ? Icons.bubble_chart : Icons.filter_alt,
+                                                    color: const Color(0xFF00BCD4),
+                                                    size: 20,
+                                                  ),
+                                                  const SizedBox(width: 10),
+                                                  Expanded(
+                                                    child: RichText(
+                                                      text: TextSpan(
+                                                        children: [
+                                                          TextSpan(
+                                                            text: label + (desc.isNotEmpty ? ' ' : ''),
+                                                            style: const TextStyle(
+                                                              fontSize: 15,
+                                                              color: Color(0xFF00BCD4),
+                                                              fontWeight: FontWeight.w500,
+                                                            ),
+                                                          ),
+                                                          if (desc.isNotEmpty)
+                                                            TextSpan(
+                                                              text: desc,
+                                                              style: const TextStyle(
+                                                                fontSize: 15,
+                                                                color: Colors.black87,
+                                                              ),
+                                                            ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          } else {
+                                            return Padding(
+                                              padding: const EdgeInsets.only(bottom: 6),
+                                              child: Row(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  const Icon(Icons.info_outline, color: Colors.grey, size: 20),
+                                                  const SizedBox(width: 10),
+                                                  Expanded(
+                                                    child: Text(
+                                                      line,
+                                                      style: const TextStyle(fontSize: 15, color: Colors.black87),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          }
+                                        }).toList(),
+                                      ),
+                                    )
+                                  else
+                                    Row(
+                                      children: const [
+                                        Icon(Icons.info_outline, color: Colors.grey, size: 20),
+                                        SizedBox(width: 10),
+                                        Text('No data available.', style: TextStyle(color: Colors.grey)),
+                                      ],
+                                    ),
+                                ],
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                entry.key,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )).toList(),
+                          ),
+                        );
+                      }).toList(),
                     ],
                   ),
                 ),
@@ -671,6 +969,7 @@ class _WaterCalculatorState extends State<WaterCalculator> {
       _fishCards = [FishCard(id: 0)];  // Reset with one text controller
       _fishSelections.clear();
       _calculationResult = null;
+      _careRecommendationsMap = null;
       _isLoading = false;
     });
   }
@@ -882,6 +1181,7 @@ class _WaterCalculatorState extends State<WaterCalculator> {
                           _buildIncompatibilityResults(_calculationResult!['incompatible_pairs'])
                         else
                           _buildWaterRequirements(),
+
                       ],
                     ),
                   ),
@@ -957,6 +1257,24 @@ class _WaterCalculatorState extends State<WaterCalculator> {
                         Expanded(
                           child: ElevatedButton(
                             onPressed: () async {
+                              // Prepare oxygen and filtration needs maps
+                              Map<String, String> oxygenNeeds = {};
+                              Map<String, String> filtrationNeeds = {};
+                              _careRecommendationsMap?.forEach((fish, rec) {
+                                for (var line in rec.split('\n')) {
+                                  if (line.toLowerCase().contains('oxygen needs:')) {
+                                    final idx = line.indexOf(':');
+                                    if (idx != -1 && idx + 1 < line.length) {
+                                      oxygenNeeds[fish] = line.substring(idx + 1).trim();
+                                    }
+                                  } else if (line.toLowerCase().contains('filtration needs:')) {
+                                    final idx = line.indexOf(':');
+                                    if (idx != -1 && idx + 1 < line.length) {
+                                      filtrationNeeds[fish] = line.substring(idx + 1).trim();
+                                    }
+                                  }
+                                }
+                              });
                               final calculation = WaterCalculation(
                                 fishSelections: Map<String, int>.from(_fishSelections),
                                 minimumTankVolume: _calculationResult!['requirements']['minimum_tank_volume'],
@@ -965,6 +1283,8 @@ class _WaterCalculatorState extends State<WaterCalculator> {
                                 recommendedQuantities: Map<String, int>.from(_fishSelections),
                                 dateCalculated: DateTime.now(),
                                 tankStatus: 'N/A',
+                                oxygenNeeds: oxygenNeeds.isNotEmpty ? oxygenNeeds : null,
+                                filtrationNeeds: filtrationNeeds.isNotEmpty ? filtrationNeeds : null,
                               );
                               
                               Provider.of<LogBookProvider>(context, listen: false)

@@ -250,7 +250,7 @@ class _CalculatorState extends State<Calculator> with SingleTickerProviderStateM
             indicatorColor: const Color(0xFF00BCD4),
             indicatorWeight: 3,
             tabs: const [
-              Tab(text: 'Water Calculator'),
+              Tab(text: 'Tank Volume Calculator'),
               Tab(text: 'Fish Calculator'),
             ],
           ),

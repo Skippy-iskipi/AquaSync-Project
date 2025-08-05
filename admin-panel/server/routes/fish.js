@@ -1,10 +1,16 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db/db');
-const { protectRoute } = require('../middleware/auth');
+const { createClient } = require('@supabase/supabase-js');
+const { requireAdminRole } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -39,286 +45,175 @@ const upload = multer({
 });
 
 // Get all fish
-router.get('/', protectRoute, async (req, res) => {
+router.get('/', requireAdminRole, async (req, res) => {
   try {
     // Get status from query params, default to 'active'
     const status = req.query.status || 'active';
     
-    let query = 'SELECT * FROM fish_species';
-    const queryParams = [];
+    let query = supabase
+      .from('fish_species')
+      .select('*')
+      .order('common_name');
     
     // Filter by status if provided
     if (status !== 'all') {
-      query += ' WHERE status = $1';
-      queryParams.push(status);
+      query = query.eq('status', status);
     }
     
-    query += ' ORDER BY common_name';
+    const { data, error } = await query;
     
-    console.log('Fish query:', query);
-    console.log('Query params:', queryParams);
+    if (error) throw error;
     
-    const result = await db.query(query, queryParams);
-    
-    console.log(`Found ${result.rows.length} fish with status '${status}'`);
+    console.log(`Found ${data.length} fish with status '${status}'`);
     
     // Log the view action
-    await db.logAdminActivity(
-      req.user.id,
-      'VIEW_FISH_LIST',
-      `Viewed fish species list (${status})`,
-      req.ip
-    );
+    await supabase.from('admin_activity').insert([{
+      user_id: req.user.id,
+      action_type: 'VIEW_FISH_LIST',
+      details: `Viewed fish species list (${status})`,
+      ip_address: req.ip
+    }]);
     
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Error fetching fish:', err);
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching fish:', error);
     res.status(500).json({ error: 'Failed to fetch fish' });
   }
 });
 
 // Get a single fish by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAdminRole, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await db.query(
-      'SELECT * FROM fish_species WHERE id = $1',
-      [id]
-    );
+    const { data, error } = await supabase
+      .from('fish_species')
+      .select('*')
+      .eq('id', id)
+      .single();
     
-    if (result.rows.length === 0) {
+    if (error) throw error;
+    if (!data) {
       return res.status(404).json({ error: 'Fish species not found' });
     }
     
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Error fetching fish species:', err);
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching fish species:', error);
     res.status(500).json({ error: 'Server error while fetching fish species' });
   }
 });
 
 // Add new fish
-router.post('/', protectRoute, async (req, res) => {
-  const {
-    common_name,
-    scientific_name,
-    water_type,
-    "max_size_(cm)": maxSize,
-    temperament,
-    "temperature_range_(°c)": tempRange,
-    ph_range,
-    habitat_type,
-    social_behavior,
-    tank_level,
-    "minimum_tank_size_(l)": minTankSize,
-    compatibility_notes,
-    diet,
-    lifespan,
-    care_level,
-    preferred_food,
-    feeding_frequency
-  } = req.body;
-
+router.post('/', requireAdminRole, upload.single('image'), async (req, res) => {
   try {
-    // Insert new fish with active status
-    const fishResult = await db.query(
-      `INSERT INTO fish_species (
-        common_name, scientific_name, water_type, "max_size_(cm)", 
-        temperament, "temperature_range_(°c)", ph_range, habitat_type,
-        social_behavior, tank_level, "minimum_tank_size_(l)", compatibility_notes,
-        diet, lifespan, care_level, preferred_food, feeding_frequency, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-      RETURNING *`,
-      [
-        common_name, scientific_name, water_type, maxSize,
-        temperament, tempRange, ph_range, habitat_type,
-        social_behavior, tank_level, minTankSize, compatibility_notes,
-        diet, lifespan, care_level, preferred_food, feeding_frequency, 'active'
-      ]
-    );
-
-    // Log the activity
-    await db.logAdminActivity(
-      req.user.id,
-      'ADD_FISH',
-      `Added new fish: ${common_name} (${scientific_name})`,
-      req.ip
-    );
-
-    res.status(201).json(fishResult.rows[0]);
-  } catch (err) {
-    console.error('Error adding fish:', err);
+    const fishData = req.body;
+    
+    // Add image path if an image was uploaded
+    if (req.file) {
+      fishData.image_url = `/uploads/fish/${req.file.filename}`;
+    }
+    
+    const { data, error } = await supabase
+      .from('fish_species')
+      .insert([fishData])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    // Log activity
+    await supabase.from('admin_activity').insert([{
+      user_id: req.user.id,
+      action_type: 'FISH_ADDED',
+      details: `Added new fish: ${fishData.common_name}`,
+      ip_address: req.ip
+    }]);
+    
+    res.status(201).json(data);
+  } catch (error) {
+    console.error('Error adding fish:', error);
     res.status(500).json({ error: 'Failed to add fish' });
   }
 });
 
 // Update fish
-router.put('/:id', protectRoute, async (req, res) => {
-  const id = req.params.id;
-  const {
-    common_name,
-    scientific_name,
-    water_type,
-    "max_size_(cm)": maxSize,
-    temperament,
-    "temperature_range_(°c)": tempRange,
-    ph_range,
-    habitat_type,
-    social_behavior,
-    tank_level,
-    "minimum_tank_size_(l)": minTankSize,
-    compatibility_notes,
-    diet,
-    lifespan,
-    care_level,
-    preferred_food,
-    feeding_frequency
-  } = req.body;
-
+router.put('/:id', requireAdminRole, upload.single('image'), async (req, res) => {
   try {
-    const result = await db.query(
-      `UPDATE fish_species SET 
-        common_name = $1,
-        scientific_name = $2,
-        water_type = $3,
-        "max_size_(cm)" = $4,
-        temperament = $5,
-        "temperature_range_(°c)" = $6,
-        ph_range = $7,
-        habitat_type = $8,
-        social_behavior = $9,
-        tank_level = $10,
-        "minimum_tank_size_(l)" = $11,
-        compatibility_notes = $12,
-        diet = $13,
-        lifespan = $14,
-        care_level = $15,
-        preferred_food = $16,
-        feeding_frequency = $17,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $18
-      RETURNING *`,
-      [
-        common_name, scientific_name, water_type, maxSize,
-        temperament, tempRange, ph_range, habitat_type,
-        social_behavior, tank_level, minTankSize, compatibility_notes,
-        diet, lifespan, care_level, preferred_food, feeding_frequency,
-        id
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Fish not found' });
+    const { id } = req.params;
+    const updateData = req.body;
+    
+    // Add image path if an image was uploaded
+    if (req.file) {
+      updateData.image_url = `/uploads/fish/${req.file.filename}`;
     }
-
-    // Log the activity
-    await db.logAdminActivity(
-      req.user.id,
-      'UPDATE_FISH',
-      `Updated fish: ${common_name} (${scientific_name})`,
-      req.ip
-    );
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Error updating fish:', err);
+    
+    const { data, error } = await supabase
+      .from('fish_species')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    // Log activity
+    await supabase.from('admin_activity').insert([{
+      user_id: req.user.id,
+      action_type: 'FISH_UPDATED',
+      details: `Updated fish: ${updateData.common_name || id}`,
+      ip_address: req.ip
+    }]);
+    
+    res.json(data);
+  } catch (error) {
+    console.error('Error updating fish:', error);
     res.status(500).json({ error: 'Failed to update fish' });
   }
 });
 
 // Delete fish
-router.delete('/:id', protectRoute, async (req, res) => {
-  const id = req.params.id;
-
+router.delete('/:id', requireAdminRole, async (req, res) => {
   try {
-    // Get fish details before deletion for logging
-    const fishDetails = await db.query(
-      'SELECT common_name, scientific_name FROM fish_species WHERE id = $1',
-      [id]
-    );
-
-    if (fishDetails.rows.length === 0) {
-      return res.status(404).json({ error: 'Fish not found' });
+    const { id } = req.params;
+    
+    // Get fish details before deletion
+    const { data: fish, error: fetchError } = await supabase
+      .from('fish_species')
+      .select('common_name, image_url')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError) throw fetchError;
+    
+    // Delete the fish
+    const { error: deleteError } = await supabase
+      .from('fish_species')
+      .delete()
+      .eq('id', id);
+    
+    if (deleteError) throw deleteError;
+    
+    // Delete image file if it exists
+    if (fish.image_url) {
+      const imagePath = path.join(__dirname, '..', fish.image_url);
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
     }
-
-    const { common_name, scientific_name } = fishDetails.rows[0];
-
-    // Permanently delete the fish
-    await db.query('DELETE FROM fish_species WHERE id = $1', [id]);
-
-    // Log the activity
-    await db.logAdminActivity(
-      req.user.id,
-      'DELETE_FISH',
-      `Permanently deleted fish: ${common_name} (${scientific_name})`,
-      req.ip
-    );
-
+    
+    // Log activity
+    await supabase.from('admin_activity').insert([{
+      user_id: req.user.id,
+      action_type: 'FISH_DELETED',
+      details: `Deleted fish: ${fish.common_name}`,
+      ip_address: req.ip
+    }]);
+    
     res.json({ message: 'Fish deleted successfully' });
-  } catch (err) {
-    console.error('Error deleting fish:', err);
+  } catch (error) {
+    console.error('Error deleting fish:', error);
     res.status(500).json({ error: 'Failed to delete fish' });
   }
 });
 
-// Update fish status (archive/unarchive)
-router.patch('/:id/status', protectRoute, async (req, res) => {
-  const id = req.params.id;
-  const { status } = req.body;
-  
-  // Validate status
-  if (!status || !['active', 'archived'].includes(status)) {
-    return res.status(400).json({ error: 'Invalid status. Must be "active" or "archived"' });
-  }
-  
-  try {
-    // Get fish details before status update for logging
-    const fishDetails = await db.query(
-      'SELECT common_name, scientific_name, status FROM fish_species WHERE id = $1',
-      [id]
-    );
-
-    if (fishDetails.rows.length === 0) {
-      return res.status(404).json({ error: 'Fish not found' });
-    }
-
-    const { common_name, scientific_name, current_status } = fishDetails.rows[0];
-    
-    // If status is already set to the requested value, return early
-    if (current_status === status) {
-      return res.json({ 
-        message: `Fish already has status: ${status}`,
-        fish: fishDetails.rows[0]
-      });
-    }
-
-    // Update the fish status
-    const result = await db.query(
-      'UPDATE fish_species SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
-      [status, id]
-    );
-
-    // Log the activity
-    const action = status === 'archived' ? 'ARCHIVE_FISH' : 'UNARCHIVE_FISH';
-    const actionDesc = status === 'archived' 
-      ? `Archived fish: ${common_name} (${scientific_name})`
-      : `Restored fish: ${common_name} (${scientific_name})`;
-      
-    await db.logAdminActivity(
-      req.user.id,
-      action,
-      actionDesc,
-      req.ip
-    );
-
-    res.json({ 
-      message: `Fish status updated to ${status} successfully`,
-      fish: result.rows[0]
-    });
-  } catch (err) {
-    console.error('Error updating fish status:', err);
-    res.status(500).json({ error: 'Failed to update fish status' });
-  }
-});
-
-module.exports = router; 
+module.exports = router;

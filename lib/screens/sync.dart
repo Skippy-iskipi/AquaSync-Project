@@ -6,18 +6,21 @@ import 'package:http/http.dart' as http;
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:lottie/lottie.dart';
 import '../models/fish_prediction.dart';
-import 'package:provider/provider.dart';
-import '../screens/logbook_provider.dart';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import '../widgets/snap_tips_dialog.dart';
 import '../services/openai_service.dart';
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
-import '../models/compatibility_result.dart';
 import '../screens/subscription_page.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:dropdown_search/dropdown_search.dart';
+import 'package:provider/provider.dart';
+import '../models/compatibility_result.dart';
+import '../screens/logbook_provider.dart';
+
 
 
 class SyncScreen extends StatefulWidget {
@@ -39,14 +42,14 @@ class _SyncScreenState extends State<SyncScreen> {
   String? _selectedFish1;
   String? _selectedFish2;
   bool _isLoading = false;
-  final TextEditingController _controller1 = TextEditingController();
-  final TextEditingController _controller2 = TextEditingController();
-  List<String> _suggestions1 = [];
-  List<String> _suggestions2 = [];
+  // Controllers and suggestions are no longer needed
+  // final TextEditingController _controller1 = TextEditingController();
+  // final TextEditingController _controller2 = TextEditingController();
+  // List<String> _suggestions1 = [];
+  // List<String> _suggestions2 = [];
   CameraController? _cameraController;
   Future<void>? _initializeControllerFuture;
   bool _isCameraInitialized = false;
-  bool _isCompatible = false;
   String _fish1Name = '';
   String _fish2Name = '';
   String _fish1ImagePath = '';
@@ -69,7 +72,6 @@ class _SyncScreenState extends State<SyncScreen> {
     if (widget.initialFish != null) {
       setState(() {
         _selectedFish1 = widget.initialFish;
-        _controller1.text = widget.initialFish!;
         _fish1Name = widget.initialFish!;
       });
     }
@@ -83,13 +85,14 @@ class _SyncScreenState extends State<SyncScreen> {
 
   @override
   void dispose() {
-    _controller1.dispose();
-    _controller2.dispose();
+    // _controller1.dispose(); // No longer needed
+    // _controller2.dispose(); // No longer needed
     _cameraController?.dispose();
     super.dispose();
   }
 
   Future<void> _checkServerAndLoadData() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
     });
@@ -97,25 +100,24 @@ class _SyncScreenState extends State<SyncScreen> {
     // Check server connection first
     final isConnected = await ApiConfig.checkServerConnection();
     
-    if (isConnected) {
+    if (isConnected && mounted) {
       // If connected, load fish species
       await _loadFishSpecies();
-    } else {
+    } else if (mounted) {
       // If not connected, show error message
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        showCustomNotification(
-          context,
-          'Unable to connect to server. Please check your network connection.',
-          isError: true,
-        );
-      }
+      setState(() {
+        _isLoading = false;
+      });
+      showCustomNotification(
+        context,
+        'Unable to connect to server. Please check your network connection.',
+        isError: true,
+      );
     }
   }
 
   Future<void> _loadFishSpecies() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
     });
@@ -127,12 +129,12 @@ class _SyncScreenState extends State<SyncScreen> {
         method: 'GET',
       );
       
-      if (response != null) {
+      if (response != null && mounted) {
         final List<dynamic> species = jsonDecode(response.body);
         setState(() {
           _fishSpecies = species.map((s) => s.toString()).toList();
         });
-      } else {
+      } else if (mounted) {
         print('Error loading fish species: No servers available');
         showCustomNotification(
           context,
@@ -142,18 +144,24 @@ class _SyncScreenState extends State<SyncScreen> {
       }
     } catch (e) {
       print('Error loading fish species: $e');
-      showCustomNotification(
-        context,
-        'Error loading fish species: ${e.toString()}',
-        isError: true,
-      );
+      if (mounted) {
+        showCustomNotification(
+          context,
+          'Error loading fish species: ${e.toString()}',
+          isError: true,
+        );
+      }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
+  // _updateSuggestions is no longer needed as dropdown handles filtering
+  /*
   void _updateSuggestions(String query, bool isFirstField) {
     if (query.isEmpty) {
       setState(() {
@@ -178,6 +186,7 @@ class _SyncScreenState extends State<SyncScreen> {
       }
     });
   }
+  */
 
   Future<void> _initializeCamera() async {
     try {
@@ -813,10 +822,10 @@ class _SyncScreenState extends State<SyncScreen> {
                                   setState(() {
                                     if (isFirstFish) {
                                       _selectedFish1 = highestPrediction.commonName;
-                                      _controller1.text = highestPrediction.commonName;
+                                      // _controller1.text = highestPrediction.commonName;
                                     } else {
                                       _selectedFish2 = highestPrediction.commonName;
-                                      _controller2.text = highestPrediction.commonName;
+                                      // _controller2.text = highestPrediction.commonName;
                                     }
                                   });
                                   Navigator.of(context).pop();
@@ -830,7 +839,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                   ),
                                 ),
                                 child: const Text(
-                                  'Save',
+                                  'Select Fish',
                                   style: TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.w500,
@@ -891,9 +900,6 @@ class _SyncScreenState extends State<SyncScreen> {
     );
   }
 
-  Future<void> _handleImageCapture(bool isFirstFish) async {
-    await _showCameraPreview(isFirstFish);
-  }
 
   Future<void> _loadUserPlan() async {
     final user = Supabase.instance.client.auth.currentUser;
@@ -955,7 +961,7 @@ class _SyncScreenState extends State<SyncScreen> {
 
   bool _canCheckCompatibility() {
     if (_userPlan == 'free' && _compatibilityChecksCount >= 2) {
-      _showUpgradeDialog('You have reached the limit of 2 compatibility checks for the free plan. Upgrade to Pro or Pro Plus for unlimited checks!');
+      _showUpgradeDialog('You have reached the limit of 2 compatibility checks for the free plan. Upgrade to Pro for unlimited checks with detailed breakdown and advanced deep compatibility analysis!');
       return false;
     }
     return true;
@@ -966,7 +972,7 @@ class _SyncScreenState extends State<SyncScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Upgrade Required'),
+          title: const Text('Upgrade to Pro'),
           content: Text(message),
           actions: [
             TextButton(
@@ -984,7 +990,7 @@ class _SyncScreenState extends State<SyncScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00ACC1),
               ),
-              child: const Text('Upgrade Now'),
+              child: const Text('Upgrade to Pro'),
             ),
           ],
         );
@@ -1033,7 +1039,6 @@ class _SyncScreenState extends State<SyncScreen> {
           }
 
           setState(() {
-            _isCompatible = isCompatible;
             _fish1Name = _selectedFish1!;
             _fish2Name = _selectedFish2!;
             _fish1Base64Image = fish1Base64;
@@ -1090,8 +1095,8 @@ class _SyncScreenState extends State<SyncScreen> {
       builder: (BuildContext dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            // Only fetch detailed reasons for Pro Plus
-            if (!hasFetched && !isCompatible && (normalizedPlan == 'pro_plus' || normalizedPlan == 'proplus')) {
+            // Only fetch detailed reasons for Pro
+            if (!hasFetched && !isCompatible && normalizedPlan == 'pro') {
               hasFetched = true;
               isLoadingDetails = true;
               OpenAIService.explainIncompatibilityReasons(
@@ -1184,7 +1189,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           ],
                         ),
                       ),
-                      if (_userPlan != 'free' && currentReasons.isNotEmpty)
+                      if (_userPlan != 'free')
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(24),
@@ -1192,125 +1197,141 @@ class _SyncScreenState extends State<SyncScreen> {
                             color: Color(0xFFF5F5F5),
                             borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  const Text(
-                                    'Details:',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF006064),
-                                    ),
-                                  ),
-                                  if (isLoadingDetails) ...[
-                                    const SizedBox(width: 12),
-                                    const SizedBox(
-                                      height: 16,
-                                      width: 16,
-                                      child: CircularProgressIndicator(
+                          child: isLoadingDetails
+                              ? Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const SizedBox(height: 24),
+                                    _buildLoadingAnimation(),
+                                    const SizedBox(height: 24),
+                                    const Text(
+                                      'Analyzing compatibility...',
+                                      style: TextStyle(
+                                        fontSize: 18,
                                         color: Color(0xFF006064),
-                                        strokeWidth: 2,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                  ],
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              ...List.generate(
-                                currentReasons.length,
-                                (index) => Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 6),
-                                  child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Icon(
-                                        Icons.info,
-                                        size: 20,
-                                        color: isCompatible ? Colors.green : Colors.red,
+                                    const SizedBox(height: 8),
+                                    const Text(
+                                      'This may take a few seconds',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.black54,
                                       ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Text(
-                                          isCompatible && index == 0
-                                              ? "Both can be kept together in the same aquarium"
-                                              : currentReasons[index],
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            color: Colors.black87,
-                                            height: 1.4,
+                                    ),
+                                    const SizedBox(height: 24),
+                                  ],
+                                )
+                              : Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: const [
+                                        Text(
+                                          'Details:',
+                                          style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFF006064),
                                           ),
                                         ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    ...List.generate(
+                                      currentReasons.length,
+                                      (index) => Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 6),
+                                        child: Row(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Icon(
+                                              Icons.info,
+                                              size: 20,
+                                              color: isCompatible ? Colors.green : Colors.red,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                isCompatible && index == 0
+                                                    ? "Both can be kept together in the same aquarium"
+                                                    : currentReasons[index],
+                                                style: const TextStyle(
+                                                  fontSize: 16,
+                                                  color: Colors.black87,
+                                                  height: 1.4,
+                                                ),
+                                                textAlign: TextAlign.justify,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                    const SizedBox(height: 20),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: TextButton(
+                                            onPressed: () {
+                                              Navigator.of(dialogContext).pop();
+                                            },
+                                            style: TextButton.styleFrom(
+                                              backgroundColor: Colors.grey[200],
+                                              padding: const EdgeInsets.symmetric(vertical: 12),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                            ),
+                                            child: const Text(
+                                              'Close',
+                                              style: TextStyle(
+                                                color: Colors.black87,
+                                                fontSize: 16,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        if (_userPlan == 'pro') ...[
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: ElevatedButton(
+                                              onPressed: () {
+                                                final logbookProvider = Provider.of<LogBookProvider>(context, listen: false);
+                                                final newResult = CompatibilityResult(
+                                                  fish1Name: _fish1Name,
+                                                  fish1ImagePath: _fish1ImagePath,
+                                                  fish2Name: _fish2Name,
+                                                  fish2ImagePath: _fish2ImagePath,
+                                                  isCompatible: isCompatible,
+                                                  reasons: currentReasons,
+                                                  dateChecked: DateTime.now(),
+                                                  savedPlan: _userPlan,
+                                                );
+                                                logbookProvider.addCompatibilityResult(newResult);
+                                                Navigator.of(dialogContext).pop();
+                                                showCustomNotification(context, 'Result saved to Log Book');
+                                              },
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: const Color(0xFF00ACC1),
+                                                foregroundColor: Colors.white,
+                                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(8),
+                                                ),
+                                              ),
+                                              child: const Text(
+                                                'Save',
+                                                style: TextStyle(fontSize: 16),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ],
                                 ),
-                              ),
-                              const SizedBox(height: 20),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextButton(
-                                      onPressed: () {
-                                        Navigator.of(dialogContext).pop();
-                                      },
-                                      style: TextButton.styleFrom(
-                                        backgroundColor: Colors.grey[200],
-                                        padding: const EdgeInsets.symmetric(vertical: 12),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                      ),
-                                      child: const Text(
-                                        'Close',
-                                        style: TextStyle(
-                                          color: Colors.black87,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  if (_userPlan != 'free') ...[
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: ElevatedButton(
-                                        onPressed: () {
-                                          final logbookProvider = Provider.of<LogBookProvider>(context, listen: false);
-                                          final newResult = CompatibilityResult(
-                                            fish1Name: _fish1Name,
-                                            fish1ImagePath: _fish1ImagePath,
-                                            fish2Name: _fish2Name,
-                                            fish2ImagePath: _fish2ImagePath,
-                                            isCompatible: _isCompatible,
-                                            reasons: currentReasons,
-                                            dateChecked: DateTime.now(),
-                                            savedPlan: _userPlan,
-                                          );
-                                          logbookProvider.addCompatibilityResult(newResult);
-                                          Navigator.of(dialogContext).pop();
-                                          showCustomNotification(context, 'Result saved to Log Book');
-                                        },
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF00ACC1),
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                        ),
-                                        child: const Text(
-                                          'Save',
-                                          style: TextStyle(fontSize: 16),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ],
-                          ),
                         ),
                     ],
                   ),
@@ -1393,14 +1414,35 @@ class _SyncScreenState extends State<SyncScreen> {
     );
   }
 
+  Widget _buildLoadingAnimation() {
+    return SizedBox(
+      width: 250,
+      height: 250,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0.0, end: 1.0),
+        duration: const Duration(seconds: 3),
+        builder: (context, value, child) {
+          return Lottie.asset(
+            'lib/lottie/BowlAnimation.json',
+            width: 250,
+            height: 250,
+            fit: BoxFit.contain,
+            repeat: false,
+            frameRate: FrameRate(60),
+          );
+        },
+      ),
+    );
+  }
+
   void _onClearPressed() {
     setState(() {
       _selectedFish1 = null;
       _selectedFish2 = null;
-      _controller1.clear();
-      _controller2.clear();
-      _suggestions1 = [];
-      _suggestions2 = [];
+      // _controller1.clear();
+      // _controller2.clear();
+      // _suggestions1 = [];
+      // _suggestions2 = [];
       _fish1Name = '';
       _fish2Name = '';
       _fish1ImagePath = '';
@@ -1489,6 +1531,8 @@ class _SyncScreenState extends State<SyncScreen> {
                     ),
                   ),
                 ),
+          // Suggestion lists are no longer needed
+          /*
           if (_suggestions1.isNotEmpty)
             Positioned(
               top: 216,
@@ -1573,188 +1617,406 @@ class _SyncScreenState extends State<SyncScreen> {
                 ),
               ),
             ),
+            */
         ],
       ),
     );
   }
 
   Widget _buildFishSelector(bool isFirstFish) {
-    final controller = isFirstFish ? _controller1 : _controller2;
+    // final controller = isFirstFish ? _controller1 : _controller2;
     final selectedFish = isFirstFish ? _selectedFish1 : _selectedFish2;
-    final capturedImage = isFirstFish ? _capturedImage1 : _capturedImage2;
 
     return Container(
       width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(10),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 2,
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.grey.withOpacity(0.07),
+            spreadRadius: 1,
+            blurRadius: 4,
+            offset: const Offset(0, 1),
           ),
         ],
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Stack(
+          Text(
+            isFirstFish ? 'First Fish' : 'Second Fish',
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF006064),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
             children: [
-              GestureDetector(
-                onTap: () => _handleImageCapture(isFirstFish),
-                child: Container(
-                  height: 180,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                    color: const Color(0xFFF5F5F5),
+              _buildCaptureButton(isFirstFish),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownSearch<String>(
+                  popupProps: PopupProps.menu(
+                    showSearchBox: true,
+                    isFilterOnline: true, // Correct parameter for filtering
+                    searchFieldProps: TextFieldProps(
+                      decoration: InputDecoration(
+                        hintText: "Search for a fish",
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                    menuProps: MenuProps(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
-                  child: selectedFish != null
-                      ? ClipRRect(
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                          child: capturedImage != null
-                              ? Image.file(
-                                  capturedImage,
-                                  fit: BoxFit.cover,
-                                )
-                              : FutureBuilder<http.Response>(
-                                  future: http.get(Uri.parse(ApiConfig.getFishImageUrl(selectedFish))),
-                                  builder: (context, snapshot) {
-                                    if (snapshot.connectionState == ConnectionState.waiting) {
-                                      return Container(
-                                        color: Colors.grey[200],
-                                        child: const Center(child: CircularProgressIndicator()),
-                                      );
-                                    }
-                                    if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
-                                      return _buildCameraPlaceholder();
-                                    }
-                                    final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                                    final String? base64Image = jsonData['image_data'];
-                                    if (base64Image == null || base64Image.isEmpty) {
-                                      return _buildCameraPlaceholder();
-                                    }
-                                    final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                                    return Image.memory(
-                                      base64Decode(base64Str),
-                                      fit: BoxFit.cover,
-                                    );
-                                  },
-                                ),
-                        )
-                      : _buildCameraPlaceholder(),
+                  items: _fishSpecies,
+                  dropdownDecoratorProps: DropDownDecoratorProps(
+                    dropdownSearchDecoration: InputDecoration(
+                      hintText: "Select a fish",
+                      filled: true,
+                      fillColor: const Color(0xFFF5F5F5),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      if (isFirstFish) {
+                        _selectedFish1 = newValue;
+                      } else {
+                        _selectedFish2 = newValue;
+                      }
+                    });
+                  },
+                  selectedItem: selectedFish,
                 ),
               ),
             ],
           ),
-          Container(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isFirstFish ? 'First Fish' : 'Second Fish',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF006064),
-                  ),
+          if (selectedFish != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Text(
+                'Selected: $selectedFish',
+                style: const TextStyle(
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w500,
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: controller,
-                  readOnly: false,
-                  onTap: () {
-                    if (controller.text.isNotEmpty) {
-                      controller.selection = TextSelection(
-                        baseOffset: 0,
-                        extentOffset: controller.text.length,
-                      );
-                    }
-                  },
-                  decoration: InputDecoration(
-                    hintText: 'Enter fish name',
-                    filled: true,
-                    fillColor: const Color(0xFFF5F5F5),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0xFF006064), width: 2),
-                    ),
-                    suffixIcon: controller.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, color: Colors.grey),
-                            onPressed: () {
-                              controller.clear();
-                              setState(() {
-                                if (isFirstFish) {
-                                  _selectedFish1 = null;
-                                  _suggestions1 = [];
-                                } else {
-                                  _selectedFish2 = null;
-                                  _suggestions2 = [];
-                                }
-                              });
-                            },
-                          )
-                        : null,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  ),
-                  onChanged: (value) {
-                    _updateSuggestions(value, isFirstFish);
-                  },
-                ),
-              ],
+              ),
             ),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildCameraPlaceholder() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
+  Widget _buildCaptureButton(bool isFirstFish) {
+    return ElevatedButton(
+      onPressed: () => _showCaptureOptions(isFirstFish),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF00ACC1),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.all(8),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+        ),
+        minimumSize: const Size(0, 0), // Allow button to be smaller
+      ),
+      child: const Icon(Icons.camera_alt, size: 20),
+    );
+  }
+
+  Future<void> _showCaptureOptions(bool isFirstFish) async {
+    return showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return Container(
           padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.grey.withOpacity(0.2),
-                spreadRadius: 2,
-                blurRadius: 8,
-                offset: const Offset(0, 2),
+          decoration: const BoxDecoration(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
+              const SizedBox(height: 20),
+              Text(
+                isFirstFish ? 'Capture First Fish' : 'Capture Second Fish',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF006064),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  Column(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.camera, size: 40, color: Color(0xFF00ACC1)),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _captureImageForIdentification(isFirstFish);
+                        },
+                      ),
+                      const Text('Camera'),
+                    ],
+                  ),
+                  Column(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.photo_library, size: 40, color: Color(0xFF00ACC1)),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _pickImageForIdentification(isFirstFish);
+                        },
+                      ),
+                      const Text('Gallery'),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
             ],
           ),
-          child: const Icon(
-            Icons.camera_alt_outlined,
-            size: 40,
-            color: Color(0xFF006064),
-          ),
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          'Tap to capture fish',
-          style: TextStyle(
-            color: Color(0xFF006064),
-            fontSize: 16,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ],
+        );
+      },
     );
+  }
+
+  Future<void> _captureImageForIdentification(bool isFirstFish) async {
+    if (!_isCameraInitialized) {
+      await _initializeCamera();
+    }
+
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (BuildContext context) {
+          if (!_isCameraInitialized || _cameraController == null) {
+            return const Center(
+              child: Text(
+                'Camera is not available.\nPlease use the gallery picker instead.',
+                textAlign: TextAlign.center,
+              ),
+            );
+          }
+
+          return FutureBuilder<void>(
+            future: _initializeControllerFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.done) {
+                final size = MediaQuery.of(context).size;
+                final scale = 1 / (_cameraController!.value.aspectRatio * size.aspectRatio);
+
+                return Scaffold(
+                  backgroundColor: Colors.black,
+                  appBar: AppBar(
+                    backgroundColor: const Color.fromARGB(255, 221, 233, 235),
+                    leading: IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      color: const Color(0xFF006064),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                    title: const Text('Fish Identifier', style: TextStyle(color: Color(0xFF006064))),
+                  ),
+                  body: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Transform.scale(
+                        scale: scale,
+                        child: Center(
+                          child: CameraPreview(_cameraController!),
+                        ),
+                      ),
+                      Center(
+                        child: Container(
+                          width: size.width * 0.8,
+                          height: size.width * 0.8,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.teal, width: 2),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: size.height * 0.3,
+                        left: 0,
+                        right: 0,
+                        child: const Center(
+                          child: Text(
+                            "Ensure the fish is in focus",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (_isLoading)
+                        Container(
+                          color: Colors.black54,
+                          child: const Center(
+                            child: CircularProgressIndicator(color: Colors.teal),
+                          ),
+                        ),
+                    ],
+                  ),
+                  bottomNavigationBar: BottomAppBar(
+                    color: Colors.grey[200],
+                    height: 100,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.photo_library, color: Colors.teal),
+                              onPressed: () async {
+                                final ImagePicker picker = ImagePicker();
+                                try {
+                                  final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+                                  if (image != null) {
+                                    final result = await _getPredictions(image, isFirstFish);
+                                    if (!result) {
+                                      showCustomNotification(
+                                        context,
+                                        'No fish detected in the image. Please try again with a clearer image.',
+                                        isError: true,
+                                      );
+                                    } else {
+                                      Navigator.of(context).pop();
+                                    }
+                                  }
+                                } catch (e) {
+                                  print('Gallery image error: $e');
+                                  showCustomNotification(
+                                    context,
+                                    'Error processing image: $e',
+                                    isError: true,
+                                  );
+                                }
+                              },
+                              tooltip: 'Photos',
+                            ),
+                            const Text(
+                              'Gallery',
+                              style: TextStyle(
+                                color: Colors.teal,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                        GestureDetector(
+                          onTap: () async {
+                            try {
+                              final image = await _cameraController!.takePicture();
+                              if (mounted) {
+                                Navigator.of(context).pop(); // Close camera preview first
+                                final result = await _getPredictions(image, isFirstFish);
+                                if (!result) {
+                                  if (mounted) {
+                                    _showCameraPreview(isFirstFish);
+                                  }
+                                }
+                              }
+                            } catch (e) {
+                              print('Error taking picture: $e');
+                              showCustomNotification(
+                                context,
+                                'Error taking picture: $e',
+                                isError: true,
+                              );
+                            }
+                          },
+                          child: const CircleAvatar(
+                            radius: 30,
+                            backgroundColor: Colors.teal,
+                            child: Icon(
+                              Icons.camera,
+                              color: Colors.white,
+                              size: 35,
+                            ),
+                          ),
+                        ),
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.help, color: Colors.teal),
+                              onPressed: () {
+                                _showSnapTips();
+                              },
+                              tooltip: 'Photo Tips',
+                            ),
+                            const Text(
+                              'Tips',
+                              style: TextStyle(
+                                color: Colors.teal,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              } else {
+                return const Center(child: CircularProgressIndicator());
+              }
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _pickImageForIdentification(bool isFirstFish) async {
+    final ImagePicker picker = ImagePicker();
+    try {
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      if (image != null) {
+        final result = await _getPredictions(image, isFirstFish);
+        if (!result && mounted) {
+          showCustomNotification(
+            context,
+            'No fish detected in the image. Please try again with a clearer image.',
+            isError: true,
+          );
+        }
+      }
+    } catch (e) {
+      print('Gallery image error: $e');
+      showCustomNotification(
+        context,
+        'Error processing image: $e',
+        isError: true,
+      );
+    }
   }
 }

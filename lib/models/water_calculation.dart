@@ -7,6 +7,8 @@ class WaterCalculation {
   final String phRange;
   final String temperatureRange;
   final String tankStatus;
+  final Map<String, String>? oxygenNeeds; // new
+  final Map<String, String>? filtrationNeeds; // new
   final DateTime? createdAt;
 
   WaterCalculation({
@@ -18,6 +20,8 @@ class WaterCalculation {
     required this.phRange,
     required this.temperatureRange,
     required this.tankStatus,
+    this.oxygenNeeds,
+    this.filtrationNeeds,
     this.createdAt,
   });
 
@@ -31,6 +35,8 @@ class WaterCalculation {
       'ph_range': phRange,
       'temperature_range': temperatureRange,
       'tank_status': tankStatus,
+      'oxygen_needs': oxygenNeeds,
+      'filtration_needs': filtrationNeeds,
       'created_at': createdAt?.toIso8601String(),
     };
   }
@@ -45,6 +51,8 @@ class WaterCalculation {
       phRange: json['ph_range'] ?? json['phRange'],
       temperatureRange: json['temperature_range'] ?? json['temperatureRange'],
       tankStatus: json['tank_status'] ?? json['tankStatus'] ?? 'Unknown',
+      oxygenNeeds: json['oxygen_needs'] != null ? Map<String, String>.from(json['oxygen_needs']) : null,
+      filtrationNeeds: json['filtration_needs'] != null ? Map<String, String>.from(json['filtration_needs']) : null,
       createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
     );
   }

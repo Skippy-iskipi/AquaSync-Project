@@ -79,7 +79,8 @@ class CaptureScreenState extends State<CaptureScreen> {
 
   bool _canSave() {
     if (_userPlan == 'free' && _savedCapturesCount >= 5) return false;
-    if (_userPlan == 'pro' && _savedCapturesCount >= 20) return false;
+    // Pro tier has unlimited captures
+    if (_userPlan == 'pro') return true;
     return true;
   }
 
@@ -88,7 +89,7 @@ class CaptureScreenState extends State<CaptureScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Upgrade Required'),
+          title: const Text('Upgrade to Pro'),
           content: Text(message),
           actions: [
             TextButton(
@@ -106,7 +107,7 @@ class CaptureScreenState extends State<CaptureScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00ACC1),
               ),
-              child: const Text('Upgrade Now'),
+              child: const Text('Upgrade to Pro'),
             ),
           ],
         );
@@ -557,8 +558,8 @@ class CaptureScreenState extends State<CaptureScreen> {
   void _savePredictions(List<FishPrediction> predictions) async {
     if (!_canSave()) {
       _showUpgradeDialog(_userPlan == 'free'
-        ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro or Pro Plus for more!'
-        : 'You have reached the limit of 20 saved captures for the Pro plan. Upgrade to Pro Plus for unlimited!');
+        ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro for unlimited captures!'
+        : 'You have reached the limit of 20 saved captures for the Pro plan. Upgrade to Pro for unlimited captures!');
       return;
     }
     final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
@@ -751,8 +752,8 @@ class CaptureScreenState extends State<CaptureScreen> {
                                     ),
                                     onPressed: () {
                                       _showUpgradeDialog(_userPlan == 'free'
-                                        ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro or Pro Plus for more!'
-                                        : 'You have reached the limit of 20 saved captures for the Pro plan. Upgrade to Pro Plus for unlimited!');
+                                        ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro for unlimited captures!'
+                                        : 'You have reached the limit of 20 saved captures for the Pro plan. Upgrade to Pro for unlimited captures!');
                                     },
                                     child: const Text(
                                       'Upgrade to Save',
