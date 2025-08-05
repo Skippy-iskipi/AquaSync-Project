@@ -108,6 +108,7 @@ flutter:
     - lib/icons/More_Recommendation.png
     - lib/icons/Create_Aquarium.png
     - lib/icons/Ribbon.png
+    - lib/lottie/BowlAnimation.json
     - lib/icons/Ribbon_Plus.png
     - lib/icons/Ribbon_Pro.png
   

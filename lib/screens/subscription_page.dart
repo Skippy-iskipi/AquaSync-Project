@@ -58,7 +58,7 @@ class SubscriptionPage extends StatelessWidget {
 }
 
 class SubscriptionService {
-  static const String backendUrl = 'http://192.168.76.112';
+  static const String backendUrl = 'https://aquasync.onrender.com';
   static const String paymongoBaseUrl = 'https://api.paymongo.com/v1';
   static const String paymongoSecretKey = 'PAYMONGO_SECRET_KEY';
 

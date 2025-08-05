@@ -1323,13 +1323,15 @@ async def create_payment_link(
     Returns:
         JSON with checkout URL and payment details
     """
+    logger.info(f"Creating payment link for user {user_id}, tier {tier_plan}")
+    
     plan_amounts = {
-        "pro": 10000,  # ₱100.00 in centavos
-        "pro_plus": 19900  # ₱199.00 in centavos
+        "pro": 19900,  # ₱199
     }
     
     if tier_plan not in plan_amounts:
-        raise HTTPException(status_code=400, detail="Invalid plan selected. Choose 'pro' or 'pro_plus'.")
+        logger.error(f"Invalid tier plan: {tier_plan}. Available plans: {list(plan_amounts.keys())}")
+        raise HTTPException(status_code=400, detail="Invalid plan selected. Choose 'pro'.")
     
     amount = plan_amounts[tier_plan]
     description = f"{tier_plan.capitalize()} Subscription for user {user_id}"
@@ -1349,6 +1351,9 @@ async def create_payment_link(
         }
     }
     
+    logger.info(f"PayMongo payload: {paymongo_payload}")
+    logger.info(f"Using PayMongo key: {'*' * len(str(PAYMONGO_SECRET_KEY)) if PAYMONGO_SECRET_KEY else 'NOT SET'}")
+    
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
@@ -1356,11 +1361,15 @@ async def create_payment_link(
     }
     
     try:
+        logger.info("Sending request to PayMongo...")
         response = requests.post(
             "https://api.paymongo.com/v1/links",
             json=paymongo_payload,
             headers=headers
         )
+        logger.info(f"PayMongo response status: {response.status_code}")
+        logger.info(f"PayMongo response: {response.text}")
+        
         if response.status_code not in (200, 201):
             logger.error(f"PayMongo error: {response.text}")
             raise HTTPException(status_code=500, detail=f"PayMongo error: {response.text}")
@@ -1368,6 +1377,7 @@ async def create_payment_link(
         link_data = response.json()["data"]
         checkout_url = link_data["attributes"]["checkout_url"]
         link_id = link_data["id"]
+        logger.info(f"Successfully created payment link with ID: {link_id}")
 
         # Save a pending subscription with the PayMongo link ID
         now = datetime.now(timezone.utc)
