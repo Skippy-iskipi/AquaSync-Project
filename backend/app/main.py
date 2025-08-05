@@ -23,11 +23,21 @@ import base64
 import requests
 from datetime import datetime, timezone, timedelta
 
+# --- Lazy load change ---
+import asyncio
+
 from .supabase_config import get_supabase_client
 from .models import FishSpecies
 from .routes.fish_images import router as fish_images_router
 from .routes.model_management import router as model_management_router
 from supabase import Client
+
+# --- Lazy load change ---
+yolo_model = None
+classifier_model = None
+idx_to_common_name = {}
+class_names = []
+model_lock = asyncio.Lock()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -198,84 +208,75 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
 
     return not reasons, reasons
 
-# Initialize models as None. They will be loaded during the startup event.
-yolo_model = None
-classifier_model = None
-idx_to_common_name = {}
-class_names = []
-
-@app.on_event("startup")
-async def load_models_on_startup():
-    """
-    Load ML models after the server starts.
-    Always download models from Supabase URLs instead of loading from local files.
-    """
+# --- Lazy load change ---
+async def get_models():
     global yolo_model, classifier_model, idx_to_common_name, class_names
-    
-    logger.info("Server has started. Loading ML models...")
 
-    import requests
-    import tempfile
-
-    # EfficientNet model (fixed bucket URL)
-    efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
-    try:
-        logger.info("Downloading EfficientNet model from Supabase...")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pth") as tmp_file:
-            r = requests.get(efficientnet_url, stream=True)
-            r.raise_for_status()
-            for chunk in r.iter_content(chunk_size=8192):
-                tmp_file.write(chunk)
-            efficientnet_path = tmp_file.name
-        logger.info(f"EfficientNet model downloaded to {efficientnet_path}.")
-    except Exception as e:
-        logger.error(f"Failed to download EfficientNet model: {e}")
-        return # Cannot proceed without model
-
-    # YOLO model
-    yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
-    try:
-        logger.info("Downloading YOLO model from Supabase...")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
-            r = requests.get(yolo_url, stream=True)
-            r.raise_for_status()
-            for chunk in r.iter_content(chunk_size=8192):
-                tmp_file.write(chunk)
-            yolo_path = tmp_file.name
-        logger.info(f"YOLO model downloaded to {yolo_path}.")
-    except Exception as e:
-        logger.error(f"Failed to download YOLO model: {e}")
-        return # Cannot proceed without model
-
-    # 1. Load class names from Supabase
-    try:
-        supabase = get_supabase_client()
-        response = supabase.table('fish_species').select('common_name').execute()
-        class_names = sorted(set(fish['common_name'] for fish in response.data if fish.get('common_name')))
-        idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
-        logger.info(f"Successfully loaded {len(class_names)} class names.")
-        if not class_names:
-            raise RuntimeError("class_names is empty! Cannot proceed.")
-    except Exception as e:
-        logger.error(f"Fatal error loading class names: {str(e)}")
+    # If already loaded, return
+    if yolo_model and classifier_model and class_names:
         return
 
-    # 2. Load YOLO model from downloaded file
-    try:
-        yolo_model = YOLO(yolo_path)
-        logger.info("Successfully loaded YOLO model.")
-    except Exception as e:
-        logger.error(f"Error loading YOLO model: {str(e)}")
+    async with model_lock:
+        if yolo_model and classifier_model and class_names:
+            return  # Another request already loaded them
 
-    # 3. Load Classifier model from downloaded file
-    try:
-        classifier_model = load_classifier_model(efficientnet_path) # Pass the downloaded path
-        if classifier_model:
-            logger.info("Successfully loaded and configured classifier model.")
-        else:
-            raise RuntimeError("Classifier model could not be loaded.")
-    except Exception as e:
-        logger.error(f"Error loading classifier model: {str(e)}")
+        import tempfile
+        import requests
+
+        logger.info("Starting lazy model load...")
+
+        # 1. Get class names from Supabase
+        try:
+            supabase = get_supabase_client()
+            response = supabase.table('fish_species').select('common_name').execute()
+            class_names = sorted(set(fish['common_name'] for fish in response.data if fish.get('common_name')))
+            idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
+            logger.info(f"Successfully loaded {len(class_names)} class names.")
+            if not class_names:
+                raise RuntimeError("class_names is empty! Cannot proceed.")
+        except Exception as e:
+            logger.error(f"Fatal error loading class names: {str(e)}")
+            raise
+
+        # 2. Download YOLO model
+        yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
+        try:
+            logger.info("Downloading YOLO model from Supabase...")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
+                r = requests.get(yolo_url, stream=True)
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=8192):
+                    tmp_file.write(chunk)
+                yolo_path = tmp_file.name
+            from ultralytics import YOLO
+            yolo_model = YOLO(yolo_path)
+            yolo_model.to("cpu")
+            logger.info("Successfully loaded YOLO model.")
+        except Exception as e:
+            logger.error(f"Failed to download/load YOLO model: {e}")
+            raise
+
+        # 3. Download EfficientNet-B3 model
+        efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
+        try:
+            logger.info("Downloading EfficientNet-B3 model from Supabase...")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pth") as tmp_file:
+                r = requests.get(efficientnet_url, stream=True)
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=8192):
+                    tmp_file.write(chunk)
+                efficientnet_path = tmp_file.name
+            classifier_model = load_classifier_model(efficientnet_path)
+            if classifier_model:
+                classifier_model.to("cpu").eval()
+                logger.info("Successfully loaded and configured classifier model.")
+            else:
+                raise RuntimeError("Classifier model could not be loaded.")
+        except Exception as e:
+            logger.error(f"Failed to download/load EfficientNet-B3 model: {e}")
+            raise
+
+        logger.info("Lazy model load complete.")
 
 # Create directory for training charts if it doesn't exist
 charts_dir = "app/models/trained_models/training_charts"
@@ -383,12 +384,8 @@ async def predict(
     file: UploadFile = File(..., description="Image file containing a fish to identify"),
     db: Client = Depends(get_supabase_client)
 ):
-    # Check if models are loaded
-    if classifier_model is None or yolo_model is None:
-        raise HTTPException(
-            status_code=503, 
-            detail="Models are not loaded yet, please try again in a moment."
-        )
+    # --- Lazy load change ---
+    await get_models()
 
     filename = file.filename.lower()
     ext = filename.split(".")[-1]
