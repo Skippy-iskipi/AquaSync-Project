@@ -1,0 +1,12 @@
+# Supabase Configuration Template
+# Copy this content to a file named .env in the root directory
+# Replace these values with your actual Supabase project credentials
+
+SUPABASE_URL=https://rdiwfttfxxpenrcxyfuv.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkaXdmdHRmeHhwZW5yY3h5ZnV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAxNDYzNTMsImV4cCI6MjA2NTcyMjM1M30.yYSE_9oREqsWhcL3O1isDmBLkszqrmzAOYHSGQHds8A
+
+# Instructions:
+# 1. Create a file named .env in the root directory of your project
+# 2. Copy the above content into the .env file
+# 3. Replace the placeholder values with your actual Supabase credentials
+# 4. You can find these values in your Supabase project dashboard under Settings > API 

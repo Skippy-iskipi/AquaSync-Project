@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import FishManagement from './pages/FishManagement';
 import ArchivedFish from './pages/ArchivedFish';
+import UserManagement from './pages/UserManagement';
 
 // Components
 import AppLayout from './components/Layout';
@@ -136,6 +137,10 @@ const router = createBrowserRouter([
       {
         path: 'fish/archived',
         element: <ArchivedFish />
+      },
+      {
+        path: 'users',
+        element: <UserManagement />
       },
       {
         path: '*',

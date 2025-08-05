@@ -49,6 +49,7 @@ class _DescriptionWidgetState extends State<DescriptionWidget> {
                 ),
                 maxLines: _expanded ? null : widget.maxLines,
                 overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                textAlign: TextAlign.justify,
               ),
               if (widget.description.length > 150 || calculateLines(widget.description) > widget.maxLines) 
                 Padding(

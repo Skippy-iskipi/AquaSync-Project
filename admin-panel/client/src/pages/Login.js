@@ -3,7 +3,6 @@ import { Form, Input, Button, Card, Typography, message, Alert } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../utils/AuthContext';
-import { supabase } from '../utils/supabase';
 
 const { Title } = Typography;
 
@@ -24,14 +23,11 @@ const Login = () => {
     setError(null);
     
     try {
-      const result = await login(values.username, values.password);
+      // Changed from username to email to match Supabase auth
+      const result = await login(values.email, values.password);
       if (result.success) {
-        const { data: { user } } = await supabase.auth.getUser();
-        const role = user?.app_metadata?.role;
-        if (role === 'admin') {
-          message.success('Login successful!');
-          navigate('/dashboard');
-        }
+        message.success('Login successful!');
+        navigate('/dashboard');
       } else {
         setError(result.error || 'Login failed');
       }
@@ -79,14 +75,15 @@ const Login = () => {
           layout="vertical"
         >
           <Form.Item
-            name="username"
+            name="email"
             rules={[
-              { required: true, message: 'Please input your username!' },
+              { required: true, message: 'Please input your email!' },
+              { type: 'email', message: 'Please enter a valid email address!' }
             ]}
           >
             <Input 
               prefix={<UserOutlined className="site-form-item-icon" />} 
-              placeholder="Username" 
+              placeholder="Email" 
               size="large"
             />
           </Form.Item>
@@ -95,6 +92,7 @@ const Login = () => {
             name="password"
             rules={[
               { required: true, message: 'Please input your password!' },
+              { min: 6, message: 'Password must be at least 6 characters' }
             ]}
           >
             <Input.Password
@@ -120,4 +118,4 @@ const Login = () => {
   );
 };
 
-export default Login; 
+export default Login;

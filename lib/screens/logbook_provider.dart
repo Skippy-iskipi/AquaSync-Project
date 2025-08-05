@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/api_config.dart';
 import 'package:provider/provider.dart';
-import '../main.dart';
+import '../providers/user_plan_provider.dart';
 
 class LogBookProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -116,7 +116,8 @@ class LogBookProvider with ChangeNotifier {
   // Utility methods for plan-based boundaries
   static bool canSaveFish(String plan, int savedCount) {
     if (plan == 'free') return savedCount < 5;
-    if (plan == 'pro') return savedCount < 20;
+    // Pro tier has unlimited captures
+    if (plan == 'pro') return true;
     return true;
   }
 
@@ -126,15 +127,15 @@ class LogBookProvider with ChangeNotifier {
   }
 
   static bool canShowSaveCompatibility(String plan) {
-    return plan == 'pro' || plan == 'pro_plus';
+    return plan == 'pro';
   }
 
   static bool canShowDetailedReasons(String plan) {
-    return plan == 'pro' || plan == 'pro_plus';
+    return plan == 'pro';
   }
 
   static bool canShowMoreDetailedBreakdown(String plan) {
-    return plan == 'pro_plus';
+    return plan == 'pro';
   }
 
   // Modified addPredictions to enforce plan boundaries
@@ -163,7 +164,7 @@ class LogBookProvider with ChangeNotifier {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Upgrade Your Plan'),
+        title: const Text('Upgrade to Pro'),
         content: Text(message),
         actions: [
           TextButton(
@@ -175,7 +176,7 @@ class LogBookProvider with ChangeNotifier {
               Navigator.pop(context);
               Navigator.pushNamed(context, '/subscription');
             },
-            child: const Text('Upgrade'),
+            child: const Text('Upgrade to Pro'),
           ),
         ],
       ),
@@ -269,6 +270,9 @@ class LogBookProvider with ChangeNotifier {
         'temperature_range': calculation.temperatureRange,
         'ph_range': calculation.phRange,
         'fish_selections': calculation.fishSelections, // JSONB
+        'recommended_quantities': calculation.recommendedQuantities,
+        'oxygen_needs': calculation.oxygenNeeds,
+        'filtration_needs': calculation.filtrationNeeds,
         'date_calculated': calculation.dateCalculated.toIso8601String(),
         'created_at': DateTime.now().toIso8601String(),
       }).select();

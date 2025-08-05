@@ -6,6 +6,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.50.0",
-    "adm-zip": "^0.5.16"
+    "adm-zip": "^0.5.16",
+    "cors": "^2.8.5"
   }
 }

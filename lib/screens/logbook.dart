@@ -19,7 +19,7 @@ import 'dart:convert';
 import '../config/api_config.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'dart:typed_data';
-import '../services/openai_service.dart';
+
 
 
 class LogBook extends StatefulWidget {
@@ -36,6 +36,9 @@ class LogBook extends StatefulWidget {
 
 class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  Map<int, bool> _showOxygenNeeds = {};
+  Map<int, bool> _showFiltrationNeeds = {};
+
 
   @override
   void initState() {
@@ -429,9 +432,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
             itemBuilder: (context, index) {
               final fishName = calculation.fishSelections.keys.elementAt(index);
               final quantity = calculation.fishSelections[fishName];
-              
-              print('Building water calculator fish card for: $fishName, qty: $quantity');
-              
+              final oxygen = calculation.oxygenNeeds != null ? calculation.oxygenNeeds![fishName] : null;
+              final filtration = calculation.filtrationNeeds != null ? calculation.filtrationNeeds![fishName] : null;
               return Card(
                 margin: const EdgeInsets.only(bottom: 16),
                 child: Column(
@@ -509,6 +511,64 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                               ),
                             ],
                           ),
+                          const SizedBox(height: 12),
+                          StatefulBuilder(
+                            builder: (context, setLocalState) {
+                              bool showOxygen = _showOxygenNeeds[index] ?? false;
+                              bool showFiltration = _showFiltrationNeeds[index] ?? false;
+
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text('Oxygen Needs', style: TextStyle(fontWeight: FontWeight.w500)),
+                                    trailing: Icon(showOxygen ? Icons.expand_less : Icons.expand_more),
+                                    onTap: () {
+                                      setLocalState(() {
+                                        showOxygen = !showOxygen;
+                                        _showOxygenNeeds[index] = showOxygen;
+                                      });
+                                    },
+                                  ),
+                                  if (showOxygen && oxygen != null && oxygen.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 12.0, bottom: 8),
+                                      child: Text(
+                                        _cleanNeedsDescription(oxygen).isNotEmpty
+                                            ? _cleanNeedsDescription(oxygen)
+                                            : 'No additional description.',
+                                        style: TextStyle(fontSize: 14, color: Colors.black87),
+                                      ),
+                                    ),
+
+                                  ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text('Filtration Needs', style: TextStyle(fontWeight: FontWeight.w500)),
+                                    trailing: Icon(showFiltration ? Icons.expand_less : Icons.expand_more),
+                                    onTap: () {
+                                      setLocalState(() {
+                                        showFiltration = !showFiltration;
+                                        _showFiltrationNeeds[index] = showFiltration;
+                                      });
+                                    },
+                                  ),
+                                  if (showFiltration && filtration != null && filtration.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 12.0, bottom: 8),
+                                      child: Text(
+                                        _cleanNeedsDescription(filtration).isNotEmpty
+                                            ? _cleanNeedsDescription(filtration)
+                                            : 'No additional description.',
+                                        style: TextStyle(fontSize: 14, color: Colors.black87),
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
+                          )
+
+
                         ],
                       ),
                     ),
@@ -769,6 +829,14 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
       ),
     );
   }
+
+String _cleanNeedsDescription(String input) {
+  final unwantedWords = ['low', 'medium', 'moderate', 'high'];
+  final pattern = RegExp(r'\b(' + unwantedWords.join('|') + r')\b', caseSensitive: false);
+  final cleaned = input.replaceAll(pattern, '').replaceAll(RegExp(r'\s+'), ' ').trim();
+  return cleaned;
+}
+
 
   Widget _buildFishCollectionTab() {
     return Consumer<LogBookProvider>(
@@ -1424,7 +1492,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
   void _showCompatibilityDetails(BuildContext context, CompatibilityResult result) {
     // Normalize plan string for robust comparison
     String normalizedPlan = result.savedPlan.trim().toLowerCase().replaceAll(' ', '_');
-    bool showDetailed = normalizedPlan == 'pro_plus' || normalizedPlan == 'proplus';
+    bool showDetailed = normalizedPlan == 'pro';
 
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -1516,44 +1584,33 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                               ),
                               const SizedBox(height: 8),
                               if (showDetailed) ...[
-                                FutureBuilder<List<String>>(
-                                  future: OpenAIService.explainIncompatibilityReasons(
-                                    result.fish1Name,
-                                    result.fish2Name,
-                                    result.reasons,
-                                  ),
-                                  builder: (context, snapshot) {
-                                    if (snapshot.connectionState == ConnectionState.waiting) {
-                                      return const Center(child: CircularProgressIndicator());
-                                    }
-                                    final detailedReasons = snapshot.data ?? result.reasons;
-                                    return Column(
+                                // Use the saved detailed reasons from the sync result instead of regenerating
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: result.reasons.map((reason) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Row(
                                       crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: detailedReasons.map((reason) => Padding(
-                                        padding: const EdgeInsets.only(bottom: 8),
-                                        child: Row(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            const Icon(
-                                              Icons.error_outline,
-                                              color: Colors.red,
-                                              size: 20,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: Text(
-                                                reason,
-                                                style: const TextStyle(
-                                                  fontSize: 14,
-                                                  color: Colors.black87,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
+                                      children: [
+                                        const Icon(
+                                          Icons.error_outline,
+                                          color: Colors.red,
+                                          size: 20,
                                         ),
-                                      )).toList(),
-                                    );
-                                  },
+                                        const SizedBox(width: 8),
+                                                                                 Expanded(
+                                           child: Text(
+                                             reason,
+                                             style: const TextStyle(
+                                               fontSize: 14,
+                                               color: Colors.black87,
+                                             ),
+                                             textAlign: TextAlign.justify,
+                                           ),
+                                         ),
+                                      ],
+                                    ),
+                                  )).toList(),
                                 ),
                               ] else ...[
                                 ...result.reasons.map((reason) => Padding(
@@ -1574,6 +1631,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                                             fontSize: 14,
                                             color: Colors.black87,
                                           ),
+                                          textAlign: TextAlign.justify,
                                         ),
                                       ),
                                     ],
@@ -1655,4 +1713,3 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 }
-

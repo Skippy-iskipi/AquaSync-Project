@@ -7,10 +7,9 @@ class ApiConfig {
   static String get supabaseAnonKey => dotenv.env['SUPABASE_ANON_KEY'] ?? '';
   // List of available server URLs to try in order
   static const List<String> serverUrls = [
-    'http://192.168.76.119:8000',
-    'http://192.168.76.118:8000',
-    'http://192.168.76.120:8000',
-    'https://aquasync.onrender.com'// Render deployment
+    'https://aquasync.onrender.com', // Render deployment (primary)
+    'http://212.102.51.67:8000',    // Keep this as backup
+    // Removed local IP addresses that are unreachable
   ];
   
   // Current active server URL index (starts with the first one)
