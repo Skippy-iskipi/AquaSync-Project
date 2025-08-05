@@ -85,5 +85,9 @@ node_modules/
 # ================================
 .env
 .env.local
-.env.*
+.env.development
+.env.production
+.env.test
+# Allow example environment files
+!.env.example
 
