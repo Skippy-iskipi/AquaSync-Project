@@ -208,7 +208,7 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
 
     return not reasons, reasons
 
-# --- Lazy load change ---
+# --- Memory optimization change ---
 async def get_models():
     global yolo_model, classifier_model, idx_to_common_name, class_names
 
@@ -222,8 +222,9 @@ async def get_models():
 
         import tempfile
         import requests
+        import torch
 
-        logger.info("Starting lazy model load...")
+        logger.info("Starting optimized lazy model load...")
 
         # 1. Get class names from Supabase
         try:
@@ -250,8 +251,10 @@ async def get_models():
                 yolo_path = tmp_file.name
             from ultralytics import YOLO
             yolo_model = YOLO(yolo_path)
+            # Force CPU and half precision
             yolo_model.to("cpu")
-            logger.info("Successfully loaded YOLO model.")
+            yolo_model.model.half()  # Convert to float16
+            logger.info("Successfully loaded YOLO model in float16 mode.")
         except Exception as e:
             logger.error(f"Failed to download/load YOLO model: {e}")
             raise
@@ -260,7 +263,7 @@ async def get_models():
         efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
         try:
             logger.info("Downloading EfficientNet-B3 model from Supabase...")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pth") as tmp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
                 r = requests.get(efficientnet_url, stream=True)
                 r.raise_for_status()
                 for chunk in r.iter_content(chunk_size=8192):
@@ -268,31 +271,39 @@ async def get_models():
                 efficientnet_path = tmp_file.name
             classifier_model = load_classifier_model(efficientnet_path)
             if classifier_model:
-                classifier_model.to("cpu").eval()
-                logger.info("Successfully loaded and configured classifier model.")
+                classifier_model.to("cpu").half().eval()  # Convert to float16 and eval mode
+                logger.info("Successfully loaded and configured classifier model in float16 mode.")
             else:
                 raise RuntimeError("Classifier model could not be loaded.")
         except Exception as e:
             logger.error(f"Failed to download/load EfficientNet-B3 model: {e}")
             raise
 
-        logger.info("Lazy model load complete.")
+        # Clear CUDA cache if it was used
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-# Create directory for training charts if it doesn't exist
-charts_dir = "app/models/trained_models/training_charts"
-os.makedirs(charts_dir, exist_ok=True)
-logger.info(f"Ensuring training charts directory exists at: {charts_dir}")
+        logger.info("Optimized lazy model load complete.")
 
-# Mount static files for training charts
-try:
-    app.mount("/app/models/trained_models/training_charts", StaticFiles(directory=charts_dir), name="training_charts")
-    logger.info(f"Successfully mounted static files from {charts_dir}")
-except Exception as e:
-    logger.error(f"Error mounting static files directory: {str(e)}")
+# --- Memory optimization change ---
+@app.on_event("startup")
+async def setup_app():
+    """Lightweight startup configuration"""
+    # Create directory for training charts if it doesn't exist
+    charts_dir = "app/models/trained_models/training_charts"
+    os.makedirs(charts_dir, exist_ok=True)
+    logger.info(f"Ensuring training charts directory exists at: {charts_dir}")
 
-# Include routers
-app.include_router(fish_images_router)
-app.include_router(model_management_router)
+    # Mount static files for training charts
+    try:
+        app.mount("/app/models/trained_models/training_charts", StaticFiles(directory=charts_dir), name="training_charts")
+        logger.info(f"Successfully mounted static files from {charts_dir}")
+    except Exception as e:
+        logger.error(f"Error mounting static files directory: {str(e)}")
+
+    # Include routers
+    app.include_router(fish_images_router)
+    app.include_router(model_management_router)
 
 # Enable CORS - with explicit configuration for WebSocket support
 app.add_middleware(
@@ -304,9 +315,7 @@ app.add_middleware(
     expose_headers=["*"],  # Expose all headers
 )
 
-# Load classifier model and setup
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+# --- Memory optimization change ---
 # Create model with the same architecture as in train_cnn.py
 def create_classifier_model(num_classes):
     """Create a simple EfficientNet model that avoids matrix multiplication issues"""
@@ -324,13 +333,8 @@ def load_classifier_model(model_path=None):
     """Load the classifier model with proper error handling and fallbacks"""
     global class_names
     
-    # Log available CUDA devices
-    if torch.cuda.is_available():
-        logger.info(f"CUDA is available with {torch.cuda.device_count()} devices:")
-        for i in range(torch.cuda.device_count()):
-            logger.info(f"  Device {i}: {torch.cuda.get_device_name(i)}")
-    else:
-        logger.info("CUDA is not available, using CPU")
+    # --- Memory optimization change ---
+    device = torch.device("cpu")  # Force CPU for reduced memory usage
     
     # Use the provided model_path (downloaded from Supabase)
     if model_path is None:
@@ -343,12 +347,14 @@ def load_classifier_model(model_path=None):
         in_features = model.classifier[1].in_features
         model.classifier[1] = nn.Linear(in_features, len(class_names))
         try:
-            model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+            # Load weights in float16
+            state_dict = torch.load(model_path, map_location=device)
+            model.load_state_dict(state_dict, strict=False)
             logger.info("Successfully loaded model weights (non-strict)")
         except Exception as e:
             logger.warning(f"Error loading model weights: {str(e)}")
             logger.info("Using initialized model with pretrained backbone only")
-        return model.to(device)
+        return model
     except Exception as e:
         logger.error(f"Error during model loading: {str(e)}")
         logger.error(traceback.format_exc())
@@ -356,15 +362,9 @@ def load_classifier_model(model_path=None):
         model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
         in_features = model.classifier[1].in_features
         model.classifier[1] = nn.Linear(in_features, len(class_names))
-        return model.to(device)
+        return model
 
-# Log available CUDA devices
-if torch.cuda.is_available():
-    logger.info(f"CUDA is available with {torch.cuda.device_count()} devices:")
-    for i in range(torch.cuda.device_count()):
-        logger.info(f"  Device {i}: {torch.cuda.get_device_name(i)}")
-else:
-    logger.info("CUDA is not available, using CPU")
+
 
 @app.post("/predict", 
     summary="Identify fish species from an image",
