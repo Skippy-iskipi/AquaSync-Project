@@ -443,6 +443,7 @@ async def predict(
                 aug_image = augment(fish_image)
                 
                 # Preprocess and predict
+                device = torch.device("cpu")  # Force CPU for memory optimization
                 input_tensor = transform(aug_image).unsqueeze(0).to(device)
                 outputs = classifier_model(input_tensor)
                 probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
@@ -1072,7 +1073,11 @@ async def root():
         }
     }
 
-PAYMONGO_SECRET_KEY = os.getenv("PAYMONGO_SECRET_KEY")  # Set this in your environment
+# Get PayMongo secret key from environment
+PAYMONGO_SECRET_KEY = os.getenv("PAYMONGO_SECRET_KEY")
+if not PAYMONGO_SECRET_KEY:
+    logger.error("PAYMONGO_SECRET_KEY environment variable is not set!")
+    raise RuntimeError("PayMongo secret key is required but not configured.")
 
 # --- Payment & Subscription Utilities ---
 def create_subscription(db, user_id, tier_plan, payment_intent_id):
@@ -1359,19 +1364,47 @@ async def create_payment_link(
     
     try:
         logger.info("Sending request to PayMongo...")
-        response = requests.post(
-            "https://api.paymongo.com/v1/links",
-            json=paymongo_payload,
-            headers=headers
-        )
+        try:
+            response = requests.post(
+                "https://api.paymongo.com/v1/links",
+                json=paymongo_payload,
+                headers=headers,
+                timeout=30  # Add timeout
+            )
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to connect to PayMongo: {str(e)}")
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to connect to payment service. Please try again later."
+            )
+
         logger.info(f"PayMongo response status: {response.status_code}")
         logger.info(f"PayMongo response: {response.text}")
         
-        if response.status_code not in (200, 201):
-            logger.error(f"PayMongo error: {response.text}")
-            raise HTTPException(status_code=500, detail=f"PayMongo error: {response.text}")
+        try:
+            response_data = response.json()
+        except ValueError:
+            logger.error("Invalid JSON response from PayMongo")
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid response from payment service"
+            )
 
-        link_data = response.json()["data"]
+        if response.status_code not in (200, 201):
+            error_detail = response_data.get('errors', [{}])[0].get('detail', 'Unknown error')
+            logger.error(f"PayMongo error: {error_detail}")
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Payment service error: {error_detail}"
+            )
+
+        link_data = response_data.get("data")
+        if not link_data:
+            logger.error("No data in PayMongo response")
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid response from payment service"
+            )
         checkout_url = link_data["attributes"]["checkout_url"]
         link_id = link_data["id"]
         logger.info(f"Successfully created payment link with ID: {link_id}")

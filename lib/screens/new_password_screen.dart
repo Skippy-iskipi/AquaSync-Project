@@ -36,7 +36,6 @@ class _NewPasswordScreenState extends State<NewPasswordScreen> {
   void _checkSession() {
     print('NewPasswordScreen: Checking session...'); // Debug log
     final session = Supabase.instance.client.auth.currentSession;
-    print('NewPasswordScreen: Current session: ${session?.user?.email}'); // Debug log
     
     if (session == null) {
       print('NewPasswordScreen: No valid session found, redirecting to login'); // Debug log

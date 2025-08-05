@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../services/auth_service.dart';
 import 'homepage.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'in_app_password_reset_screen.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -51,7 +50,7 @@ class _AuthScreenState extends State<AuthScreen> {
         }
       } else {
         // For signup, do not navigate immediately. Inform user to check email.
-        final response = await _authService.signUpWithEmail(
+        await _authService.signUpWithEmail(
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );

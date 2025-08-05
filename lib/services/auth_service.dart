@@ -1,6 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'dart:math';
 
 class AuthService {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -102,7 +101,7 @@ class AuthService {
       
       // Check if user exists
       try {
-        final response = await _supabase.auth.signInWithPassword(
+        await _supabase.auth.signInWithPassword(
           email: email,
           password: 'dummy_password_for_check',
         );
@@ -141,38 +140,6 @@ class AuthService {
     }
   }
 
-  // Send verification email with code
-  Future<void> _sendVerificationEmail({required String email, required String code}) async {
-    try {
-      print('AuthService: Sending verification email to $email'); // Debug log
-      print('AuthService: Verification code: $code'); // Debug log
-      
-      // Call the deployed Edge Function to send the verification email
-      final response = await _supabase.functions.invoke(
-        'send-verification-email',
-        body: {
-          'email': email,
-          'code': code,
-        },
-      );
-      
-      if (response.status == 200) {
-        print('AuthService: Verification email sent successfully via Edge Function'); // Debug log
-        print('AuthService: Check your email for the verification code: $code'); // Debug log
-      } else {
-        throw Exception('Edge Function returned status: ${response.status}');
-      }
-      
-    } catch (error) {
-      print('AuthService: Error sending verification email: $error'); // Debug log
-      
-      // Fallback: Show the code in console for testing
-      print('AuthService: FALLBACK - Verification code: $code'); // Debug log
-      print('AuthService: Please enter this code in the app: $code'); // Debug log
-      
-      rethrow;
-    }
-  }
 
   // Verify the code and reset password
   Future<bool> verifyCodeAndResetPassword({required String email, required String code, required String newPassword}) async {
@@ -219,7 +186,7 @@ class AuthService {
       // Test network connectivity to Supabase
       print('AuthService: Testing network connectivity...'); // Debug log
       try {
-        final response = await _supabase.from('profiles').select('count').limit(1);
+        await _supabase.from('profiles').select('count').limit(1);
         print('AuthService: Network test successful'); // Debug log
       } catch (networkError) {
         print('AuthService: Network test failed: $networkError'); // Debug log

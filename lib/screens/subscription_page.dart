@@ -59,17 +59,6 @@ class SubscriptionPage extends StatelessWidget {
 
 class SubscriptionService {
   static const String backendUrl = 'https://aquasync.onrender.com';
-  static const String paymongoBaseUrl = 'https://api.paymongo.com/v1';
-  static const String paymongoSecretKey = 'PAYMONGO_SECRET_KEY';
-
-  static Map<String, String> getPayMongoHeaders() {
-    final basicAuth = base64Encode(utf8.encode('$paymongoSecretKey:'));
-    return {
-      'Authorization': 'Basic $basicAuth',
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    };
-  }
 
   static Future<Map<String, dynamic>> createPaymentLink({
     required String userId,
@@ -85,101 +74,19 @@ class SubscriptionService {
           'tier_plan': tierPlan,
         }),
       );
+
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body);
         return responseData;
       } else {
-        throw Exception('Failed to create payment link: \\${response.body}');
+        final errorBody = json.decode(response.body);
+        throw Exception(errorBody['detail'] ?? 'Failed to create payment link');
       }
     } catch (e) {
+      if (e is FormatException) {
+        throw Exception('Invalid response from server');
+      }
       throw Exception('Error during payment process: $e');
-    }
-  }
-
-  /// Create a payment method (GCash example)
-  static Future<Map<String, dynamic>> createEwalletPaymentMethod({
-    required String type, // 'gcash', 'paymaya', etc.
-    required String billingEmail,
-    required String billingName,
-  }) async {
-    final url = Uri.parse('$paymongoBaseUrl/payment_methods');
-    final body = jsonEncode({
-      'data': {
-        'attributes': {
-          'type': type,
-          'billing': {
-            'email': billingEmail,
-            'name': billingName,
-          }
-        }
-      }
-    });
-    final response = await http.post(url, headers: getPayMongoHeaders(), body: body);
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return jsonDecode(response.body)['data'];
-    } else {
-      throw Exception('Failed to create payment method: ${response.body}');
-    }
-  }
-
-  /// Create a payment method (Card example)
-  static Future<Map<String, dynamic>> createCardPaymentMethod({
-    required String cardNumber,
-    required String expMonth,
-    required String expYear,
-    required String cvc,
-    required String billingEmail,
-  }) async {
-    final url = Uri.parse('$paymongoBaseUrl/payment_methods');
-    final body = jsonEncode({
-      'data': {
-        'attributes': {
-          'type': 'card',
-          'details': {
-            'card_number': cardNumber,
-            'exp_month': expMonth,
-            'exp_year': expYear,
-            'cvc': cvc,
-          },
-          'billing': {
-            'email': billingEmail,
-          }
-        }
-      }
-    });
-    final response = await http.post(url, headers: getPayMongoHeaders(), body: body);
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return jsonDecode(response.body)['data'];
-    } else {
-      throw Exception('Failed to create card payment method: ${response.body}');
-    }
-  }
-
-  /// Attach payment method to payment intent
-  static Future<Map<String, dynamic>> attachPaymentMethodToIntent({
-    required String paymentIntentId,
-    required String paymentMethodId,
-    required String clientKey,
-    String? returnUrl, // Optional for e-wallets
-  }) async {
-    final url = Uri.parse('$paymongoBaseUrl/payment_intents/$paymentIntentId/attach');
-    final attributes = {
-      'payment_method': paymentMethodId,
-      'client_key': clientKey,
-    };
-    if (returnUrl != null) {
-      attributes['return_url'] = returnUrl;
-    }
-    final body = jsonEncode({
-      'data': {
-        'attributes': attributes
-      }
-    });
-    final response = await http.post(url, headers: getPayMongoHeaders(), body: body);
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return jsonDecode(response.body)['data'];
-    } else {
-      throw Exception('Failed to attach payment method: ${response.body}');
     }
   }
 }

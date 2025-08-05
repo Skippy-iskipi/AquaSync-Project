@@ -584,13 +584,15 @@ class _UserProfileSheet extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: ElevatedButton.icon(
-                        onPressed: () async {
+                        onPressed: () {
+                          // Close bottom sheet and navigate immediately
                           Navigator.of(context).pop();
-                          await Supabase.instance.client.auth.signOut();
                           Navigator.of(context).pushAndRemoveUntil(
                             MaterialPageRoute(builder: (context) => const AuthScreen()),
                             (route) => false,
                           );
+                          // Sign out after navigation started
+                          Supabase.instance.client.auth.signOut();
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF006064),
