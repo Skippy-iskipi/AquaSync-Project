@@ -81,3 +81,9 @@ local.properties
 # ================================
 node_modules/
 
+# Environment Variables
+# ================================
+.env
+.env.local
+.env.*
+
