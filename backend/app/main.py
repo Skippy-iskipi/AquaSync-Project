@@ -22,7 +22,7 @@ import traceback
 import base64
 import requests
 from datetime import datetime, timezone, timedelta
-from app.models.train_cnn import training_log_manager, WebSocketLogger
+
 
 # --- Lazy load change ---
 import asyncio
@@ -44,7 +44,6 @@ model_lock = asyncio.Lock()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-training_log_manager = WebSocketLogger()
 
 app = FastAPI(
     title="AquaSync API",
