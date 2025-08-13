@@ -14,7 +14,6 @@ import os
 import shutil
 import time
 from datetime import datetime
-import asyncio
 import traceback
 import json
 import matplotlib
@@ -24,66 +23,17 @@ import random
 import copy
 from tqdm import tqdm
 
-# Import the training log manager
-from ..main import training_log_manager
+# Try to import supabase for standalone mode
+try:
+    from supabase import create_client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("train_cnn")
 
-# Custom logger that also sends logs to WebSocket
-class WebSocketLogger:
-    def __init__(self, name):
-        self.logger = logging.getLogger(name)
-        self.loop = None
-        try:
-            self.loop = asyncio.get_event_loop()
-        except RuntimeError:
-            # If no event loop exists in this thread
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-    
-    def info(self, message):
-        # Log to console first
-        self.logger.info(message)
-        
-        # Then send to WebSocket
-        self._send_to_websocket({"type": "log", "message": message})
-    
-    def error(self, message):
-        # Log to console first
-        self.logger.error(message)
-        
-        # Then send to WebSocket with ERROR prefix
-        self._send_to_websocket({"type": "log", "message": f"ERROR: {message}", "level": "error"})
-    
-    def _send_to_websocket(self, message):
-        """Send a message to WebSocket clients"""
-        try:
-            if training_log_manager:
-                # Directly broadcast the JSON message using the connection manager's internal method
-                # _broadcast sends the message dictionary to all connected clients.
-                coro = training_log_manager._broadcast(message)
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        loop.create_task(coro)
-                except Exception as e:
-                    logger.error(f"Error sending to WebSocket: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error sending to WebSocket: {str(e)}")
-
-    def warning(self, message):
-        self.logger.warning(message)
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(training_log_manager.broadcast_log(f"WARNING: {message}"))
-        except Exception as e:
-            self.logger.error(f"Error sending warning log to WebSocket: {e}")
-
-# Create a WebSocket logger instance
-ws_logger = WebSocketLogger("train_cnn")
 
 # Custom dataset class that includes class weights
 class WeightedImageFolder(datasets.ImageFolder):
@@ -512,7 +462,24 @@ def train_cnn_model(species_name,
         logger.info(f"Model saved to {model_out_path}")
         logger.info(f"Checkpoint saved to {checkpoint_path}")
         
-        return best_accuracy, None
+        # Upload saved model files to Supabase Storage bucket 'models'
+        remote_model_key = None
+        remote_checkpoint_key = None
+        try:
+            from ..supabase_config import get_supabase_client
+            supabase_client = get_supabase_client()
+            models_bucket = supabase_client.storage.from_("models")
+            remote_model_key = "efficientnet_b3_fish_classifier.pth"
+            remote_checkpoint_key = "efficientnet_b3_fish_classifier_checkpoint.pth"
+            with open(model_out_path, "rb") as f_model:
+                models_bucket.upload(remote_model_key, f_model, {"upsert": True, "contentType": "application/octet-stream"})
+            with open(checkpoint_path, "rb") as f_ckpt:
+                models_bucket.upload(remote_checkpoint_key, f_ckpt, {"upsert": True, "contentType": "application/octet-stream"})
+            logger.info(f"Uploaded best model to Supabase Storage 'models' bucket: {remote_model_key}")
+        except Exception as e:
+            logger.error(f"Error uploading model to Supabase Storage: {str(e)}")
+        
+        return best_accuracy, {"model_storage_key": remote_model_key, "checkpoint_storage_key": remote_checkpoint_key}
     
     except Exception as e:
         logger.error(f"Error during training: {str(e)}")
@@ -610,115 +577,213 @@ def update_progress(status, progress, current_epoch=0, total_epochs=0, train_acc
         with open("training_progress/cnn_training_progress.json", "w") as f:
             json.dump(progress_data, f)
 
-        # Send to WebSocket
-        ws_logger._send_to_websocket(progress_data)
 
     except Exception as e:
         logger.error(f"Error updating progress: {str(e)}")
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train EfficientNet-B3 for fish classification.')
-    parser.add_argument('--data_dir', type=str, default='app/datasets/fish_images', help='Directory for dataset')
-    parser.add_argument('--model_out_path', type=str, default='app/models/trained_models/efficientnet_b3_fish_classifier.pth', help='Path to save the trained model')
-    parser.add_argument('--num_classes', type=int, help='Number of classes in the dataset')
+    parser = argparse.ArgumentParser(description='Train EfficientNet-B3 for fish classification using Supabase Storage.')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
+    parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate for training')
     parser.add_argument('--image_size', type=int, default=300, help='Input image size for EfficientNet-B3')
     return parser.parse_args()
 
+def download_dataset_from_storage():
+    """Download dataset from Supabase Storage 'fish-images' bucket to a temporary directory"""
+    import tempfile
+    import os
+    
+    if not SUPABASE_AVAILABLE:
+        logger.error("Supabase client not available!")
+        logger.error("Please install it with: pip install supabase")
+        return None
+    
+    # Get Supabase credentials from environment
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.error("Missing Supabase credentials!")
+        logger.error("Please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.")
+        return None
+    
+    try:
+        # Create Supabase client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        storage = supabase.storage.from_("fish-images")
+        
+        # Create temporary directory
+        temp_dir = tempfile.mkdtemp(prefix="fish_dataset_")
+        logger.info(f"Created temporary dataset directory: {temp_dir}")
+        
+        def download_split_from_storage(split: str, base_dir: str) -> int:
+            """Download a dataset split (train/val/test) from Supabase Storage into base_dir"""
+            count = 0
+            try:
+                # List immediate children under the split (species folders)
+                entries = storage.list(split, {"limit": 10000, "offset": 0}) or []
+                for entry in entries:
+                    name = entry.get("name")
+                    metadata = entry.get("metadata")
+                    if not name:
+                        continue
+                    if metadata is None:
+                        # Likely a folder representing species
+                        species_dir = name
+                        species_files = storage.list(f"{split}/{species_dir}", {"limit": 10000, "offset": 0}) or []
+                        os.makedirs(os.path.join(base_dir, split, species_dir), exist_ok=True)
+                        for f in species_files:
+                            file_name = f.get("name")
+                            f_meta = f.get("metadata")
+                            if not file_name or f_meta is None:
+                                # Skip nested folders
+                                continue
+                            remote_path = f"{split}/{species_dir}/{file_name}"
+                            try:
+                                data = storage.download(remote_path)
+                            except Exception as de:
+                                logger.warning(f"Failed to download {remote_path}: {de}")
+                                continue
+                            if not data:
+                                continue
+                            local_path = os.path.join(base_dir, split, species_dir, file_name)
+                            with open(local_path, "wb") as out:
+                                out.write(data)
+                            count += 1
+                    else:
+                        # File directly under split; uncommon, skip or handle if needed
+                        logger.warning(f"Found unexpected file under '{split}' root: {name}. Skipping.")
+            except Exception as e:
+                logger.error(f"Error listing/downloading split '{split}': {e}")
+            return count
+        
+        # Download all splits
+        total_downloaded = 0
+        for split in ["train", "val", "test"]:
+            os.makedirs(os.path.join(temp_dir, split), exist_ok=True)
+            downloaded = download_split_from_storage(split, temp_dir)
+            logger.info(f"Downloaded {downloaded} files for split '{split}'")
+            total_downloaded += downloaded
+        
+        if total_downloaded == 0:
+            logger.error("No images found in 'fish-images' storage bucket!")
+            shutil.rmtree(temp_dir)
+            return None
+            
+        logger.info(f"Successfully downloaded {total_downloaded} total images")
+        return temp_dir
+        
+    except Exception as e:
+        logger.error(f"Error downloading dataset from Supabase Storage: {str(e)}")
+        return None
+
+def upload_model_to_storage(local_model_path: str, local_checkpoint_path: str):
+    """Upload trained model files to Supabase Storage 'models' bucket"""
+    import os
+    
+    if not SUPABASE_AVAILABLE:
+        logger.error("Supabase client not available!")
+        logger.error("Please install it with: pip install supabase")
+        return False
+    
+    # Get Supabase credentials from environment
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.error("Missing Supabase credentials for upload!")
+        return False
+    
+    try:
+        # Create Supabase client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        storage = supabase.storage.from_("models")
+        
+        # Upload model file
+        remote_model_key = "efficientnet_b3_fish_classifier.pth"
+        remote_checkpoint_key = "efficientnet_b3_fish_classifier_checkpoint.pth"
+        
+        with open(local_model_path, "rb") as f_model:
+            storage.upload(remote_model_key, f_model, {"upsert": True, "contentType": "application/octet-stream"})
+        
+        with open(local_checkpoint_path, "rb") as f_ckpt:
+            storage.upload(remote_checkpoint_key, f_ckpt, {"upsert": True, "contentType": "application/octet-stream"})
+        
+        logger.info(f"Successfully uploaded model to Supabase Storage:")
+        logger.info(f"  - Model: {remote_model_key}")
+        logger.info(f"  - Checkpoint: {remote_checkpoint_key}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error uploading model to Supabase Storage: {str(e)}")
+        return False
+
 def main():
     args = parse_args()
-
-    # Configuration
-    DATA_DIR = args.data_dir
-    MODEL_OUT_PATH = args.model_out_path
-    NUM_CLASSES = args.num_classes if args.num_classes else len(os.listdir(os.path.join(DATA_DIR, 'train')))
-    BATCH_SIZE = args.batch_size
-    EPOCHS = args.epochs
-    IMAGE_SIZE = args.image_size
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    logger.info(f"Using device: {DEVICE}")
-
-    # Image transformations
-    data_transforms = {
-        'train': transforms.Compose([
-            transforms.RandomResizedCrop(IMAGE_SIZE),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-            transforms.RandomRotation(15),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225])
-        ]),
-        'val': transforms.Compose([
-            transforms.Resize(320),
-            transforms.CenterCrop(IMAGE_SIZE),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225])
-        ])
-    }
-
-    # Load datasets with error handling
-    try:
-        image_datasets = {
-            x: datasets.ImageFolder(os.path.join(DATA_DIR, x), data_transforms[x])
-            for x in ['train', 'val']
-        }
-    except Exception as e:
-        logger.error(f"Error loading datasets: {e}")
+    
+    logger.info("=== Standalone CNN Training with Supabase Storage ===")
+    logger.info("This script will:")
+    logger.info("1. Download dataset from Supabase Storage 'fish-images' bucket")
+    logger.info("2. Train the CNN model locally")
+    logger.info("3. Upload the trained model to Supabase Storage 'models' bucket")
+    logger.info("")
+    
+    # Step 1: Download dataset from Supabase Storage
+    logger.info("Step 1: Downloading dataset from Supabase Storage...")
+    temp_data_dir = download_dataset_from_storage()
+    if not temp_data_dir:
+        logger.error("Failed to download dataset. Exiting.")
         return
-
-    dataloaders = {
-        'train': DataLoader(image_datasets['train'], batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True),
-        'val': DataLoader(image_datasets['val'], batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
-    }
-
-    # Load pretrained EfficientNet-B3
-    model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-    model.classifier = nn.Sequential(
-        nn.Dropout(p=0.4),
-        nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
-    )
-    model = model.to(DEVICE)
-
-    # Optimizer and scheduler
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
-    scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
-
-    # Training loop
-    for epoch in range(EPOCHS):
-        logger.info(f"\nEpoch {epoch + 1}/{EPOCHS}")
-        for phase in ['train', 'val']:
-            model.train() if phase == 'train' else model.eval()
-
-            running_loss = 0.0
-            running_corrects = 0
-
-            for inputs, labels in dataloaders[phase]:
-                inputs = inputs.to(DEVICE)
-                labels = labels.to(DEVICE)
-                optimizer.zero_grad()
-
-                with torch.set_grad_enabled(phase == 'train'):
-                    outputs = model(inputs)
-                    _, preds = torch.max(outputs, 1)
-                    loss = criterion(outputs, labels)
-                    if phase == 'train':
-                        loss.backward()
-                        optimizer.step()
-
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
-
-            epoch_loss = running_loss / len(image_datasets[phase])
-            epoch_acc = running_corrects.double() / len(image_datasets[phase])
-            logger.info(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.2%}")
-
-            if phase == 'val':
-                scheduler.step()
+    
+    try:
+        # Step 2: Train the model using the downloaded dataset
+        logger.info("Step 2: Training CNN model...")
+        
+        # Generate timestamped model path
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_out_path = f"efficientnet_b3_fish_classifier_{timestamp}.pth"
+        
+        # Use the train_cnn_model function
+        accuracy, training_info = train_cnn_model(
+            species_name="All species (Standalone)",
+            data_dir=temp_data_dir,
+            model_out_path=model_out_path,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            image_size=args.image_size,
+            use_data_augmentation=True
+        )
+        
+        logger.info(f"Training completed! Best accuracy: {accuracy:.4f}")
+        
+        # Step 3: Upload trained model to Supabase Storage
+        logger.info("Step 3: Uploading trained model to Supabase Storage...")
+        checkpoint_path = model_out_path.replace('.pth', '_checkpoint.pth')
+        
+        upload_success = upload_model_to_storage(model_out_path, checkpoint_path)
+        
+        if upload_success:
+            logger.info("✅ Training pipeline completed successfully!")
+            logger.info(f"   - Best accuracy: {accuracy:.4f}")
+            logger.info(f"   - Model uploaded to Supabase Storage 'models' bucket")
+        else:
+            logger.warning("⚠️  Training completed but upload failed")
+            logger.info(f"   - Best accuracy: {accuracy:.4f}")
+            logger.info(f"   - Local model saved at: {model_out_path}")
+            logger.info(f"   - Local checkpoint saved at: {checkpoint_path}")
+        
+    except Exception as e:
+        logger.error(f"Error during training: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+    finally:
+        # Clean up temporary directory
+        if temp_data_dir and os.path.exists(temp_data_dir):
+            logger.info(f"Cleaning up temporary directory: {temp_data_dir}")
+            shutil.rmtree(temp_data_dir)
 
 def debug_efficientnet():
     """Debug an unmodified EfficientNet to see how it processes data"""

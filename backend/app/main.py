@@ -239,40 +239,42 @@ async def get_models():
             logger.error(f"Fatal error loading class names: {str(e)}")
             raise
 
-        # 2. Download YOLO model
-        yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
+        # 2. Download YOLO model from Supabase Storage bucket 'models'
         try:
-            logger.info("Downloading YOLO model from Supabase...")
+            logger.info("Downloading YOLO model from Supabase Storage 'models' bucket...")
+            storage = get_supabase_client().storage.from_("models")
+            # Default object key; optionally could be configured
+            yolo_object_key = "yolov8n.pt"
+            yolo_data = storage.download(yolo_object_key)
+            if not yolo_data:
+                raise RuntimeError("YOLO model not found in storage bucket 'models'.")
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
-                r = requests.get(yolo_url, stream=True)
-                r.raise_for_status()
-                for chunk in r.iter_content(chunk_size=8192):
-                    tmp_file.write(chunk)
+                tmp_file.write(yolo_data)
                 yolo_path = tmp_file.name
             from ultralytics import YOLO
             yolo_model = YOLO(yolo_path)
-            # Force CPU and half precision
             yolo_model.to("cpu")
-            yolo_model.model.half()  # Convert to float16
-            logger.info("Successfully loaded YOLO model in float16 mode.")
+            # Do not cast to half on CPU
+            logger.info("Successfully loaded YOLO model on CPU.")
         except Exception as e:
             logger.error(f"Failed to download/load YOLO model: {e}")
             raise
 
-        # 3. Download EfficientNet-B3 model
-        efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
+        # 3. Download EfficientNet-B3 model from Supabase Storage
         try:
-            logger.info("Downloading EfficientNet-B3 model from Supabase...")
+            logger.info("Downloading EfficientNet-B3 model from Supabase Storage 'models' bucket...")
+            storage = get_supabase_client().storage.from_("models")
+            model_object_key = "efficientnet_b3_fish_classifier.pth"
+            data = storage.download(model_object_key)
+            if not data:
+                raise RuntimeError("Classifier model not found in storage bucket 'models'.")
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
-                r = requests.get(efficientnet_url, stream=True)
-                r.raise_for_status()
-                for chunk in r.iter_content(chunk_size=8192):
-                    tmp_file.write(chunk)
+                tmp_file.write(data)
                 efficientnet_path = tmp_file.name
             classifier_model = load_classifier_model(efficientnet_path)
             if classifier_model:
-                classifier_model.to("cpu").half().eval()  # Convert to float16 and eval mode
-                logger.info("Successfully loaded and configured classifier model in float16 mode.")
+                classifier_model.to("cpu").float().eval()  # Keep float32 on CPU
+                logger.info("Successfully loaded and configured classifier model on CPU.")
             else:
                 raise RuntimeError("Classifier model could not be loaded.")
         except Exception as e:
@@ -330,31 +332,69 @@ def create_classifier_model(num_classes):
     return model
 
 def load_classifier_model(model_path=None):
-    """Load the classifier model with proper error handling and fallbacks"""
-    global class_names
-    
-    # --- Memory optimization change ---
-    device = torch.device("cpu")  # Force CPU for reduced memory usage
-    
-    # Use the provided model_path (downloaded from Supabase)
+    """Load the classifier model with proper error handling and fallbacks.
+    Prefers a checkpoint file that contains class_names and num_classes so that
+    the final classification head matches the trained classes exactly.
+    """
+    global class_names, idx_to_common_name
+
+    device = torch.device("cpu")
+
     if model_path is None:
         logger.error("No model_path provided to load_classifier_model.")
         return None
-    
+
     try:
         logger.info(f"Loading model from: {model_path}")
+
+        # Attempt to also load the checkpoint to get class_names/num_classes
+        checkpoint = None
+        checkpoint_path_guess = None
+        try:
+            if model_path.endswith(".pth"):
+                checkpoint_path_guess = model_path.replace('.pth', '_checkpoint.pth')
+            if checkpoint_path_guess and os.path.exists(checkpoint_path_guess):
+                checkpoint = torch.load(checkpoint_path_guess, map_location=device)
+            else:
+                # Try to read from storage directly when path is a temp file; ignore if not available
+                pass
+        except Exception as e:
+            logger.warning(f"Could not load checkpoint alongside model: {e}")
+
+        # Determine class names and num_classes from checkpoint if available
+        trained_class_names = None
+        trained_num_classes = None
+        if isinstance(checkpoint, dict):
+            trained_class_names = checkpoint.get('class_names')
+            trained_num_classes = checkpoint.get('num_classes')
+            if trained_class_names and isinstance(trained_class_names, (list, tuple)):
+                class_names = list(trained_class_names)
+                idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
+                logger.info(f"Loaded class names from checkpoint: {len(class_names)} classes")
+
+        if not trained_num_classes and class_names:
+            trained_num_classes = len(class_names)
+
+        if not trained_num_classes:
+            # Fallback to DB-derived classes
+            trained_num_classes = len(class_names) if class_names else 0
+
+        # Create model and replace final head
         model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
         in_features = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(in_features, len(class_names))
+        model.classifier[1] = nn.Linear(in_features, trained_num_classes)
+
+        # Load weights
         try:
-            # Load weights in float16
             state_dict = torch.load(model_path, map_location=device)
             model.load_state_dict(state_dict, strict=False)
             logger.info("Successfully loaded model weights (non-strict)")
         except Exception as e:
             logger.warning(f"Error loading model weights: {str(e)}")
             logger.info("Using initialized model with pretrained backbone only")
+
         return model
+
     except Exception as e:
         logger.error(f"Error during model loading: {str(e)}")
         logger.error(traceback.format_exc())
@@ -517,14 +557,14 @@ async def predict(
                     "classification_confidence": round(score, 4)
                 })
 
-        # Get top 3 predictions for transparency
-        top_values, top_indices = torch.topk(probabilities, min(3, len(class_names)))
-        top_predictions = [
-            {
-                "class_name": idx_to_common_name[idx.item()],
-                "confidence": round(val.item(), 4)
-            } for val, idx in zip(top_values, top_indices)
-        ]
+                    # Get top 3 predictions for transparency (use calibrated probabilities)
+            top_values, top_indices = torch.topk(calibrated_probs, min(3, len(class_names)))
+            top_predictions = [
+                {
+                    "class_name": idx_to_common_name[idx.item()],
+                    "confidence": round(val.item(), 4)
+                } for val, idx in zip(top_values, top_indices)
+            ]
 
         return {
             "has_fish": True,
@@ -1075,9 +1115,9 @@ async def root():
 
 # Get PayMongo secret key from environment
 PAYMONGO_SECRET_KEY = os.getenv("PAYMONGO_SECRET_KEY")
+# Do not crash the app at import time; endpoints will check this when needed
 if not PAYMONGO_SECRET_KEY:
-    logger.error("PAYMONGO_SECRET_KEY environment variable is not set!")
-    raise RuntimeError("PayMongo secret key is required but not configured.")
+    logger.warning("PAYMONGO_SECRET_KEY is not set. Payment endpoints may not work until configured.")
 
 # --- Payment & Subscription Utilities ---
 def create_subscription(db, user_id, tier_plan, payment_intent_id):
