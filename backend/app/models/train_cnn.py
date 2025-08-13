@@ -23,6 +23,13 @@ import random
 import copy
 from tqdm import tqdm
 
+# Try to import supabase for standalone mode
+try:
+    from supabase import create_client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("train_cnn")
@@ -575,35 +582,208 @@ def update_progress(status, progress, current_epoch=0, total_epochs=0, train_acc
         logger.error(f"Error updating progress: {str(e)}")
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train EfficientNet-B3 for fish classification.')
-    parser.add_argument('--data_dir', type=str, default='app/datasets/fish_images', help='Directory for dataset')
-    parser.add_argument('--model_out_path', type=str, default='app/models/trained_models/efficientnet_b3_fish_classifier.pth', help='Path to save the trained model')
-    parser.add_argument('--num_classes', type=int, help='Number of classes in the dataset')
+    parser = argparse.ArgumentParser(description='Train EfficientNet-B3 for fish classification using Supabase Storage.')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
+    parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate for training')
     parser.add_argument('--image_size', type=int, default=300, help='Input image size for EfficientNet-B3')
     return parser.parse_args()
 
+def download_dataset_from_storage():
+    """Download dataset from Supabase Storage 'fish-images' bucket to a temporary directory"""
+    import tempfile
+    import os
+    
+    if not SUPABASE_AVAILABLE:
+        logger.error("Supabase client not available!")
+        logger.error("Please install it with: pip install supabase")
+        return None
+    
+    # Get Supabase credentials from environment
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.error("Missing Supabase credentials!")
+        logger.error("Please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.")
+        return None
+    
+    try:
+        # Create Supabase client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        storage = supabase.storage.from_("fish-images")
+        
+        # Create temporary directory
+        temp_dir = tempfile.mkdtemp(prefix="fish_dataset_")
+        logger.info(f"Created temporary dataset directory: {temp_dir}")
+        
+        def download_split_from_storage(split: str, base_dir: str) -> int:
+            """Download a dataset split (train/val/test) from Supabase Storage into base_dir"""
+            count = 0
+            try:
+                # List immediate children under the split (species folders)
+                entries = storage.list(split, {"limit": 10000, "offset": 0}) or []
+                for entry in entries:
+                    name = entry.get("name")
+                    metadata = entry.get("metadata")
+                    if not name:
+                        continue
+                    if metadata is None:
+                        # Likely a folder representing species
+                        species_dir = name
+                        species_files = storage.list(f"{split}/{species_dir}", {"limit": 10000, "offset": 0}) or []
+                        os.makedirs(os.path.join(base_dir, split, species_dir), exist_ok=True)
+                        for f in species_files:
+                            file_name = f.get("name")
+                            f_meta = f.get("metadata")
+                            if not file_name or f_meta is None:
+                                # Skip nested folders
+                                continue
+                            remote_path = f"{split}/{species_dir}/{file_name}"
+                            try:
+                                data = storage.download(remote_path)
+                            except Exception as de:
+                                logger.warning(f"Failed to download {remote_path}: {de}")
+                                continue
+                            if not data:
+                                continue
+                            local_path = os.path.join(base_dir, split, species_dir, file_name)
+                            with open(local_path, "wb") as out:
+                                out.write(data)
+                            count += 1
+                    else:
+                        # File directly under split; uncommon, skip or handle if needed
+                        logger.warning(f"Found unexpected file under '{split}' root: {name}. Skipping.")
+            except Exception as e:
+                logger.error(f"Error listing/downloading split '{split}': {e}")
+            return count
+        
+        # Download all splits
+        total_downloaded = 0
+        for split in ["train", "val", "test"]:
+            os.makedirs(os.path.join(temp_dir, split), exist_ok=True)
+            downloaded = download_split_from_storage(split, temp_dir)
+            logger.info(f"Downloaded {downloaded} files for split '{split}'")
+            total_downloaded += downloaded
+        
+        if total_downloaded == 0:
+            logger.error("No images found in 'fish-images' storage bucket!")
+            shutil.rmtree(temp_dir)
+            return None
+            
+        logger.info(f"Successfully downloaded {total_downloaded} total images")
+        return temp_dir
+        
+    except Exception as e:
+        logger.error(f"Error downloading dataset from Supabase Storage: {str(e)}")
+        return None
+
+def upload_model_to_storage(local_model_path: str, local_checkpoint_path: str):
+    """Upload trained model files to Supabase Storage 'models' bucket"""
+    import os
+    
+    if not SUPABASE_AVAILABLE:
+        logger.error("Supabase client not available!")
+        logger.error("Please install it with: pip install supabase")
+        return False
+    
+    # Get Supabase credentials from environment
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logger.error("Missing Supabase credentials for upload!")
+        return False
+    
+    try:
+        # Create Supabase client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        storage = supabase.storage.from_("models")
+        
+        # Upload model file
+        remote_model_key = "efficientnet_b3_fish_classifier.pth"
+        remote_checkpoint_key = "efficientnet_b3_fish_classifier_checkpoint.pth"
+        
+        with open(local_model_path, "rb") as f_model:
+            storage.upload(remote_model_key, f_model, {"upsert": True, "contentType": "application/octet-stream"})
+        
+        with open(local_checkpoint_path, "rb") as f_ckpt:
+            storage.upload(remote_checkpoint_key, f_ckpt, {"upsert": True, "contentType": "application/octet-stream"})
+        
+        logger.info(f"Successfully uploaded model to Supabase Storage:")
+        logger.info(f"  - Model: {remote_model_key}")
+        logger.info(f"  - Checkpoint: {remote_checkpoint_key}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error uploading model to Supabase Storage: {str(e)}")
+        return False
+
 def main():
     args = parse_args()
-
-    # Since we've moved to Supabase Storage, the standalone script mode is deprecated
-    logger.error("Standalone script mode is no longer supported.")
-    logger.error("Training now uses Supabase Storage and should be run through the API endpoint:")
-    logger.error("POST /api/models/train")
-    logger.error("")
-    logger.error("If you need to train locally, please use the API endpoint or modify this script")
-    logger.error("to download from Supabase Storage 'fish-images' bucket first.")
-    return
-
-    # Legacy code preserved but commented out:
-    # The old implementation expected local filesystem data, but we now use Supabase Storage
-    # 
-    # To restore standalone functionality, you would need to:
-    # 1. Download dataset from Supabase Storage 'fish-images' bucket
-    # 2. Create local directory structure (train/val/test)
-    # 3. Run training as before
-    # 4. Upload results back to Supabase Storage 'models' bucket
+    
+    logger.info("=== Standalone CNN Training with Supabase Storage ===")
+    logger.info("This script will:")
+    logger.info("1. Download dataset from Supabase Storage 'fish-images' bucket")
+    logger.info("2. Train the CNN model locally")
+    logger.info("3. Upload the trained model to Supabase Storage 'models' bucket")
+    logger.info("")
+    
+    # Step 1: Download dataset from Supabase Storage
+    logger.info("Step 1: Downloading dataset from Supabase Storage...")
+    temp_data_dir = download_dataset_from_storage()
+    if not temp_data_dir:
+        logger.error("Failed to download dataset. Exiting.")
+        return
+    
+    try:
+        # Step 2: Train the model using the downloaded dataset
+        logger.info("Step 2: Training CNN model...")
+        
+        # Generate timestamped model path
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_out_path = f"efficientnet_b3_fish_classifier_{timestamp}.pth"
+        
+        # Use the train_cnn_model function
+        accuracy, training_info = train_cnn_model(
+            species_name="All species (Standalone)",
+            data_dir=temp_data_dir,
+            model_out_path=model_out_path,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            image_size=args.image_size,
+            use_data_augmentation=True
+        )
+        
+        logger.info(f"Training completed! Best accuracy: {accuracy:.4f}")
+        
+        # Step 3: Upload trained model to Supabase Storage
+        logger.info("Step 3: Uploading trained model to Supabase Storage...")
+        checkpoint_path = model_out_path.replace('.pth', '_checkpoint.pth')
+        
+        upload_success = upload_model_to_storage(model_out_path, checkpoint_path)
+        
+        if upload_success:
+            logger.info("✅ Training pipeline completed successfully!")
+            logger.info(f"   - Best accuracy: {accuracy:.4f}")
+            logger.info(f"   - Model uploaded to Supabase Storage 'models' bucket")
+        else:
+            logger.warning("⚠️  Training completed but upload failed")
+            logger.info(f"   - Best accuracy: {accuracy:.4f}")
+            logger.info(f"   - Local model saved at: {model_out_path}")
+            logger.info(f"   - Local checkpoint saved at: {checkpoint_path}")
+        
+    except Exception as e:
+        logger.error(f"Error during training: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+    finally:
+        # Clean up temporary directory
+        if temp_data_dir and os.path.exists(temp_data_dir):
+            logger.info(f"Cleaning up temporary directory: {temp_data_dir}")
+            shutil.rmtree(temp_data_dir)
 
 def debug_efficientnet():
     """Debug an unmodified EfficientNet to see how it processes data"""
