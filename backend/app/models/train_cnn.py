@@ -587,96 +587,23 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Configuration
-    DATA_DIR = args.data_dir
-    MODEL_OUT_PATH = args.model_out_path
-    NUM_CLASSES = args.num_classes if args.num_classes else len(os.listdir(os.path.join(DATA_DIR, 'train')))
-    BATCH_SIZE = args.batch_size
-    EPOCHS = args.epochs
-    IMAGE_SIZE = args.image_size
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Since we've moved to Supabase Storage, the standalone script mode is deprecated
+    logger.error("Standalone script mode is no longer supported.")
+    logger.error("Training now uses Supabase Storage and should be run through the API endpoint:")
+    logger.error("POST /api/models/train")
+    logger.error("")
+    logger.error("If you need to train locally, please use the API endpoint or modify this script")
+    logger.error("to download from Supabase Storage 'fish-images' bucket first.")
+    return
 
-    logger.info(f"Using device: {DEVICE}")
-
-    # Image transformations
-    data_transforms = {
-        'train': transforms.Compose([
-            transforms.RandomResizedCrop(IMAGE_SIZE),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-            transforms.RandomRotation(15),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225])
-        ]),
-        'val': transforms.Compose([
-            transforms.Resize(320),
-            transforms.CenterCrop(IMAGE_SIZE),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406],
-                                 [0.229, 0.224, 0.225])
-        ])
-    }
-
-    # Load datasets with error handling
-    try:
-        image_datasets = {
-            x: datasets.ImageFolder(os.path.join(DATA_DIR, x), data_transforms[x])
-            for x in ['train', 'val']
-        }
-    except Exception as e:
-        logger.error(f"Error loading datasets: {e}")
-        return
-
-    dataloaders = {
-        'train': DataLoader(image_datasets['train'], batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True),
-        'val': DataLoader(image_datasets['val'], batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
-    }
-
-    # Load pretrained EfficientNet-B3
-    model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-    model.classifier = nn.Sequential(
-        nn.Dropout(p=0.4),
-        nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
-    )
-    model = model.to(DEVICE)
-
-    # Optimizer and scheduler
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
-    scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
-
-    # Training loop
-    for epoch in range(EPOCHS):
-        logger.info(f"\nEpoch {epoch + 1}/{EPOCHS}")
-        for phase in ['train', 'val']:
-            model.train() if phase == 'train' else model.eval()
-
-            running_loss = 0.0
-            running_corrects = 0
-
-            for inputs, labels in dataloaders[phase]:
-                inputs = inputs.to(DEVICE)
-                labels = labels.to(DEVICE)
-                optimizer.zero_grad()
-
-                with torch.set_grad_enabled(phase == 'train'):
-                    outputs = model(inputs)
-                    _, preds = torch.max(outputs, 1)
-                    loss = criterion(outputs, labels)
-                    if phase == 'train':
-                        loss.backward()
-                        optimizer.step()
-
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
-
-            epoch_loss = running_loss / len(image_datasets[phase])
-            epoch_acc = running_corrects.double() / len(image_datasets[phase])
-            logger.info(f"{phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.2%}")
-
-            if phase == 'val':
-                scheduler.step()
+    # Legacy code preserved but commented out:
+    # The old implementation expected local filesystem data, but we now use Supabase Storage
+    # 
+    # To restore standalone functionality, you would need to:
+    # 1. Download dataset from Supabase Storage 'fish-images' bucket
+    # 2. Create local directory structure (train/val/test)
+    # 3. Run training as before
+    # 4. Upload results back to Supabase Storage 'models' bucket
 
 def debug_efficientnet():
     """Debug an unmodified EfficientNet to see how it processes data"""
