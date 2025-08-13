@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Body, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Body, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,10 +22,13 @@ import traceback
 import base64
 import requests
 from datetime import datetime, timezone, timedelta
-
-
-# --- Lazy load change ---
 import asyncio
+import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import gc
+import psutil
+import time
 
 from .supabase_config import get_supabase_client
 from .models import FishSpecies
@@ -33,17 +36,22 @@ from .routes.fish_images import router as fish_images_router
 from .routes.model_management import router as model_management_router
 from supabase import Client
 
-# --- Lazy load change ---
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Global model variables
 yolo_model = None
 classifier_model = None
 idx_to_common_name = {}
 class_names = []
 model_lock = asyncio.Lock()
+model_loading_task = None
+models_loaded = False
+model_load_error = None
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+# Thread pool for CPU-intensive tasks
+executor = ThreadPoolExecutor(max_workers=2)
 
 app = FastAPI(
     title="AquaSync API",
@@ -76,6 +84,17 @@ class PaymentIntentRequest(BaseModel):
     user_id: str
     tier_plan: str
     payment_methods: Optional[List[str]] = ["card", "gcash", "grab_pay", "paymaya"]
+
+# Memory monitoring utility
+def get_memory_usage():
+    """Get current memory usage in MB"""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+def log_memory_usage(context: str):
+    """Log memory usage with context"""
+    memory_mb = get_memory_usage()
+    logger.info(f"Memory usage at {context}: {memory_mb:.2f} MB")
 
 # Helper function to determine if a fish species can coexist with itself
 def can_same_species_coexist(fish_name: str, fish_info: Dict[str, Any]) -> Tuple[bool, str]:
@@ -125,7 +144,7 @@ def parse_range(range_str: Optional[str]) -> Tuple[Optional[float], Optional[flo
         # Remove any non-numeric characters except dash and dot
         range_str = (
             str(range_str)
-            .replace('°C', '')
+            .replace('Â°C', '')
             .replace('C', '')
             .replace('c', '')
             .replace('pH', '')
@@ -201,8 +220,8 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
 
     # Rule 5: Temperature Range Overlap
     try:
-        t1_min, t1_max = parse_range(fish1.get('temperature_range_c') or fish1.get('temperature_range_(°c)'))
-        t2_min, t2_max = parse_range(fish2.get('temperature_range_c') or fish2.get('temperature_range_(°c)'))
+        t1_min, t1_max = parse_range(fish1.get('temperature_range_c') or fish1.get('temperature_range_(Â°c)'))
+        t2_min, t2_max = parse_range(fish2.get('temperature_range_c') or fish2.get('temperature_range_(Â°c)'))
         if t1_min is not None and t2_min is not None and (t1_max < t2_min or t2_max < t1_min):
             reasons.append(f"Incompatible temperature requirements.")
     except (ValueError, TypeError):
@@ -210,89 +229,222 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
 
     return not reasons, reasons
 
-# --- Memory optimization change ---
-async def get_models():
-    global yolo_model, classifier_model, idx_to_common_name, class_names
-
-    # If already loaded, return
-    if yolo_model and classifier_model and class_names:
-        return
-
-    async with model_lock:
-        if yolo_model and classifier_model and class_names:
-            return  # Another request already loaded them
-
-        import tempfile
-        import requests
-        import torch
-
-        logger.info("Starting optimized lazy model load...")
-
-        # 1. Get class names from Supabase
+def download_file_with_retry(storage, object_key: str, max_retries: int = 3, retry_delay: float = 2.0) -> bytes:
+    """Download file from Supabase storage with retry logic"""
+    for attempt in range(max_retries):
         try:
-            supabase = get_supabase_client()
-            response = supabase.table('fish_species').select('common_name').execute()
-            class_names = sorted(set(fish['common_name'] for fish in response.data if fish.get('common_name')))
-            idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
-            logger.info(f"Successfully loaded {len(class_names)} class names.")
-            if not class_names:
-                raise RuntimeError("class_names is empty! Cannot proceed.")
-        except Exception as e:
-            logger.error(f"Fatal error loading class names: {str(e)}")
-            raise
-
-        # 2. Download YOLO model from Supabase Storage bucket 'models'
-        try:
-            logger.info("Downloading YOLO model from Supabase Storage 'models' bucket...")
-            storage = get_supabase_client().storage.from_("models")
-            # Default object key; optionally could be configured
-            yolo_object_key = "yolov8n.pt"
-            yolo_data = storage.download(yolo_object_key)
-            if not yolo_data:
-                raise RuntimeError("YOLO model not found in storage bucket 'models'.")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
-                tmp_file.write(yolo_data)
-                yolo_path = tmp_file.name
-            from ultralytics import YOLO
-            yolo_model = YOLO(yolo_path)
-            yolo_model.to("cpu")
-            # Do not cast to half on CPU
-            logger.info("Successfully loaded YOLO model on CPU.")
-        except Exception as e:
-            logger.error(f"Failed to download/load YOLO model: {e}")
-            raise
-
-        # 3. Download EfficientNet-B3 model from Supabase Storage
-        try:
-            logger.info("Downloading EfficientNet-B3 model from Supabase Storage 'models' bucket...")
-            storage = get_supabase_client().storage.from_("models")
-            model_object_key = "efficientnet_b3_fish_classifier.pth"
-            data = storage.download(model_object_key)
-            if not data:
-                raise RuntimeError("Classifier model not found in storage bucket 'models'.")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
-                tmp_file.write(data)
-                efficientnet_path = tmp_file.name
-            classifier_model = load_classifier_model(efficientnet_path)
-            if classifier_model:
-                classifier_model.to("cpu").float().eval()  # Keep float32 on CPU
-                logger.info("Successfully loaded and configured classifier model on CPU.")
+            logger.info(f"Downloading {object_key}, attempt {attempt + 1}/{max_retries}")
+            data = storage.download(object_key)
+            if data:
+                logger.info(f"Successfully downloaded {object_key}, size: {len(data)} bytes")
+                return data
             else:
-                raise RuntimeError("Classifier model could not be loaded.")
+                raise RuntimeError(f"Empty data received for {object_key}")
         except Exception as e:
-            logger.error(f"Failed to download/load EfficientNet-B3 model: {e}")
-            raise
+            logger.warning(f"Download attempt {attempt + 1} failed for {object_key}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+            else:
+                raise RuntimeError(f"Failed to download {object_key} after {max_retries} attempts: {e}")
 
-        # Clear CUDA cache if it was used
+def load_class_names_sync() -> List[str]:
+    """Synchronously load class names from database"""
+    try:
+        supabase = get_supabase_client()
+        response = supabase.table('fish_species').select('common_name').execute()
+        class_names = sorted(set(fish['common_name'] for fish in response.data if fish.get('common_name')))
+        logger.info(f"Loaded {len(class_names)} class names from database")
+        return class_names
+    except Exception as e:
+        logger.error(f"Failed to load class names: {e}")
+        raise
+
+def load_yolo_model_sync(model_path: str) -> YOLO:
+    """Synchronously load YOLO model"""
+    try:
+        log_memory_usage("before YOLO load")
+        model = YOLO(model_path)
+        model.to("cpu")
+        # Force garbage collection
+        gc.collect()
+        log_memory_usage("after YOLO load")
+        logger.info("Successfully loaded YOLO model")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load YOLO model: {e}")
+        raise
+
+def create_classifier_model(num_classes):
+    """Create a simple EfficientNet model that avoids matrix multiplication issues"""
+    # Load pretrained model
+    model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
+    
+    # Replace only the final linear layer with a new one
+    in_features = model.classifier[1].in_features
+    model.classifier[1] = nn.Linear(in_features, num_classes)
+    
+    return model
+
+def load_classifier_model_sync(model_path: str, num_classes: int):
+    """Synchronously load classifier model"""
+    try:
+        log_memory_usage("before classifier load")
+        
+        # Create model architecture
+        model = create_classifier_model(num_classes)
+        
+        # Load weights with error handling
+        try:
+            state_dict = torch.load(model_path, map_location="cpu")
+            model.load_state_dict(state_dict, strict=False)
+            logger.info("Successfully loaded model weights")
+        except Exception as e:
+            logger.warning(f"Error loading model weights: {e}, using pretrained backbone only")
+        
+        model.to("cpu").float().eval()
+        
+        # Clear memory
+        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        
+        log_memory_usage("after classifier load")
+        logger.info("Successfully loaded classifier model")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load classifier model: {e}")
+        raise
 
-        logger.info("Optimized lazy model load complete.")
+async def load_models_background():
+    """Background task to load models with proper error handling"""
+    global yolo_model, classifier_model, idx_to_common_name, class_names
+    global models_loaded, model_load_error
+    
+    try:
+        log_memory_usage("start model loading")
+        logger.info("Starting background model loading...")
+        
+        # Step 1: Load class names first (fastest operation)
+        try:
+            class_names = await asyncio.get_event_loop().run_in_executor(
+                executor, load_class_names_sync
+            )
+            if not class_names:
+                raise RuntimeError("No class names loaded from database")
+            idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
+            logger.info(f"Loaded {len(class_names)} class names")
+        except Exception as e:
+            logger.error(f"Failed to load class names: {e}")
+            model_load_error = f"Database error: {e}"
+            return
+        
+        # Step 2: Download and load models in parallel
+        storage = get_supabase_client().storage.from_("models")
+        
+        # Download models with retry logic
+        try:
+            logger.info("Downloading model files...")
+            yolo_data = await asyncio.get_event_loop().run_in_executor(
+                executor, download_file_with_retry, storage, "yolov8n.pt"
+            )
+            classifier_data = await asyncio.get_event_loop().run_in_executor(
+                executor, download_file_with_retry, storage, "efficientnet_b3_fish_classifier.pth"
+            )
+            logger.info("Model files downloaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to download models: {e}")
+            model_load_error = f"Download error: {e}"
+            return
+        
+        # Step 3: Save to temporary files and load models
+        try:
+            # Create temporary files
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as yolo_temp:
+                yolo_temp.write(yolo_data)
+                yolo_path = yolo_temp.name
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pth") as classifier_temp:
+                classifier_temp.write(classifier_data)
+                classifier_path = classifier_temp.name
+            
+            # Load models in parallel
+            logger.info("Loading models...")
+            yolo_task = asyncio.get_event_loop().run_in_executor(
+                executor, load_yolo_model_sync, yolo_path
+            )
+            classifier_task = asyncio.get_event_loop().run_in_executor(
+                executor, load_classifier_model_sync, classifier_path, len(class_names)
+            )
+            
+            yolo_model, classifier_model = await asyncio.gather(yolo_task, classifier_task)
+            
+            # Cleanup temp files
+            try:
+                os.unlink(yolo_path)
+                os.unlink(classifier_path)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp files: {e}")
+            
+            models_loaded = True
+            log_memory_usage("model loading complete")
+            logger.info("✅ All models loaded successfully in background!")
+            
+        except Exception as e:
+            logger.error(f"Failed to load models: {e}")
+            model_load_error = f"Model loading error: {e}"
+            return
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during model loading: {e}")
+        model_load_error = f"Unexpected error: {e}"
+    finally:
+        # Always clean up memory
+        gc.collect()
 
-# --- Memory optimization change ---
+async def ensure_models_loaded():
+    """Ensure models are loaded, with proper waiting and error handling"""
+    global model_loading_task, models_loaded, model_load_error
+    
+    if models_loaded:
+        return
+    
+    if model_load_error:
+        raise HTTPException(
+            status_code=503, 
+            detail=f"Models failed to load: {model_load_error}. Please try again later."
+        )
+    
+    # Start loading if not already started
+    if model_loading_task is None:
+        model_loading_task = asyncio.create_task(load_models_background())
+    
+    # Wait for loading with timeout
+    try:
+        await asyncio.wait_for(model_loading_task, timeout=300.0)  # 5 minute timeout
+    except asyncio.TimeoutError:
+        model_load_error = "Model loading timed out"
+        raise HTTPException(
+            status_code=503,
+            detail="Models are taking too long to load. Please try again later."
+        )
+    
+    if model_load_error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Models failed to load: {model_load_error}"
+        )
+    
+    if not models_loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Models failed to load for unknown reasons"
+        )
+
 @app.on_event("startup")
 async def setup_app():
-    """Lightweight startup configuration"""
+    """Lightweight startup - start model loading in background without blocking"""
+    global model_loading_task
+    
     # Create directory for training charts if it doesn't exist
     charts_dir = "app/models/trained_models/training_charts"
     os.makedirs(charts_dir, exist_ok=True)
@@ -308,105 +460,63 @@ async def setup_app():
     # Include routers
     app.include_router(fish_images_router)
     app.include_router(model_management_router)
+    
+    # Start model loading in background (non-blocking)
+    logger.info("🚀 Starting model loading in background...")
+    model_loading_task = asyncio.create_task(load_models_background())
+    
+    logger.info("🎉 FastAPI startup complete! Models loading in background...")
 
-# Enable CORS - with explicit configuration for WebSocket support
+@app.on_event("shutdown")
+async def shutdown_app():
+    """Cleanup on shutdown"""
+    executor.shutdown(wait=True)
+    logger.info("Application shutdown complete")
+
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=True,  # Allow credentials
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
-    expose_headers=["*"],  # Expose all headers
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# --- Memory optimization change ---
-# Create model with the same architecture as in train_cnn.py
-def create_classifier_model(num_classes):
-    """Create a simple EfficientNet model that avoids matrix multiplication issues"""
-    # Load pretrained model
-    model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
+@app.get("/health")
+async def health_check():
+    """Health check endpoint with model status"""
+    global models_loaded, model_load_error
     
-    # Replace only the final linear layer with a new one
-    in_features = model.classifier[1].in_features
-    model.classifier[1] = nn.Linear(in_features, num_classes)
+    memory_mb = get_memory_usage()
     
-    # Keep the model simple - don't modify the architecture
-    return model
+    return {
+        "status": "healthy",
+        "models_loaded": models_loaded,
+        "model_load_error": model_load_error,
+        "memory_usage_mb": round(memory_mb, 2),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
-def load_classifier_model(model_path=None):
-    """Load the classifier model with proper error handling and fallbacks.
-    Prefers a checkpoint file that contains class_names and num_classes so that
-    the final classification head matches the trained classes exactly.
-    """
-    global class_names, idx_to_common_name
-
-    device = torch.device("cpu")
-
-    if model_path is None:
-        logger.error("No model_path provided to load_classifier_model.")
-        return None
-
-    try:
-        logger.info(f"Loading model from: {model_path}")
-
-        # Attempt to also load the checkpoint to get class_names/num_classes
-        checkpoint = None
-        checkpoint_path_guess = None
-        try:
-            if model_path.endswith(".pth"):
-                checkpoint_path_guess = model_path.replace('.pth', '_checkpoint.pth')
-            if checkpoint_path_guess and os.path.exists(checkpoint_path_guess):
-                checkpoint = torch.load(checkpoint_path_guess, map_location=device)
-            else:
-                # Try to read from storage directly when path is a temp file; ignore if not available
-                pass
-        except Exception as e:
-            logger.warning(f"Could not load checkpoint alongside model: {e}")
-
-        # Determine class names and num_classes from checkpoint if available
-        trained_class_names = None
-        trained_num_classes = None
-        if isinstance(checkpoint, dict):
-            trained_class_names = checkpoint.get('class_names')
-            trained_num_classes = checkpoint.get('num_classes')
-            if trained_class_names and isinstance(trained_class_names, (list, tuple)):
-                class_names = list(trained_class_names)
-                idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
-                logger.info(f"Loaded class names from checkpoint: {len(class_names)} classes")
-
-        if not trained_num_classes and class_names:
-            trained_num_classes = len(class_names)
-
-        if not trained_num_classes:
-            # Fallback to DB-derived classes
-            trained_num_classes = len(class_names) if class_names else 0
-
-        # Create model and replace final head
-        model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-        in_features = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(in_features, trained_num_classes)
-
-        # Load weights
-        try:
-            state_dict = torch.load(model_path, map_location=device)
-            model.load_state_dict(state_dict, strict=False)
-            logger.info("Successfully loaded model weights (non-strict)")
-        except Exception as e:
-            logger.warning(f"Error loading model weights: {str(e)}")
-            logger.info("Using initialized model with pretrained backbone only")
-
-        return model
-
-    except Exception as e:
-        logger.error(f"Error during model loading: {str(e)}")
-        logger.error(traceback.format_exc())
-        logger.warning("Using fallback model with standard architecture")
-        model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-        in_features = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(in_features, len(class_names))
-        return model
-
-
+@app.get("/models/status")
+async def get_model_status():
+    """Get detailed model loading status"""
+    global models_loaded, model_load_error, model_loading_task
+    
+    status = {
+        "models_loaded": models_loaded,
+        "model_load_error": model_load_error,
+        "loading_in_progress": model_loading_task is not None and not model_loading_task.done(),
+        "class_count": len(class_names),
+        "memory_usage_mb": round(get_memory_usage(), 2)
+    }
+    
+    if model_loading_task and model_loading_task.done():
+        status["loading_completed"] = True
+        if model_loading_task.exception():
+            status["loading_exception"] = str(model_loading_task.exception())
+    
+    return status
 
 @app.post("/predict", 
     summary="Identify fish species from an image",
@@ -426,8 +536,8 @@ async def predict(
     file: UploadFile = File(..., description="Image file containing a fish to identify"),
     db: Client = Depends(get_supabase_client)
 ):
-    # --- Lazy load change ---
-    await get_models()
+    # Ensure models are loaded
+    await ensure_models_loaded()
 
     filename = file.filename.lower()
     ext = filename.split(".")[-1]
@@ -485,8 +595,8 @@ async def predict(
                 aug_image = augment(fish_image)
                 
                 # Preprocess and predict
-                device = torch.device("cpu")  # Force CPU for memory optimization
-                input_tensor = transform(aug_image).unsqueeze(0).to(device).half()  # Convert to half precision
+                device = torch.device("cpu")
+                input_tensor = transform(aug_image).unsqueeze(0).to(device)
                 outputs = classifier_model(input_tensor)
                 probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
                 
@@ -559,14 +669,14 @@ async def predict(
                     "classification_confidence": round(score, 4)
                 })
 
-                    # Get top 3 predictions for transparency (use calibrated probabilities)
-            top_values, top_indices = torch.topk(calibrated_probs, min(3, len(class_names)))
-            top_predictions = [
-                {
-                    "class_name": idx_to_common_name[idx.item()],
-                    "confidence": round(val.item(), 4)
-                } for val, idx in zip(top_values, top_indices)
-            ]
+        # Get top 3 predictions for transparency (use calibrated probabilities)
+        top_values, top_indices = torch.topk(calibrated_probs, min(3, len(class_names)))
+        top_predictions = [
+            {
+                "class_name": idx_to_common_name[idx.item()],
+                "confidence": round(val.item(), 4)
+            } for val, idx in zip(top_values, top_indices)
+        ]
 
         return {
             "has_fish": True,
@@ -581,7 +691,7 @@ async def predict(
             "diet": match.get('diet', 'Unknown'),
             "preferred_food": match.get('preferred_food', 'Unknown'),
             "feeding_frequency": match.get('feeding_frequency', 'Unknown'),
-            "temperature_range_c": match.get('temperature_range_(°c)', match.get('temperature_range_c', match.get('temperature_range', 'Unknown'))),
+            "temperature_range_c": match.get('temperature_range_(Â°c)', match.get('temperature_range_c', match.get('temperature_range', 'Unknown'))),
             "ph_range": match.get('ph_range', 'Unknown'),
             "social_behavior": match.get('social_behavior', 'Unknown'),
             "minimum_tank_size_l": match.get('minimum_tank_size_(l)', match.get('minimum_tank_size_l', 'Unknown')),
@@ -603,7 +713,7 @@ async def get_fish_list(db: Client = Depends(get_supabase_client)):
             fish_copy = dict(fish)
             # Alias for frontend
             fish_copy['max_size'] = fish.get('max_size_(cm)')
-            fish_copy['temperature_range'] = fish.get('temperature_range_(°c)')
+            fish_copy['temperature_range'] = fish.get('temperature_range_(Â°c)')
             fish_list.append(fish_copy)
         return fish_list
     except Exception as e:
@@ -779,7 +889,7 @@ def calculate_water_requirements(request: WaterRequirementsRequest, db: Client =
             # Parse temperature range (try all possible fields)
             temp_min, temp_max = parse_range(
                 fish_info.get('temperature_range_c') or
-                fish_info.get('temperature_range_(°c)') or
+                fish_info.get('temperature_range_(Â°c)') or
                 fish_info.get('temperature_range') or
                 None
             )
@@ -821,7 +931,7 @@ def calculate_water_requirements(request: WaterRequirementsRequest, db: Client =
                 "name": fish_name,
                 "quantity": quantity,
                 "individual_requirements": {
-                    "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                    "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(Â°c)') or fish_info.get('temperature_range', 'Unknown'),
                     "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                     "minimum_tank_size": f"{min_tank_size} L"
                 }
@@ -900,7 +1010,7 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
             # Parse temperature range (try all possible fields)
             temp_min, temp_max = parse_range(
                 fish_info.get('temperature_range_c') or
-                fish_info.get('temperature_range_(°c)') or
+                fish_info.get('temperature_range_(Â°c)') or
                 fish_info.get('temperature_range') or
                 None
             )
@@ -1016,7 +1126,7 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                     "current_quantity": fish_selections[fish_name],
                     "max_capacity": max_quantities[fish_name],
                     "individual_requirements": {
-                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(Â°c)') or fish_info.get('temperature_range', 'Unknown'),
                         "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                         "minimum_tank_size": f"{min_tank_size} L"
                     }
@@ -1051,7 +1161,7 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                     "current_quantity": fish_selections[fish_name],
                     "max_individual_capacity": max_fish,
                     "individual_requirements": {
-                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(Â°c)') or fish_info.get('temperature_range', 'Unknown'),
                         "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                         "minimum_tank_size": f"{min_tank_size} L"
                     }
