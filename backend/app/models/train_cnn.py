@@ -14,7 +14,6 @@ import os
 import shutil
 import time
 from datetime import datetime
-import asyncio
 import traceback
 import json
 import matplotlib
@@ -24,66 +23,10 @@ import random
 import copy
 from tqdm import tqdm
 
-# Import the training log manager
-from ..main import training_log_manager
-
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("train_cnn")
 
-# Custom logger that also sends logs to WebSocket
-class WebSocketLogger:
-    def __init__(self, name):
-        self.logger = logging.getLogger(name)
-        self.loop = None
-        try:
-            self.loop = asyncio.get_event_loop()
-        except RuntimeError:
-            # If no event loop exists in this thread
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-    
-    def info(self, message):
-        # Log to console first
-        self.logger.info(message)
-        
-        # Then send to WebSocket
-        self._send_to_websocket({"type": "log", "message": message})
-    
-    def error(self, message):
-        # Log to console first
-        self.logger.error(message)
-        
-        # Then send to WebSocket with ERROR prefix
-        self._send_to_websocket({"type": "log", "message": f"ERROR: {message}", "level": "error"})
-    
-    def _send_to_websocket(self, message):
-        """Send a message to WebSocket clients"""
-        try:
-            if training_log_manager:
-                # Directly broadcast the JSON message using the connection manager's internal method
-                # _broadcast sends the message dictionary to all connected clients.
-                coro = training_log_manager._broadcast(message)
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        loop.create_task(coro)
-                except Exception as e:
-                    logger.error(f"Error sending to WebSocket: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error sending to WebSocket: {str(e)}")
-
-    def warning(self, message):
-        self.logger.warning(message)
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(training_log_manager.broadcast_log(f"WARNING: {message}"))
-        except Exception as e:
-            self.logger.error(f"Error sending warning log to WebSocket: {e}")
-
-# Create a WebSocket logger instance
-ws_logger = WebSocketLogger("train_cnn")
 
 # Custom dataset class that includes class weights
 class WeightedImageFolder(datasets.ImageFolder):
@@ -512,7 +455,24 @@ def train_cnn_model(species_name,
         logger.info(f"Model saved to {model_out_path}")
         logger.info(f"Checkpoint saved to {checkpoint_path}")
         
-        return best_accuracy, None
+        # Upload saved model files to Supabase Storage bucket 'models'
+        remote_model_key = None
+        remote_checkpoint_key = None
+        try:
+            from ..supabase_config import get_supabase_client
+            supabase_client = get_supabase_client()
+            models_bucket = supabase_client.storage.from_("models")
+            remote_model_key = "efficientnet_b3_fish_classifier.pth"
+            remote_checkpoint_key = "efficientnet_b3_fish_classifier_checkpoint.pth"
+            with open(model_out_path, "rb") as f_model:
+                models_bucket.upload(remote_model_key, f_model, {"upsert": True, "contentType": "application/octet-stream"})
+            with open(checkpoint_path, "rb") as f_ckpt:
+                models_bucket.upload(remote_checkpoint_key, f_ckpt, {"upsert": True, "contentType": "application/octet-stream"})
+            logger.info(f"Uploaded best model to Supabase Storage 'models' bucket: {remote_model_key}")
+        except Exception as e:
+            logger.error(f"Error uploading model to Supabase Storage: {str(e)}")
+        
+        return best_accuracy, {"model_storage_key": remote_model_key, "checkpoint_storage_key": remote_checkpoint_key}
     
     except Exception as e:
         logger.error(f"Error during training: {str(e)}")
@@ -610,8 +570,6 @@ def update_progress(status, progress, current_epoch=0, total_epochs=0, train_acc
         with open("training_progress/cnn_training_progress.json", "w") as f:
             json.dump(progress_data, f)
 
-        # Send to WebSocket
-        ws_logger._send_to_websocket(progress_data)
 
     except Exception as e:
         logger.error(f"Error updating progress: {str(e)}")

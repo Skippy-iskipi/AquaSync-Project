@@ -119,196 +119,71 @@ async def train_model(
                     detail="Missing required parameters for CNN model training"
                 )
             
-            # Create a temporary directory with symlinks to all species images
+            # Build a temporary dataset directory by downloading from Supabase Storage bucket 'fish-images'
             import tempfile
             import os
-            import shutil
             
-            # Create a temporary directory for the dataset
+            def download_split_from_storage(storage_client: Any, split: str, base_dir: str) -> int:
+                """Download a dataset split (train/val/test) from Supabase Storage into base_dir. Returns number of files downloaded."""
+                count = 0
+                try:
+                    # List immediate children under the split (species folders)
+                    entries = storage_client.list(split, {"limit": 10000, "offset": 0}) or []
+                    for entry in entries:
+                        name = entry.get("name")
+                        metadata = entry.get("metadata")
+                        if not name:
+                            continue
+                        if metadata is None:
+                            # Likely a folder representing species
+                            species_dir = name
+                            species_files = storage_client.list(f"{split}/{species_dir}", {"limit": 10000, "offset": 0}) or []
+                            os.makedirs(os.path.join(base_dir, split, species_dir), exist_ok=True)
+                            for f in species_files:
+                                file_name = f.get("name")
+                                f_meta = f.get("metadata")
+                                if not file_name or f_meta is None:
+                                    # Skip nested folders
+                                    continue
+                                remote_path = f"{split}/{species_dir}/{file_name}"
+                                try:
+                                    data = storage_client.download(remote_path)
+                                except Exception as de:
+                                    logger.warning(f"Failed to download {remote_path}: {de}")
+                                    continue
+                                if not data:
+                                    continue
+                                local_path = os.path.join(base_dir, split, species_dir, file_name)
+                                with open(local_path, "wb") as out:
+                                    out.write(data)
+                                count += 1
+                        else:
+                            # File directly under split; uncommon, skip or handle if needed
+                            logger.warning(f"Found unexpected file under '{split}' root: {name}. Skipping.")
+                except Exception as e:
+                    logger.error(f"Error listing/downloading split '{split}': {e}")
+                return count
+            
             with tempfile.TemporaryDirectory() as temp_data_dir:
-                # Create train/val/test directories
+                # Ensure split directories exist
                 for split in ["train", "val", "test"]:
                     os.makedirs(os.path.join(temp_data_dir, split), exist_ok=True)
                 
-                # Get all species from the fish_species table using Supabase
-                species_response = db.table('fish_species').select('id, common_name').order('common_name').execute()
-                species_result = species_response.data if species_response.data else []
+                # Download from Supabase Storage
+                try:
+                    storage = db.storage.from_("fish-images")
+                except Exception as e:
+                    logger.error(f"Failed to access Supabase Storage bucket 'fish-images': {e}")
+                    raise HTTPException(status_code=500, detail="Could not access dataset storage bucket")
                 
-                # Track all species IDs for later use
-                all_species_ids = []
+                total_downloaded = 0
+                for split in ["train", "val", "test"]:
+                    downloaded = download_split_from_storage(storage, split, temp_data_dir)
+                    logger.info(f"Downloaded {downloaded} files for split '{split}' from storage.")
+                    total_downloaded += downloaded
                 
-                # For each species in the database, create a directory and symlink the images
-                for species_data in species_result:
-                    # Get database ID and common name
-                    db_id = species_data['id']
-                    species_name = species_data['common_name']
-                    
-                    # Convert species_name to directory name (replace spaces with underscores)
-                    dir_name = species_name.replace(" ", "_").lower()
-                    all_species_ids.append(dir_name)
-                    
-                    # Store fish data for later use
-                    fish_data = {'id': db_id, 'common_name': species_name}
-                    
-                    # Get images for this species using Supabase
-                    images_response = db.table('fish_images_dataset').select('id, image_name, image_data, dataset_type').ilike('common_name', species_name).execute()
-                    result = images_response.data if images_response.data else []
-                    
-                    # Log the query and parameters
-                    logger.info(f"Found {len(result)} images for species {species_name}")
-                    
-                    # Map dataset_type to directory name (handle both uppercase and lowercase)
-                    dataset_type_map = {
-                        "training": "train",
-                        "train": "train",
-                        "TRAIN": "train",
-                        "VALIDATION": "val",
-                        "val": "val",
-                        "VAL": "val",
-                        "TEST": "test",
-                        "test": "test"
-                    }
-                    
-                    # Create species directories in each split
-                    for split in dataset_type_map.values():
-                        os.makedirs(os.path.join(temp_data_dir, split, dir_name), exist_ok=True)
-                    
-                    # Get all images for this species
-                    images_for_species = []
-                    for image_data in result:
-                        image_id = image_data['id']
-                        image_name = image_data.get('image_name')
-                        image_data_bytes = image_data.get('image_data')
-                        dataset_type = image_data.get('dataset_type')
-                        
-                        if dataset_type and dataset_type.lower() in dataset_type_map:
-                            split = dataset_type_map[dataset_type.lower()]
-                            images_for_species.append((split, image_id, image_name, image_data_bytes))
-                    
-                    # Only create directories and save images if we have images for this species
-                    if images_for_species:
-                        logger.info(f"Found {len(images_for_species)} images for species {species_name}")
-                        
-                        # Create directories for this species
-                        for split in dataset_type_map.values():
-                            os.makedirs(os.path.join(temp_data_dir, split, dir_name), exist_ok=True)
-                        
-                        # Save all images
-                        for split, image_id, image_name, image_data_bytes in images_for_species:
-                            target_dir = os.path.join(temp_data_dir, split, dir_name)
-                            
-                            # Make sure we use a valid image extension that PyTorch can recognize
-                            # Extract original extension if available, otherwise default to jpg
-                            ext = '.jpg'
-                            if image_name and '.' in image_name:
-                                original_ext = os.path.splitext(image_name)[1].lower()
-                                if original_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff']:
-                                    ext = original_ext
-                            
-                            # Create a file with the image data
-                            target_path = os.path.join(target_dir, f"{image_id}{ext}")
-                            
-                            # Write the binary image data to a file
-                            if image_data_bytes:
-                                with open(target_path, 'wb') as f:
-                                    f.write(image_data_bytes)
-                    else:
-                        logger.warning(f"No images found for species {species_name} (ID: {db_id})")
-                    
-                
-                # Collect species with images for training
-                species_with_images = {}
-                
-                # First, identify which species have images
-                for species_data in species_result:
-                    species_name = species_data['common_name']
-                    species_id = species_data['id']
-                    
-                    # Convert to directory name format
-                    dir_name = species_name.replace(" ", "_").lower()
-                    
-                    # Get images for this species using Supabase
-                    images_response = db.table('fish_images_dataset').select('*').ilike('common_name', species_name).execute()
-                    result = images_response.data if images_response.data else []
-                    
-                    logger.info(f"Found {len(result)} images for species {species_name}")
-                    
-                    # Only include species with images
-                    if result:
-                        species_with_images[dir_name] = {
-                            'name': species_name,
-                            'id': species_id,
-                            'images': result
-                        }
-                    else:
-                        logger.warning(f"No images found for species {species_name} (ID: {species_id})")
-                
-                # If no species have images, return an error
-                if not species_with_images:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No valid training images found. Please upload training images for at least one species before training the model."
-                    )
-                
-                # Map dataset_type to directory name (handle both uppercase and lowercase)
-                dataset_type_map = {
-                    "training": "train",
-                    "train": "train",
-                    "TRAIN": "train",
-                    "VALIDATION": "val",
-                    "val": "val",
-                    "VAL": "val",
-                    "TEST": "test",
-                    "test": "test"
-                }
-                
-                # Create directories and save images only for species that have images
-                total_images = 0
-                for dir_name, species_data in species_with_images.items():
-                    # Create directories for this species
-                    for split in dataset_type_map.values():
-                        os.makedirs(os.path.join(temp_data_dir, split, dir_name), exist_ok=True)
-                    
-                    # Process and save all images for this species
-                    train_images = 0
-                    for image_data in species_data['images']:
-                        image_id = image_data['id']
-                        image_name = image_data.get('image_name')
-                        image_data_bytes = image_data.get('image_data')
-                        dataset_type = image_data.get('dataset_type')
-                        
-                        if dataset_type and dataset_type in dataset_type_map:
-                            split = dataset_type_map[dataset_type]
-                            
-                            # Make sure we use a valid image extension
-                            ext = '.jpg'
-                            if image_name and '.' in image_name:
-                                original_ext = os.path.splitext(image_name)[1].lower()
-                                if original_ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff']:
-                                    ext = original_ext
-                            
-                            # Save the image
-                            target_dir = os.path.join(temp_data_dir, split, dir_name)
-                            target_path = os.path.join(target_dir, f"{image_id}{ext}")
-                            
-                            if image_data_bytes:
-                                with open(target_path, 'wb') as f:
-                                    f.write(image_data_bytes)
-                            
-                            if split == 'train':
-                                train_images += 1
-                                total_images += 1
-                    
-                    logger.info(f"Saved {train_images} training images for {species_data['name']}")
-                
-                # Check if we have enough species and images for training
-                if len(species_with_images) < 2:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Found only {len(species_with_images)} species with images. At least 2 species are required for classification."
-                    )
-                
-                logger.info(f"Prepared {total_images} training images across {len(species_with_images)} species for model training.")
+                if total_downloaded == 0:
+                    raise HTTPException(status_code=400, detail="No images found in 'fish-images' storage bucket. Please upload dataset images.")
                 
                 # Make sure the stop flag is reset before training
                 global STOP_TRAINING
@@ -316,7 +191,7 @@ async def train_model(
                 
                 # Train the CNN model using the temporary directory with stop flag callback
                 accuracy, training_logs = train_cnn_model(
-                    species_name=species_name,  # Pass the species name for better logging
+                    species_name="All species",
                     data_dir=temp_data_dir,
                     model_out_path=model_out_path,
                     image_size=image_size,
@@ -324,23 +199,31 @@ async def train_model(
                     learning_rate=learning_rate,
                     epochs=epochs,
                     use_data_augmentation=use_data_augmentation,
-                    stop_flag_callback=check_stop_flag  # Use the new callback function
+                    stop_flag_callback=check_stop_flag
                 )
                 
                 # Reset stop flag after training
                 STOP_TRAINING = False
             
-            # Get number of classes from all species
-            num_classes = len(all_species_ids)
+            # Attempt to capture remote storage keys returned by training
+            remote_model_key = None
+            if isinstance(training_logs, dict):
+                remote_model_key = training_logs.get("model_storage_key")
+            
+            # Determine number of classes by inspecting the 'train' split directories in storage
+            try:
+                train_entries = db.storage.from_("fish-images").list("train", {"limit": 10000, "offset": 0}) or []
+                num_classes = sum(1 for e in train_entries if e.get("metadata") is None)
+            except Exception:
+                num_classes = None
             
             # Create model record in database using Supabase
-            # If this model is active, deactivate all other models of the same type
             db.table('trained_models').update({"is_active": False}).eq('model_type', model_type).execute()
             
-            # Insert the new model
-            model_result = db.table('trained_models').insert({
+            model_record = {
                 "model_type": model_type,
-                "file_path": model_out_path,
+                # Prefer remote storage key if available
+                "file_path": remote_model_key or model_out_path,
                 "version": Path(model_out_path).stem,
                 "accuracy": accuracy,
                 "parameters": json.dumps({
@@ -351,16 +234,16 @@ async def train_model(
                     "use_data_augmentation": use_data_augmentation
                 }),
                 "num_classes": num_classes,
-                "training_dataset": "All database species",
+                "training_dataset": "Supabase Storage: fish-images",
                 "is_active": True
-            }).execute()
-            
+            }
+            model_result = db.table('trained_models').insert(model_record).execute()
             model_id = model_result.data[0]['id'] if model_result.data else None
             
             return {
                 "message": f"{model_type.upper()} model trained successfully",
                 "model_id": model_id,
-                "file_path": model_out_path,
+                "file_path": model_record["file_path"],
                 "accuracy": accuracy
             }
             
