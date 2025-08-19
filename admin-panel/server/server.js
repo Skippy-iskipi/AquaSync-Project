@@ -20,32 +20,37 @@ const supabase = createClient(
 );
 
 // Middleware
-// Allow requests from localhost and Vercel domains
+// Allow requests from localhost and deployed frontend domains
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
-  'https://aquasync-project.vercel.app', // Replace with your actual Vercel URL
-  'https://aquasync-admin.vercel.app'    // Common Vercel preview URL pattern
+  'https://aquasync-project.vercel.app',
+  'https://aquasync-admin.vercel.app'
 ];
 
 // Configure CORS with allowed origins and security headers
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // Allow requests with no origin (like curl) or same-origin
     if (!origin) return callback(null, true);
-    
-    // Check if the origin is allowed
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified origin.';
-      console.warn(`Blocked request from origin: ${origin}`);
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
+
+    // Allow specific list
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+
+    // Allow Vercel preview deployments (*.vercel.app)
+    try {
+      const { hostname } = new URL(origin);
+      if (hostname.endsWith('.vercel.app')) return callback(null, true);
+    } catch (_) {}
+
+    const msg = `CORS blocked: ${origin}`;
+    console.warn(msg);
+    return callback(new Error(msg), false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
+  exposedHeaders: ['Content-Length'],
   maxAge: 86400 // 24 hours
 }));
 

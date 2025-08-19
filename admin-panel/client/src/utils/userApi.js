@@ -2,7 +2,10 @@ import axios from 'axios';
 
 // Create an axios instance with default config
 const api = axios.create({
-  baseURL: '/api/admin', // This will be proxied to http://localhost:8080/api/admin
+  // Prefer env var in production; fallback to local relative path for dev
+  // Set REACT_APP_API_BASE_URL in Vercel to your backend URL, e.g.
+  // https://your-backend.onrender.com/api/admin
+  baseURL: process.env.REACT_APP_API_BASE_URL || '/api/admin',
   headers: {
     'Content-Type': 'application/json',
   },

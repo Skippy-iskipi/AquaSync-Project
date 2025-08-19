@@ -1,4 +1,3 @@
-const serverless = require('serverless-http');
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
@@ -34,6 +33,7 @@ app.use('/api/admin/model', modelsRouter);
 app.use('/api/admin/fish', fishRouter);
 app.use('/api/admin/users', usersRouter);
 
-// Export serverless handler in the format Vercel expects
-const handler = serverless(app);
-module.exports = handler;
+// Export a (req, res) handler for @vercel/node
+module.exports = (req, res) => {
+  return app(req, res);
+};
