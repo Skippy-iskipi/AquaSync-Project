@@ -1290,7 +1290,7 @@ Future<void> _generateAllRecommendations() async {
                               Provider.of<LogBookProvider>(context, listen: false)
                                 .addWaterCalculation(calculation);
                                 
-                              showCustomNotification(context, 'Water calculation saved to logbook');
+                              showCustomNotification(context, 'Water calculation saved to history');
                               
                               // Wait for notification to be visible
                               await Future.delayed(const Duration(milliseconds: 1500));

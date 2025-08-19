@@ -1,16 +1,17 @@
-import 'package:flutter/material.dart';
-import '../config/api_config.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:flutter/material.dart';
+import 'package:aquasync/config/api_config.dart';
 
 class FishImagesGrid extends StatefulWidget {
   final String fishName;
   final int initialDisplayCount;
+  final bool showTitle; // Add option to show/hide title
 
   const FishImagesGrid({
     Key? key,
     required this.fishName,
     this.initialDisplayCount = 2, // Default to showing 2 images initially
+    this.showTitle = false, // Default to not showing title since it's shown externally
   }) : super(key: key);
 
   @override
@@ -23,6 +24,19 @@ class _FishImagesGridState extends State<FishImagesGrid> {
   String? _errorMessage;
   int _loadedImages = 0;
   bool _expanded = false;
+
+  // Simple in-memory cache for URLs per fish name
+  static final Map<String, List<String>> _imageCache = {};
+  static final Map<String, DateTime> _cacheTime = {};
+  static const Duration _cacheTtl = Duration(minutes: 10);
+  // Memoized pending fetches to curb duplicate round-trips during rebuilds
+  static final Map<String, Future<List<String>>> _pendingFetch = {};
+
+  // No longer needed when using backend route; kept if we later need local sanitization
+  String _folderFromName(String name) {
+    final noSpaces = name.replaceAll(' ', '');
+    return noSpaces.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+  }
 
   @override
   void initState() {
@@ -38,12 +52,62 @@ class _FishImagesGridState extends State<FishImagesGrid> {
     });
 
     try {
-      // Get multiple fish images from the database
-      final imageUrls = ApiConfig.getFishImagesFromDb(widget.fishName);
+      // 1) Serve from cache if fresh
+      final cached = _imageCache[widget.fishName];
+      final fetchedAt = _cacheTime[widget.fishName];
+      final cacheFresh = fetchedAt != null && DateTime.now().difference(fetchedAt) < _cacheTtl;
+      if (cached != null && cacheFresh && cached.isNotEmpty) {
+        setState(() {
+          _imageUrls = List<String>.from(cached);
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Call backend route multiple times in PARALLEL to gather several random images
+      final desiredCount = 4; // fetch up to 4 images
+      final nowTs = DateTime.now().millisecondsSinceEpoch;
+      Future<List<String>> startFetch() async {
+        final futures = <Future>[
+          for (int i = 0; i < desiredCount; i++)
+            ApiConfig.makeRequestWithFailover(
+              endpoint: '/fish-image/${Uri.encodeComponent(widget.fishName)}?i=$i&t=$nowTs',
+              method: 'GET',
+            )
+        ];
+        final results = await Future.wait(futures, eagerError: false);
+        final urls = <String>[];
+        final seen = <String>{};
+        for (final resp in results) {
+          if (resp != null && resp.statusCode >= 200 && resp.statusCode < 300) {
+            try {
+              final data = json.decode(resp.body);
+              final url = (data['url'] ?? '').toString();
+              if (url.isNotEmpty && !seen.contains(url)) {
+                urls.add(url);
+                seen.add(url);
+              }
+            } catch (_) {
+              // ignore parse errors per item
+            }
+          }
+        }
+        return urls;
+      }
+
+      final urls = await (_pendingFetch[widget.fishName] ??= startFetch());
+      _pendingFetch.remove(widget.fishName);
+
       setState(() {
-        _imageUrls = imageUrls;
+        _imageUrls = urls;
         _isLoading = false;
       });
+
+      // 2) Populate cache
+      if (urls.isNotEmpty) {
+        _imageCache[widget.fishName] = List<String>.from(urls);
+        _cacheTime[widget.fishName] = DateTime.now();
+      }
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -51,7 +115,6 @@ class _FishImagesGridState extends State<FishImagesGrid> {
       });
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -89,65 +152,65 @@ class _FishImagesGridState extends State<FishImagesGrid> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Images',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF006064),
+        // Only show title if requested
+        if (widget.showTitle) ...[
+          const Text(
+            'Images',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF006064),
+            ),
           ),
-        ),
-        const SizedBox(height: 16),
-        
-        if (_loadedImages == 0 && !_isLoading)
-          
+          const SizedBox(height: 16),
+        ],
+
         // Display the grid with the determined number of images
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2, 
+            crossAxisCount: 2,
             childAspectRatio: 1.2, // Make images slightly wider than tall
             crossAxisSpacing: 8,
             mainAxisSpacing: 8,
           ),
           itemCount: displayCount,
           itemBuilder: (context, index) {
-            // For now, just fetch the same endpoint for each image (unless you have multiple images per fish)
+            final imageUrl = _imageUrls[index];
+            // Compute size-aware decode targets for lightweight rendering
+            final screenWidth = MediaQuery.of(context).size.width;
+            // Rough available width for each tile (2 columns, ~24px total padding+spacing)
+            final tileWidth = ((screenWidth - 24) / 2).clamp(80.0, 400.0);
+            final tileHeight = (tileWidth / 1.2).clamp(60.0, 400.0);
             return GestureDetector(
-              onTap: () => _showFullScreenImage(widget.fishName),
+              onTap: () => _showFullScreenImage(imageUrl),
               child: Card(
                 clipBehavior: Clip.antiAlias,
                 elevation: 2,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: FutureBuilder<http.Response>(
-                  future: http.get(Uri.parse(ApiConfig.getFishImageUrl(widget.fishName))),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
-                      return Container(
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 24),
-                      );
-                    }
-                    final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                    final String? base64Image = jsonData['image_data'];
-                    if (base64Image == null || base64Image.isEmpty) {
-                      return Container(
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 24),
-                      );
-                    }
-                    final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                    return Image.memory(
-                      base64Decode(base64Str),
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
+                child: Image.network(
+                  imageUrl,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: double.infinity,
+                  // Size-aware decode for performance
+                  cacheWidth: tileWidth.toInt(),
+                  cacheHeight: tileHeight.toInt(),
+                  filterQuality: FilterQuality.low,
+                  // Lightweight loading indicator
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return Container(
+                      color: Colors.grey[200],
+                    );
+                  },
+                  errorBuilder: (context, error, stack) {
+                    return Container(
+                      color: Colors.grey[200],
+                      child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 24),
                     );
                   },
                 ),
@@ -155,32 +218,29 @@ class _FishImagesGridState extends State<FishImagesGrid> {
             );
           },
         ),
-        
-        // "See more" / "Show less" button
+
+        // "See more" / "See less" button - Updated styling and positioning
         if (hasMoreImages)
           Padding(
-            padding: const EdgeInsets.only(top: 8.0),
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _expanded = !_expanded;
-                });
-              },
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    _expanded ? "Show less" : "See more...",
-                    style: const TextStyle(
-                      color: Color(0xFF00ACC1),
-                      fontWeight: FontWeight.bold,
-                    ),
+            padding: const EdgeInsets.only(top: 12.0),
+            child: Center(
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _expanded = !_expanded;
+                  });
+                },
+                icon: Icon(
+                  _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                  color: const Color(0xFF006064),
+                ),
+                label: Text(
+                  _expanded ? 'See less' : 'See more',
+                  style: const TextStyle(
+                    color: Color(0xFF006064),
+                    fontWeight: FontWeight.w600,
                   ),
-                  Icon(
-                    _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                    color: const Color(0xFF00ACC1),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -204,30 +264,18 @@ class _FishImagesGridState extends State<FishImagesGrid> {
                 minScale: 0.5,
                 maxScale: 3.0,
                 child: Center(
-                  child: FutureBuilder<http.Response>(
-                    future: http.get(Uri.parse(imageUrl)),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator(color: Colors.white));
-                      }
-                      if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
-                        return const Center(
-                          child: Icon(Icons.error_outline, color: Colors.white, size: 50),
-                        );
-                      }
-                      final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                      final String? base64Image = jsonData['image_data'];
-                      if (base64Image == null || base64Image.isEmpty) {
-                        return const Center(
-                          child: Icon(Icons.error_outline, color: Colors.white, size: 50),
-                        );
-                      }
-                      final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                      return Image.memory(
-                        base64Decode(base64Str),
-                        fit: BoxFit.contain,
-                        width: double.infinity,
-                        height: double.infinity,
+                  child: Image.network(
+                    imageUrl,
+                    fit: BoxFit.contain,
+                    width: double.infinity,
+                    height: double.infinity,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return const Center(child: CircularProgressIndicator(color: Colors.white));
+                    },
+                    errorBuilder: (context, error, stack) {
+                      return const Center(
+                        child: Icon(Icons.error_outline, color: Colors.white, size: 50),
                       );
                     },
                   ),
@@ -247,4 +295,4 @@ class _FishImagesGridState extends State<FishImagesGrid> {
       ),
     );
   }
-} 
+}

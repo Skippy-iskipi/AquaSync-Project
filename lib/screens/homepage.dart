@@ -226,7 +226,7 @@ class _HomePageState extends State<HomePage> {
             appBar: AppBar(
               title: Text(
                 _selectedIndex == 0 ? 'AquaSync' :
-                _selectedIndex == 1 ? 'Log Book' :
+                _selectedIndex == 1 ? 'History' :
                 _selectedIndex == 2 ? 'Calculator' : 'Sync',
                 style: const TextStyle(
                   color: Color(0xFF006064),
@@ -401,14 +401,18 @@ class _ModernRecentActivityCard extends StatelessWidget {
     Color iconColor = Colors.blueAccent;
     if (item is FishPrediction) {
       title = item.commonName.isNotEmpty ? item.commonName : 'Fish Captured';
-      subtitle = item.probability.isNotEmpty ? 'Confidence: ${item.probability}' : 'Successfully identified and logged';
+      // Show scientific name and water type instead of confidence
+      final parts = <String>[];
+      if (item.scientificName.isNotEmpty) parts.add(item.scientificName);
+      if (item.waterType.isNotEmpty) parts.add(item.waterType);
+      subtitle = parts.join('\n');
       icon = Icons.remove_red_eye;
       iconColor = Colors.blueAccent;
       time = _relativeTime(item.createdAt);
     } else if (item is WaterCalculation) {
       title = 'Water Calculator';
       final fishNames = item.fishSelections.keys.join(', ');
-      subtitle = 'Fish: $fishNames\npH Level: ${item.phRange}\nTemperature: ${item.temperatureRange.replaceAll('Â', '')}';
+      subtitle = 'Fish: $fishNames\npH level: ${item.phRange}\nTemperature range: ${item.temperatureRange.replaceAll('Â', '')}';
       icon = Icons.science;
       iconColor = Colors.green;
       time = _relativeTime(item.dateCalculated);

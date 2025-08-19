@@ -28,7 +28,7 @@ class BottomNavigation extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: <Widget>[
           _buildNavItem(context, 0, 'Explore', 'lib/icons/explore_icon.png', exploreKey),
-          _buildNavItem(context, 1, 'Log Book', 'lib/icons/logbook_icon.png', logbookKey),
+          _buildNavItem(context, 1, 'History', 'lib/icons/logbook_icon.png', logbookKey),
           const SizedBox(width: 48), // The space for the FAB
           _buildNavItem(context, 2, 'Calculator', 'lib/icons/calculator_icon.png', calculatorKey),
           _buildNavItem(context, 3, 'Sync', 'lib/icons/sync_icon.png', syncKey),

@@ -1,0 +1,896 @@
+{
+  "processing_stats": {
+    "valid_images": 5258,
+    "duplicates": 193,
+    "too_small": 1,
+    "processed_images": 5258
+  },
+  "dataset_summary": {
+    "total_classes": 109,
+    "total_images": 5258,
+    "train_images": 4182,
+    "val_images": 744,
+    "test_images": 332,
+    "augmented_classes": 0,
+    "class_distribution": {
+      "min_samples": 33,
+      "max_samples": 52,
+      "mean_samples": 48.23853211009175,
+      "std_samples": 2.9017523417133084
+    }
+  },
+  "class_details": {
+    "African Cichlid": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Albino Convict": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Albino Cory": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Albino Pleco": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Amano Shrimp": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "AngelFish": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Anthias": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Apistogramma": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Asian Stone Catfish": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Bala Shark": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Bamboo Shrimp": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Banggai Cardinalfish": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Banjar Red Arowana": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Betta": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Black Phantom Tetra": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Black Skirt Tetra": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Bleeding Heart Tetra": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Blue Convict": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Blue Tang": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Blue Velvet Shrimp": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Boesemani Rainbow": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Bolivian Ram": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Bristlenose Pleco": {
+      "train": 33,
+      "val": 6,
+      "test": 3,
+      "total": 42,
+      "original": 42,
+      "augmented": false
+    },
+    "Buenos Aires Tetra": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Cardinal Tetra": {
+      "train": 31,
+      "val": 5,
+      "test": 3,
+      "total": 39,
+      "original": 39,
+      "augmented": false
+    },
+    "Celestial Pearl Danio": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Channa Andrao": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Cherry Barb": {
+      "train": 32,
+      "val": 6,
+      "test": 3,
+      "total": 41,
+      "original": 41,
+      "augmented": false
+    },
+    "Chili Rasbora": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Cleaner Wrasse": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Clown Loach": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Clownfish": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Common Pleco": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Convict Cichlid": {
+      "train": 36,
+      "val": 6,
+      "test": 4,
+      "total": 46,
+      "original": 46,
+      "augmented": false
+    },
+    "Coral Beauty": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Corydoras Catfish": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Damselfish": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Discus": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Dottyback": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Dwarf Gourami": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Electric Blue Jack Dempsey": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Electric Blue Ram": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Ember Tetra": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Emperor Tetra": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Fancy Goldfish": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Firefish Goby": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Firemouth Cichlid": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Flagfish": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Flame Angelfish": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Flowerhorn": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Foxface Rabbitfish": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Frontosa": {
+      "train": 36,
+      "val": 6,
+      "test": 4,
+      "total": 46,
+      "original": 46,
+      "augmented": false
+    },
+    "Giant Danio": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Glass Catfish": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Glofish": {
+      "train": 36,
+      "val": 6,
+      "test": 4,
+      "total": 46,
+      "original": 46,
+      "augmented": false
+    },
+    "Gobies": {
+      "train": 36,
+      "val": 6,
+      "test": 4,
+      "total": 46,
+      "original": 46,
+      "augmented": false
+    },
+    "GoldFish": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Green Neon Tetra": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Green Terror": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Guppy": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Halfbeak": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Hammerhead Shark": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Harlequin Rasbora": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Hillstream Loach": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Jardini Arowana": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Keyhole Cichlid": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Killifish": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Koi Fish": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Kribensis": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Kuhli Loach": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Mandarinfish": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Marbled Hatchetfish": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Molly": {
+      "train": 41,
+      "val": 7,
+      "test": 4,
+      "total": 52,
+      "original": 52,
+      "augmented": false
+    },
+    "Moorish Idol": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Neon Tetra": {
+      "train": 26,
+      "val": 4,
+      "test": 3,
+      "total": 33,
+      "original": 33,
+      "augmented": false
+    },
+    "Oscar": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Otocinclus": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Panda Cory": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Pea Puffer": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Pearl Gourami": {
+      "train": 30,
+      "val": 5,
+      "test": 3,
+      "total": 38,
+      "original": 38,
+      "augmented": false
+    },
+    "Pencilfish": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Phoenix Rasbora": {
+      "train": 35,
+      "val": 6,
+      "test": 3,
+      "total": 44,
+      "original": 44,
+      "augmented": false
+    },
+    "Platy": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Pygmy Cory": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Rainbow Shark": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Ram Cichlid": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Red Cherry Shrimp": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Red Jewel": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Red Tail Shark": {
+      "train": 31,
+      "val": 5,
+      "test": 3,
+      "total": 39,
+      "original": 39,
+      "augmented": false
+    },
+    "Rocket Killifish": {
+      "train": 36,
+      "val": 6,
+      "test": 3,
+      "total": 45,
+      "original": 45,
+      "augmented": false
+    },
+    "Rosy Barb": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Royal Gramma": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "Rummy Nose Tetra": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Siamese Algae Eater": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Silver Arowana": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Silver Dollar": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Silver Tip Tetra": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Six Line Wrasse": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Spider Kelberi Peacock Bass": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Spotted Gar": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Sterbai Cory": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Super Red Oscar": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Swordtail": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Tiger Barb": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Tinfoil Barb": {
+      "train": 37,
+      "val": 7,
+      "test": 3,
+      "total": 47,
+      "original": 47,
+      "augmented": false
+    },
+    "White Cloud Mountain Minnow": {
+      "train": 38,
+      "val": 7,
+      "test": 3,
+      "total": 48,
+      "original": 48,
+      "augmented": false
+    },
+    "Yellow Tang": {
+      "train": 40,
+      "val": 7,
+      "test": 3,
+      "total": 50,
+      "original": 50,
+      "augmented": false
+    },
+    "Yoyo Loach": {
+      "train": 39,
+      "val": 7,
+      "test": 3,
+      "total": 49,
+      "original": 49,
+      "augmented": false
+    },
+    "Zebra Danio": {
+      "train": 31,
+      "val": 5,
+      "test": 3,
+      "total": 39,
+      "original": 39,
+      "augmented": false
+    }
+  }
+}

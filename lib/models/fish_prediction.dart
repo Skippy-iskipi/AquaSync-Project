@@ -41,6 +41,22 @@ class FishPrediction {
     this.createdAt,
   });
 
+  static String _cleanTempRange(dynamic raw) {
+    String s = (raw ?? '').toString().trim();
+    if (s.isEmpty) return '';
+    // Fix encoding artifacts and normalize spacing
+    s = s.replaceAll('Â°', '°').replaceAll('\u00A0', ' ').replaceAll('\u00a0', ' ');
+    final lower = s.toLowerCase();
+    if (!lower.contains('°c')) {
+      if (s.contains('°')) {
+        s = s.replaceAll('°', '°C');
+      } else {
+        s = '$s °C';
+      }
+    }
+    return s;
+  }
+
   FishPrediction copyWith({
     String? id,
     String? commonName,
@@ -110,6 +126,13 @@ class FishPrediction {
   }
 
   factory FishPrediction.fromJson(Map<String, dynamic> json) {
+    // Prefer new 'temperature_range' but support legacy variants from API/DB
+    final tempRaw = json['temperature_range']
+        ?? json['temperature_range_c']
+        ?? json['temperature_range_(°c)']
+        ?? json['temperature_range_(Â°c)']
+        ?? json['temperatureRange'];
+
     return FishPrediction(
       id: json['id'],
       commonName: json['common_name'] ?? json['commonName'] ?? '',
@@ -125,7 +148,7 @@ class FishPrediction {
       preferredFood: json['preferred_food'] ?? json['preferredFood'] ?? '',
       feedingFrequency: json['feeding_frequency'] ?? json['feedingFrequency'] ?? '',
       description: json['description'] ?? '',
-      temperatureRange: json['temperature_range'] ?? json['temperatureRange'] ?? '',
+      temperatureRange: _cleanTempRange(tempRaw),
       phRange: json['ph_range'] ?? json['phRange'] ?? '',
       socialBehavior: json['social_behavior'] ?? json['socialBehavior'] ?? '',
       minimumTankSize: json['minimum_tank_size'] ?? json['minimumTankSize'] ?? '',
@@ -137,4 +160,4 @@ class FishPrediction {
   String toString() {
     return 'FishPrediction{id: $id, commonName: $commonName, scientificName: $scientificName, waterType: $waterType, probability: $probability, imagePath: $imagePath, maxSize: $maxSize, temperament: $temperament, careLevel: $careLevel, lifespan: $lifespan, diet: $diet, preferredFood: $preferredFood, feedingFrequency: $feedingFrequency, description: $description, temperatureRange: $temperatureRange, phRange: $phRange, socialBehavior: $socialBehavior, minimumTankSize: $minimumTankSize, createdAt: $createdAt}';
   }
-} 
+}

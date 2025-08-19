@@ -169,7 +169,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
     logBookProvider.addFishCalculation(calculation);
 
-    showCustomNotification(context, 'Fish calculation saved to logbook');
+    showCustomNotification(context, 'Fish calculation saved to history');
     
     // Clear all inputs and reset state
     setState(() {

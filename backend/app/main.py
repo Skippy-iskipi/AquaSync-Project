@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Body, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Body, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,26 +22,37 @@ import traceback
 import base64
 import requests
 from datetime import datetime, timezone, timedelta
-
-# --- Lazy load change ---
 import asyncio
+import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import gc
+import psutil
+import time
 
 from .supabase_config import get_supabase_client
+from .models.train_cnn import create_large_scale_model
 from .models import FishSpecies
 from .routes.fish_images import router as fish_images_router
 from .routes.model_management import router as model_management_router
 from supabase import Client
 
-# --- Lazy load change ---
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Global model variables
 yolo_model = None
 classifier_model = None
 idx_to_common_name = {}
 class_names = []
 model_lock = asyncio.Lock()
+model_loading_task = None
+models_loaded = False
+model_load_error = None
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Thread pool for CPU-intensive tasks
+executor = ThreadPoolExecutor(max_workers=2)
 
 app = FastAPI(
     title="AquaSync API",
@@ -55,9 +66,10 @@ app = FastAPI(
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
 MAX_FILE_SIZE_MB = 5
 
+# Use the same validation preprocessing as training (image_size = 260)
 transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
+    transforms.Resize(int(260 * 1.14)),
+    transforms.CenterCrop(260),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
@@ -74,6 +86,17 @@ class PaymentIntentRequest(BaseModel):
     user_id: str
     tier_plan: str
     payment_methods: Optional[List[str]] = ["card", "gcash", "grab_pay", "paymaya"]
+
+# Memory monitoring utility
+def get_memory_usage():
+    """Get current memory usage in MB"""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+def log_memory_usage(context: str):
+    """Log memory usage with context"""
+    memory_mb = get_memory_usage()
+    logger.info(f"Memory usage at {context}: {memory_mb:.2f} MB")
 
 # Helper function to determine if a fish species can coexist with itself
 def can_same_species_coexist(fish_name: str, fish_info: Dict[str, Any]) -> Tuple[bool, str]:
@@ -123,7 +146,7 @@ def parse_range(range_str: Optional[str]) -> Tuple[Optional[float], Optional[flo
         # Remove any non-numeric characters except dash and dot
         range_str = (
             str(range_str)
-            .replace('°C', '')
+            .replace('Â°C', '')
             .replace('C', '')
             .replace('c', '')
             .replace('pH', '')
@@ -199,8 +222,8 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
 
     # Rule 5: Temperature Range Overlap
     try:
-        t1_min, t1_max = parse_range(fish1.get('temperature_range_c') or fish1.get('temperature_range_(°c)'))
-        t2_min, t2_max = parse_range(fish2.get('temperature_range_c') or fish2.get('temperature_range_(°c)'))
+        t1_min, t1_max = parse_range(fish1.get('temperature_range_c') or fish1.get('temperature_range_(Â°c)'))
+        t2_min, t2_max = parse_range(fish2.get('temperature_range_c') or fish2.get('temperature_range_(Â°c)'))
         if t1_min is not None and t2_min is not None and (t1_max < t2_min or t2_max < t1_min):
             reasons.append(f"Incompatible temperature requirements.")
     except (ValueError, TypeError):
@@ -208,87 +231,222 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
 
     return not reasons, reasons
 
-# --- Memory optimization change ---
-async def get_models():
-    global yolo_model, classifier_model, idx_to_common_name, class_names
-
-    # If already loaded, return
-    if yolo_model and classifier_model and class_names:
-        return
-
-    async with model_lock:
-        if yolo_model and classifier_model and class_names:
-            return  # Another request already loaded them
-
-        import tempfile
-        import requests
-        import torch
-
-        logger.info("Starting optimized lazy model load...")
-
-        # 1. Get class names from Supabase
+def download_file_with_retry(storage, object_key: str, max_retries: int = 3, retry_delay: float = 2.0) -> bytes:
+    """Download file from Supabase storage with retry logic"""
+    for attempt in range(max_retries):
         try:
-            supabase = get_supabase_client()
-            response = supabase.table('fish_species').select('common_name').execute()
-            class_names = sorted(set(fish['common_name'] for fish in response.data if fish.get('common_name')))
-            idx_to_common_name = {i: class_names[i] for i in range(len(class_names))}
-            logger.info(f"Successfully loaded {len(class_names)} class names.")
-            if not class_names:
-                raise RuntimeError("class_names is empty! Cannot proceed.")
-        except Exception as e:
-            logger.error(f"Fatal error loading class names: {str(e)}")
-            raise
-
-        # 2. Download YOLO model
-        yolo_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/yolov8n.pt"
-        try:
-            logger.info("Downloading YOLO model from Supabase...")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
-                r = requests.get(yolo_url, stream=True)
-                r.raise_for_status()
-                for chunk in r.iter_content(chunk_size=8192):
-                    tmp_file.write(chunk)
-                yolo_path = tmp_file.name
-            from ultralytics import YOLO
-            yolo_model = YOLO(yolo_path)
-            # Force CPU and half precision
-            yolo_model.to("cpu")
-            yolo_model.model.half()  # Convert to float16
-            logger.info("Successfully loaded YOLO model in float16 mode.")
-        except Exception as e:
-            logger.error(f"Failed to download/load YOLO model: {e}")
-            raise
-
-        # 3. Download EfficientNet-B3 model
-        efficientnet_url = "https://rdiwfttfxxpenrcxyfuv.supabase.co/storage/v1/object/public/models/efficientnet_b3_fish_classifier.pth"
-        try:
-            logger.info("Downloading EfficientNet-B3 model from Supabase...")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as tmp_file:
-                r = requests.get(efficientnet_url, stream=True)
-                r.raise_for_status()
-                for chunk in r.iter_content(chunk_size=8192):
-                    tmp_file.write(chunk)
-                efficientnet_path = tmp_file.name
-            classifier_model = load_classifier_model(efficientnet_path)
-            if classifier_model:
-                classifier_model.to("cpu").half().eval()  # Convert to float16 and eval mode
-                logger.info("Successfully loaded and configured classifier model in float16 mode.")
+            logger.info(f"Downloading {object_key}, attempt {attempt + 1}/{max_retries}")
+            data = storage.download(object_key)
+            if data:
+                logger.info(f"Successfully downloaded {object_key}, size: {len(data)} bytes")
+                return data
             else:
-                raise RuntimeError("Classifier model could not be loaded.")
+                raise RuntimeError(f"Empty data received for {object_key}")
         except Exception as e:
-            logger.error(f"Failed to download/load EfficientNet-B3 model: {e}")
-            raise
+            logger.warning(f"Download attempt {attempt + 1} failed for {object_key}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+            else:
+                raise RuntimeError(f"Failed to download {object_key} after {max_retries} attempts: {e}")
 
-        # Clear CUDA cache if it was used
+# Deprecated: class names are read from the training checkpoint to ensure consistent label order
+def load_class_names_sync() -> List[str]:
+    raise RuntimeError("load_class_names_sync should not be used. Class names are loaded from the model checkpoint.")
+
+def load_yolo_model_sync(model_path: str) -> YOLO:
+    """Synchronously load YOLO model"""
+    try:
+        log_memory_usage("before YOLO load")
+        model = YOLO(model_path)
+        model.to("cpu")
+        # Force garbage collection
+        gc.collect()
+        log_memory_usage("after YOLO load")
+        logger.info("Successfully loaded YOLO model")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load YOLO model: {e}")
+        raise
+
+def _parse_arch_from_config(model_config: Dict[str, Any]) -> str:
+    arch = model_config.get('architecture', 'efficientnet_b2')
+    # Expect values like 'efficientnet_b2' or 'efficientnet_b3'; convert to 'b2' / 'b3'
+    if isinstance(arch, str) and arch.startswith('efficientnet_'):
+        return arch.split('_')[-1]
+    return arch  # already 'b2'/'b3'/'b0'
+
+def load_classifier_model_sync(model_path: str) -> Tuple[torch.nn.Module, List[str]]:
+    """Synchronously load classifier model and class names from checkpoint.
+
+    Returns: (model, class_names)
+    """
+    try:
+        log_memory_usage("before classifier load")
+
+        checkpoint = torch.load(model_path, map_location="cpu")
+
+        # Determine if we were given a raw state_dict or a full checkpoint
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model_state = checkpoint['model_state_dict']
+            class_names_local = checkpoint.get('class_names') or []
+            num_classes = checkpoint.get('num_classes') or (len(class_names_local) if class_names_local else None)
+            model_config = checkpoint.get('model_config', {})
+            architecture = _parse_arch_from_config(model_config)
+        else:
+            # Raw state dict fallback (not preferred). Require a num_classes hint.
+            model_state = checkpoint
+            class_names_local = []
+            num_classes = None
+            architecture = 'b2'
+
+        if num_classes is None:
+            raise RuntimeError("num_classes not found in checkpoint and cannot be inferred.")
+
+        # Build the exact architecture used in training
+        model = create_large_scale_model(
+            num_classes=num_classes,
+            architecture=architecture,
+            dropout_rate=0.3,
+            device=torch.device('cpu')
+        )
+
+        try:
+            model.load_state_dict(model_state, strict=True)
+            logger.info("Successfully loaded model state_dict from checkpoint")
+        except Exception as e:
+            logger.warning(f"Strict load failed: {e}. Retrying with strict=False")
+            model.load_state_dict(model_state, strict=False)
+
+        model.to("cpu").float().eval()
+
+        # Clear memory
+        gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        logger.info("Optimized lazy model load complete.")
+        log_memory_usage("after classifier load")
+        return model, class_names_local
+    except Exception as e:
+        logger.error(f"Failed to load classifier model/checkpoint: {e}")
+        raise
 
-# --- Memory optimization change ---
+async def load_models_background():
+    """Background task to load models with proper error handling"""
+    global yolo_model, classifier_model, idx_to_common_name, class_names
+    global models_loaded, model_load_error
+    
+    try:
+        log_memory_usage("start model loading")
+        logger.info("Starting background model loading...")
+
+        # Step 1: Get YOLO from storage, but load classifier checkpoint from local disk
+        storage = get_supabase_client().storage.from_("models")
+        try:
+            logger.info("Fetching YOLO weights from storage and classifier checkpoint from disk...")
+            yolo_data = await asyncio.get_event_loop().run_in_executor(
+                executor, download_file_with_retry, storage, "yolov8n.pt"
+            )
+
+            # Resolve local checkpoint path
+            # Base directory is this file's directory: backend/app/
+            base_dir = Path(__file__).resolve().parent
+            ckpt_path = base_dir / "models" / "trained_models" / "efficientnet_b3_fish_classifier_checkpoint.pth"
+            if not ckpt_path.exists():
+                raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}")
+
+            logger.info(f"Using local classifier checkpoint at: {ckpt_path}")
+        except Exception as e:
+            logger.error(f"Failed to prepare model files: {e}")
+            model_load_error = f"Model file error: {e}"
+            return
+        
+        # Step 3: Save to temporary files and load models
+        try:
+            # Create temporary files
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as yolo_temp:
+                yolo_temp.write(yolo_data)
+                yolo_path = yolo_temp.name
+            
+            # Load models in parallel
+            logger.info("Loading models...")
+            yolo_task = asyncio.get_event_loop().run_in_executor(
+                executor, load_yolo_model_sync, yolo_path
+            )
+            classifier_task = asyncio.get_event_loop().run_in_executor(
+                executor, load_classifier_model_sync, str(ckpt_path)
+            )
+
+            yolo_model, classifier_loaded = await asyncio.gather(yolo_task, classifier_task)
+            classifier_model, class_names = classifier_loaded
+            idx_to_common_name = {i: name for i, name in enumerate(class_names)}
+            
+            # Cleanup temp files
+            try:
+                os.unlink(yolo_path)
+                # no unlink for local checkpoint
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp files: {e}")
+            
+            models_loaded = True
+            log_memory_usage("model loading complete")
+            logger.info("✅ All models loaded successfully in background!")
+            
+        except Exception as e:
+            logger.error(f"Failed to load models: {e}")
+            model_load_error = f"Model loading error: {e}"
+            return
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during model loading: {e}")
+        model_load_error = f"Unexpected error: {e}"
+    finally:
+        # Always clean up memory
+        gc.collect()
+
+async def ensure_models_loaded():
+    """Ensure models are loaded, with proper waiting and error handling"""
+    global model_loading_task, models_loaded, model_load_error
+    
+    if models_loaded:
+        return
+    
+    if model_load_error:
+        raise HTTPException(
+            status_code=503, 
+            detail=f"Models failed to load: {model_load_error}. Please try again later."
+        )
+    
+    # Start loading if not already started
+    if model_loading_task is None:
+        model_loading_task = asyncio.create_task(load_models_background())
+    
+    # Wait for loading with timeout
+    try:
+        await asyncio.wait_for(model_loading_task, timeout=300.0)  # 5 minute timeout
+    except asyncio.TimeoutError:
+        model_load_error = "Model loading timed out"
+        raise HTTPException(
+            status_code=503,
+            detail="Models are taking too long to load. Please try again later."
+        )
+    
+    if model_load_error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Models failed to load: {model_load_error}"
+        )
+    
+    if not models_loaded:
+        raise HTTPException(
+            status_code=503,
+            detail="Models failed to load for unknown reasons"
+        )
+
 @app.on_event("startup")
 async def setup_app():
-    """Lightweight startup configuration"""
+    """Lightweight startup - start model loading in background without blocking"""
+    global model_loading_task
+    
     # Create directory for training charts if it doesn't exist
     charts_dir = "app/models/trained_models/training_charts"
     os.makedirs(charts_dir, exist_ok=True)
@@ -304,67 +462,63 @@ async def setup_app():
     # Include routers
     app.include_router(fish_images_router)
     app.include_router(model_management_router)
+    
+    # Start model loading in background (non-blocking)
+    logger.info("🚀 Starting model loading in background...")
+    model_loading_task = asyncio.create_task(load_models_background())
+    
+    logger.info("🎉 FastAPI startup complete! Models loading in background...")
 
-# Enable CORS - with explicit configuration for WebSocket support
+@app.on_event("shutdown")
+async def shutdown_app():
+    """Cleanup on shutdown"""
+    executor.shutdown(wait=True)
+    logger.info("Application shutdown complete")
+
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=True,  # Allow credentials
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
-    expose_headers=["*"],  # Expose all headers
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# --- Memory optimization change ---
-# Create model with the same architecture as in train_cnn.py
-def create_classifier_model(num_classes):
-    """Create a simple EfficientNet model that avoids matrix multiplication issues"""
-    # Load pretrained model
-    model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
+@app.get("/health")
+async def health_check():
+    """Health check endpoint with model status"""
+    global models_loaded, model_load_error
     
-    # Replace only the final linear layer with a new one
-    in_features = model.classifier[1].in_features
-    model.classifier[1] = nn.Linear(in_features, num_classes)
+    memory_mb = get_memory_usage()
     
-    # Keep the model simple - don't modify the architecture
-    return model
+    return {
+        "status": "healthy",
+        "models_loaded": models_loaded,
+        "model_load_error": model_load_error,
+        "memory_usage_mb": round(memory_mb, 2),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
-def load_classifier_model(model_path=None):
-    """Load the classifier model with proper error handling and fallbacks"""
-    global class_names
+@app.get("/models/status")
+async def get_model_status():
+    """Get detailed model loading status"""
+    global models_loaded, model_load_error, model_loading_task
     
-    # --- Memory optimization change ---
-    device = torch.device("cpu")  # Force CPU for reduced memory usage
+    status = {
+        "models_loaded": models_loaded,
+        "model_load_error": model_load_error,
+        "loading_in_progress": model_loading_task is not None and not model_loading_task.done(),
+        "class_count": len(class_names),
+        "memory_usage_mb": round(get_memory_usage(), 2)
+    }
     
-    # Use the provided model_path (downloaded from Supabase)
-    if model_path is None:
-        logger.error("No model_path provided to load_classifier_model.")
-        return None
+    if model_loading_task and model_loading_task.done():
+        status["loading_completed"] = True
+        if model_loading_task.exception():
+            status["loading_exception"] = str(model_loading_task.exception())
     
-    try:
-        logger.info(f"Loading model from: {model_path}")
-        model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-        in_features = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(in_features, len(class_names))
-        try:
-            # Load weights in float16
-            state_dict = torch.load(model_path, map_location=device)
-            model.load_state_dict(state_dict, strict=False)
-            logger.info("Successfully loaded model weights (non-strict)")
-        except Exception as e:
-            logger.warning(f"Error loading model weights: {str(e)}")
-            logger.info("Using initialized model with pretrained backbone only")
-        return model
-    except Exception as e:
-        logger.error(f"Error during model loading: {str(e)}")
-        logger.error(traceback.format_exc())
-        logger.warning("Using fallback model with standard architecture")
-        model = efficientnet_b3(weights=EfficientNet_B3_Weights.IMAGENET1K_V1)
-        in_features = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(in_features, len(class_names))
-        return model
-
-
+    return status
 
 @app.post("/predict", 
     summary="Identify fish species from an image",
@@ -384,8 +538,8 @@ async def predict(
     file: UploadFile = File(..., description="Image file containing a fish to identify"),
     db: Client = Depends(get_supabase_client)
 ):
-    # --- Lazy load change ---
-    await get_models()
+    # Ensure models are loaded
+    await ensure_models_loaded()
 
     filename = file.filename.lower()
     ext = filename.split(".")[-1]
@@ -443,7 +597,7 @@ async def predict(
                 aug_image = augment(fish_image)
                 
                 # Preprocess and predict
-                device = torch.device("cpu")  # Force CPU for memory optimization
+                device = torch.device("cpu")
                 input_tensor = transform(aug_image).unsqueeze(0).to(device)
                 outputs = classifier_model(input_tensor)
                 probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
@@ -469,7 +623,7 @@ async def predict(
         logger.info(f"Prediction after test-time augmentation: class={class_idx}, raw confidence={score:.4f}, temperature={temperature}")
         
         # Set a confidence threshold to filter out uncertain predictions
-        CONFIDENCE_THRESHOLD = 0.5  # Minimum acceptable confidence
+        CONFIDENCE_THRESHOLD = 0.3  # Minimum acceptable confidence
         
         if score < CONFIDENCE_THRESHOLD:
             logger.warning(f"Low confidence prediction: {score:.4f} below threshold {CONFIDENCE_THRESHOLD}")
@@ -517,8 +671,8 @@ async def predict(
                     "classification_confidence": round(score, 4)
                 })
 
-        # Get top 3 predictions for transparency
-        top_values, top_indices = torch.topk(probabilities, min(3, len(class_names)))
+        # Get top 3 predictions for transparency (use calibrated probabilities)
+        top_values, top_indices = torch.topk(calibrated_probs, min(3, len(class_names)))
         top_predictions = [
             {
                 "class_name": idx_to_common_name[idx.item()],
@@ -539,7 +693,7 @@ async def predict(
             "diet": match.get('diet', 'Unknown'),
             "preferred_food": match.get('preferred_food', 'Unknown'),
             "feeding_frequency": match.get('feeding_frequency', 'Unknown'),
-            "temperature_range_c": match.get('temperature_range_(°c)', match.get('temperature_range_c', match.get('temperature_range', 'Unknown'))),
+            "temperature_range_c": match.get('temperature_range_(Â°c)', match.get('temperature_range_c', match.get('temperature_range', 'Unknown'))),
             "ph_range": match.get('ph_range', 'Unknown'),
             "social_behavior": match.get('social_behavior', 'Unknown'),
             "minimum_tank_size_l": match.get('minimum_tank_size_(l)', match.get('minimum_tank_size_l', 'Unknown')),
@@ -561,7 +715,7 @@ async def get_fish_list(db: Client = Depends(get_supabase_client)):
             fish_copy = dict(fish)
             # Alias for frontend
             fish_copy['max_size'] = fish.get('max_size_(cm)')
-            fish_copy['temperature_range'] = fish.get('temperature_range_(°c)')
+            fish_copy['temperature_range'] = fish.get('temperature_range_(Â°c)')
             fish_list.append(fish_copy)
         return fish_list
     except Exception as e:
@@ -569,36 +723,110 @@ async def get_fish_list(db: Client = Depends(get_supabase_client)):
         raise HTTPException(status_code=500, detail="Error fetching fish list")
 
 @app.get("/fish-image/{fish_name}")
-async def get_fish_image(fish_name: str, db: Client = Depends(get_supabase_client)):
-    """Get a random image for a specific fish from the fish_images_dataset table using Supabase client."""
-    import base64
+async def get_fish_image(
+    fish_name: str,
+    debug: bool = False,
+    db: Client = Depends(get_supabase_client),
+):
+    """Return a random image URL for a fish from Supabase Storage.
+
+    Looks in bucket 'models' under folder 'fish-images/{common_name}' where
+    common_name removes spaces and non-alphanumeric (e.g., 'Kuhli Loach' -> 'KuhliLoach').
+    Returns a public URL if available, otherwise a signed URL valid for 1 hour.
+    """
+    import re
     import random
 
-    # Fetch all images for the given fish name (case-insensitive)
-    response = db.table('fish_images_dataset').select('*').ilike('common_name', fish_name).execute()
-    images = response.data if response.data else []
+    def _folder_from_name(name: str) -> str:
+        # Remove spaces and non-alphanumeric characters
+        no_spaces = name.replace(' ', '')
+        return re.sub(r"[^A-Za-z0-9_-]", "", no_spaces)
 
-    if not images:
-        raise HTTPException(status_code=404, detail=f"No image found for fish: {fish_name}")
+    try:
+        # Use the 'fish-images' bucket as shown in storage
+        storage = db.storage.from_("fish-images")
+        base = "raw_fish_images"
+        # Try multiple variants to be resilient to naming differences
+        variants = []
+        provided = fish_name.strip()
+        if provided:
+            variants.append(f"{base}/{provided}")
+            # Title Case variant (e.g., betta -> Betta, african cichlid -> African Cichlid)
+            variants.append(f"{base}/{provided.title()}")
+        # Sanitized no-space variant (e.g., AfricanCichlid)
+        variants.append(f"{base}/{_folder_from_name(provided)}")
 
-    # Pick a random image
-    image = random.choice(images)
-    image_data = image.get('image_data')
-    if not image_data:
-        raise HTTPException(status_code=404, detail=f"No image data found for fish: {fish_name}")
+        items = []
+        folder = None
+        tried_paths = []
+        for candidate in variants:
+            try:
+                # Try without and with trailing slash to handle SDK differences
+                for path_variant in (candidate, f"{candidate}/"):
+                    tried_paths.append(path_variant)
+                    lst = storage.list(path=path_variant) or []
+                    # Keep only files (exclude subfolders)
+                    file_items = []
+                    for it in lst:
+                        # supabase-py may return dicts; detect folder by id/name ending with '/'
+                        nm = getattr(it, 'name', None) or (it.get('name') if isinstance(it, dict) else None)
+                        is_folder = bool(nm and str(nm).endswith('/'))
+                        if not is_folder and nm:
+                            file_items.append(it)
+                    if file_items:
+                        items = file_items
+                        folder = path_variant.rstrip('/')
+                        break
+                if items:
+                    break
+            except Exception:
+                continue
+        if not items or not folder:
+            detail = {"message": f"No images found for fish: {fish_name}"}
+            if debug:
+                detail["tried_paths"] = tried_paths
+            raise HTTPException(status_code=404, detail=detail)
 
-    # If image_data is already base64, just return it; otherwise, encode
-    if isinstance(image_data, str) and image_data.startswith('data:image'):
-        base64_image = image_data
-    else:
-        # If image_data is bytes or base64 string, encode as base64
-        if isinstance(image_data, str):
-            # If it's a base64 string (not prefixed), add prefix
-            base64_image = f"data:image/jpeg;base64,{image_data}"
-        else:
-            base64_image = f"data:image/jpeg;base64,{base64.b64encode(image_data).decode('utf-8')}"
+        choice = random.choice(items)
+        name = getattr(choice, 'name', None) or choice.get('name') if isinstance(choice, dict) else None
+        if not name:
+            raise HTTPException(status_code=404, detail=f"No image files found for fish: {fish_name}")
 
-    return {"image_data": base64_image}
+        file_path = f"{folder}/{name}"
+
+        def _extract_url(val):
+            # Handle both string and dict return types from supabase-py
+            if not val:
+                return None
+            if isinstance(val, str):
+                return val
+            if isinstance(val, dict):
+                # Common keys in supabase clients
+                for k in ("publicUrl", "public_url", "signedURL", "signedUrl", "signed_url", "url"):
+                    if k in val and isinstance(val[k], str) and val[k]:
+                        return val[k]
+            return None
+
+        try:
+            public_val = storage.get_public_url(file_path)
+            url = _extract_url(public_val)
+            if not url:
+                signed_val = storage.create_signed_url(file_path, 3600)
+                url = _extract_url(signed_val)
+        except Exception:
+            # Fallback to signed URL if public fails
+            signed_val = storage.create_signed_url(file_path, 3600)
+            url = _extract_url(signed_val)
+
+        if not url:
+            raise HTTPException(status_code=500, detail="Failed to generate image URL")
+
+        return {"url": url, "file": name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching fish image from storage: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching fish image")
 
 @app.get("/fish-species")
 async def get_fish_species(db: Client = Depends(get_supabase_client)):
@@ -737,7 +965,7 @@ def calculate_water_requirements(request: WaterRequirementsRequest, db: Client =
             # Parse temperature range (try all possible fields)
             temp_min, temp_max = parse_range(
                 fish_info.get('temperature_range_c') or
-                fish_info.get('temperature_range_(°c)') or
+                fish_info.get('temperature_range_(Â°c)') or
                 fish_info.get('temperature_range') or
                 None
             )
@@ -779,7 +1007,7 @@ def calculate_water_requirements(request: WaterRequirementsRequest, db: Client =
                 "name": fish_name,
                 "quantity": quantity,
                 "individual_requirements": {
-                    "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                    "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(Â°c)') or fish_info.get('temperature_range', 'Unknown'),
                     "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                     "minimum_tank_size": f"{min_tank_size} L"
                 }
@@ -858,7 +1086,7 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
             # Parse temperature range (try all possible fields)
             temp_min, temp_max = parse_range(
                 fish_info.get('temperature_range_c') or
-                fish_info.get('temperature_range_(°c)') or
+                fish_info.get('temperature_range_(Â°c)') or
                 fish_info.get('temperature_range') or
                 None
             )
@@ -974,7 +1202,7 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                     "current_quantity": fish_selections[fish_name],
                     "max_capacity": max_quantities[fish_name],
                     "individual_requirements": {
-                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(Â°c)') or fish_info.get('temperature_range', 'Unknown'),
                         "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                         "minimum_tank_size": f"{min_tank_size} L"
                     }
@@ -1009,7 +1237,7 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                     "current_quantity": fish_selections[fish_name],
                     "max_individual_capacity": max_fish,
                     "individual_requirements": {
-                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(°c)') or fish_info.get('temperature_range', 'Unknown'),
+                        "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(Â°c)') or fish_info.get('temperature_range', 'Unknown'),
                         "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                         "minimum_tank_size": f"{min_tank_size} L"
                     }
@@ -1075,9 +1303,9 @@ async def root():
 
 # Get PayMongo secret key from environment
 PAYMONGO_SECRET_KEY = os.getenv("PAYMONGO_SECRET_KEY")
+# Do not crash the app at import time; endpoints will check this when needed
 if not PAYMONGO_SECRET_KEY:
-    logger.error("PAYMONGO_SECRET_KEY environment variable is not set!")
-    raise RuntimeError("PayMongo secret key is required but not configured.")
+    logger.warning("PAYMONGO_SECRET_KEY is not set. Payment endpoints may not work until configured.")
 
 # --- Payment & Subscription Utilities ---
 def create_subscription(db, user_id, tier_plan, payment_intent_id):
@@ -1541,6 +1769,3 @@ async def test_webhook(request: Request):
     except Exception as e:
         logger.error(f"Error in test webhook: {str(e)}")
         return {"error": str(e)}
-
-
-

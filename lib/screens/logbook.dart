@@ -38,6 +38,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   Map<int, bool> _showOxygenNeeds = {};
   Map<int, bool> _showFiltrationNeeds = {};
+  // Cache resolved direct image URLs per fish name to avoid refetching
+  final Map<String, String> _fishImageUrlCache = {};
 
 
   @override
@@ -47,6 +49,129 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
       length: 3,
       vsync: this,
       initialIndex: widget.initialTabIndex,
+    );
+  }
+
+  // Resolve a fish image from a fish name (or API URL) and render with cache
+  Widget _buildResolvedFishImage(String fishName, {double height = 200}) {
+    final encoded = Uri.encodeComponent(fishName);
+
+    // If we have a cached direct URL, render immediately with CachedNetworkImage
+    if (_fishImageUrlCache.containsKey(fishName)) {
+      final directUrl = _fishImageUrlCache[fishName]!;
+      return CachedNetworkImage(
+        imageUrl: directUrl,
+        height: height,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => Container(
+          height: height,
+          color: Colors.grey[200],
+          child: const Center(child: CircularProgressIndicator()),
+        ),
+        errorWidget: (context, url, error) => Container(
+          height: height,
+          color: Colors.grey[200],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error, size: 40, color: Colors.grey),
+              const SizedBox(height: 8),
+              Text(
+                fishName,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Otherwise, fetch via backend JSON and then render the direct URL
+    return FutureBuilder<http.Response?>(
+      future: ApiConfig.makeRequestWithFailover(
+        endpoint: '/fish-image/$encoded',
+        method: 'GET',
+      ),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            height: height,
+            width: double.infinity,
+            color: Colors.grey[200],
+            child: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        final resp = snapshot.data;
+        if (resp != null && resp.statusCode == 200) {
+          try {
+            final Map<String, dynamic> jsonData = json.decode(resp.body);
+            final String directUrl = (jsonData['url'] ?? '').toString();
+            if (directUrl.isNotEmpty) {
+              // Save to in-memory cache
+              _fishImageUrlCache[fishName] = directUrl;
+              return CachedNetworkImage(
+                imageUrl: directUrl,
+                height: height,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                placeholder: (context, url) => Container(
+                  height: height,
+                  color: Colors.grey[200],
+                  child: const Center(child: CircularProgressIndicator()),
+                ),
+                errorWidget: (context, url, error) => Container(
+                  height: height,
+                  color: Colors.grey[200],
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error, size: 40, color: Colors.grey),
+                      const SizedBox(height: 8),
+                      Text(
+                        fishName,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+          } catch (e) {
+            // fallthrough to error widget below
+          }
+        }
+        return Container(
+          height: height,
+          color: Colors.grey[200],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error, size: 40, color: Colors.grey),
+              const SizedBox(height: 8),
+              Text(
+                fishName,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -442,40 +567,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                     // Fish image
                     ClipRRect(
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                      child: CachedNetworkImage(
-                        imageUrl: ApiConfig.getFishImageUrl(fishName),
-                        height: 200,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          height: 200,
-                          color: Colors.grey[200],
-                          child: const Center(child: CircularProgressIndicator()),
-                        ),
-                        errorWidget: (context, url, error) {
-                          print('Error loading water calculation image for $fishName: $error');
-                          return Container(
-                            height: 200,
-                            color: Colors.grey[200],
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.error, size: 40, color: Colors.grey),
-                                const SizedBox(height: 8),
-                                Text(
-                                  fishName,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
+                      child: _buildResolvedFishImage(fishName, height: 200),
                     ),
                     // Fish details
                     Padding(
@@ -675,40 +767,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                     // Fish image
                     ClipRRect(
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                      child: CachedNetworkImage(
-                        imageUrl: ApiConfig.getFishImageUrl(fishName),
-                        height: 200,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          height: 200,
-                          color: Colors.grey[200],
-                          child: const Center(child: CircularProgressIndicator()),
-                        ),
-                        errorWidget: (context, url, error) {
-                          print('Error loading water calculation image for $fishName: $error');
-                          return Container(
-                            height: 200,
-                            color: Colors.grey[200],
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.error, size: 40, color: Colors.grey),
-                                const SizedBox(height: 8),
-                                Text(
-                                  fishName,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
+                      child: _buildResolvedFishImage(fishName, height: 200),
                     ),
                     // Fish details
                     Padding(
@@ -1343,8 +1402,11 @@ String _cleanNeedsDescription(String input) {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: FutureBuilder<http.Response>(
-                            future: http.get(Uri.parse(ApiConfig.getFishImageUrl(result.fish1Name))),
+                          child: FutureBuilder<http.Response?>(
+                            future: ApiConfig.makeRequestWithFailover(
+                              endpoint: '/fish-image/${Uri.encodeComponent(result.fish1Name)}',
+                              method: 'GET',
+                            ),
                             builder: (context, snapshot) {
                               if (snapshot.connectionState == ConnectionState.waiting) {
                                 return Container(
@@ -1354,7 +1416,7 @@ String _cleanNeedsDescription(String input) {
                                   child: const Center(child: CircularProgressIndicator()),
                                 );
                               }
-                              if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
+                              if (snapshot.hasError || snapshot.data == null || snapshot.data!.statusCode != 200) {
                                 return Container(
                                   width: 60,
                                   height: 60,
@@ -1362,9 +1424,30 @@ String _cleanNeedsDescription(String input) {
                                   child: const Icon(Icons.error),
                                 );
                               }
-                              final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                              final String? base64Image = jsonData['image_data'];
-                              if (base64Image == null || base64Image.isEmpty) {
+                              try {
+                                final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
+                                final String? imageUrl = (jsonData['url'] ?? '').toString();
+                                if (imageUrl == null || imageUrl.isEmpty) {
+                                  return Container(
+                                    width: 60,
+                                    height: 60,
+                                    color: Colors.grey[200],
+                                    child: const Icon(Icons.error),
+                                  );
+                                }
+                                return Image.network(
+                                  imageUrl,
+                                  width: 60,
+                                  height: 60,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stack) => Container(
+                                    width: 60,
+                                    height: 60,
+                                    color: Colors.grey[200],
+                                    child: const Icon(Icons.image_not_supported),
+                                  ),
+                                );
+                              } catch (_) {
                                 return Container(
                                   width: 60,
                                   height: 60,
@@ -1372,21 +1455,17 @@ String _cleanNeedsDescription(String input) {
                                   child: const Icon(Icons.error),
                                 );
                               }
-                              final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                              return Image.memory(
-                                base64Decode(base64Str),
-                                width: 60,
-                                height: 60,
-                                fit: BoxFit.cover,
-                              );
                             },
                           ),
                         ),
                         const SizedBox(width: 8),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: FutureBuilder<http.Response>(
-                            future: http.get(Uri.parse(ApiConfig.getFishImageUrl(result.fish2Name))),
+                          child: FutureBuilder<http.Response?>(
+                            future: ApiConfig.makeRequestWithFailover(
+                              endpoint: '/fish-image/${Uri.encodeComponent(result.fish2Name)}',
+                              method: 'GET',
+                            ),
                             builder: (context, snapshot) {
                               if (snapshot.connectionState == ConnectionState.waiting) {
                                 return Container(
@@ -1396,7 +1475,7 @@ String _cleanNeedsDescription(String input) {
                                   child: const Center(child: CircularProgressIndicator()),
                                 );
                               }
-                              if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
+                              if (snapshot.hasError || snapshot.data == null || snapshot.data!.statusCode != 200) {
                                 return Container(
                                   width: 60,
                                   height: 60,
@@ -1404,9 +1483,30 @@ String _cleanNeedsDescription(String input) {
                                   child: const Icon(Icons.error),
                                 );
                               }
-                              final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                              final String? base64Image = jsonData['image_data'];
-                              if (base64Image == null || base64Image.isEmpty) {
+                              try {
+                                final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
+                                final String? imageUrl = (jsonData['url'] ?? '').toString();
+                                if (imageUrl == null || imageUrl.isEmpty) {
+                                  return Container(
+                                    width: 60,
+                                    height: 60,
+                                    color: Colors.grey[200],
+                                    child: const Icon(Icons.error),
+                                  );
+                                }
+                                return Image.network(
+                                  imageUrl,
+                                  width: 60,
+                                  height: 60,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stack) => Container(
+                                    width: 60,
+                                    height: 60,
+                                    color: Colors.grey[200],
+                                    child: const Icon(Icons.image_not_supported),
+                                  ),
+                                );
+                              } catch (_) {
                                 return Container(
                                   width: 60,
                                   height: 60,
@@ -1414,13 +1514,6 @@ String _cleanNeedsDescription(String input) {
                                   child: const Icon(Icons.error),
                                 );
                               }
-                              final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                              return Image.memory(
-                                base64Decode(base64Str),
-                                width: 60,
-                                height: 60,
-                                fit: BoxFit.cover,
-                              );
                             },
                           ),
                         ),
@@ -1532,7 +1625,6 @@ String _cleanNeedsDescription(String input) {
                     // Fish 1
                     _FishImageAndName(
                       fishName: result.fish1Name,
-                      imagePath: ApiConfig.getFishImageUrl(result.fish1Name),
                     ),
                     const SizedBox(height: 16),
                     const Icon(Icons.compare_arrows, size: 32, color: Color(0xFF006064)),
@@ -1540,7 +1632,6 @@ String _cleanNeedsDescription(String input) {
                     // Fish 2
                     _FishImageAndName(
                       fishName: result.fish2Name,
-                      imagePath: ApiConfig.getFishImageUrl(result.fish2Name),
                     ),
                     const SizedBox(height: 32),
                     // Compatibility Result Card
@@ -1655,52 +1746,18 @@ String _cleanNeedsDescription(String input) {
 
   Widget _FishImageAndName({
     required String fishName,
-    required String imagePath,
   }) {
     return Column(
       children: [
-        FutureBuilder<http.Response>(
-          future: http.get(Uri.parse(imagePath)),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return Container(
-                height: 200,
-                width: 320,
-                color: Colors.grey[200],
-                child: const Center(child: CircularProgressIndicator()),
-              );
-            }
-            if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
-              return Container(
-                height: 200,
-                width: 320,
-                color: Colors.grey[200],
-                child: const Icon(Icons.error, size: 40, color: Colors.grey),
-              );
-            }
-            final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-            final String? base64Image = jsonData['image_data'];
-            if (base64Image == null || base64Image.isEmpty) {
-              return Container(
-                height: 200,
-                width: 320,
-                color: Colors.grey[200],
-                child: const Icon(Icons.error, size: 40, color: Colors.grey),
-              );
-            }
-            final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-            return ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.memory(
-                base64Decode(base64Str),
-                height: 200,
-                width: 320,
-                fit: BoxFit.cover,
-              ),
-            );
-          },
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            width: 320,
+            height: 200,
+            child: _buildResolvedFishImage(fishName, height: 200),
+          ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Text(
           fishName,
           style: const TextStyle(

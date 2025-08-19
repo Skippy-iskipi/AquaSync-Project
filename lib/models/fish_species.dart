@@ -37,14 +37,34 @@ class FishSpecies {
     required this.feedingFrequency,
   });
 
+  static String _cleanTempRange(dynamic raw) {
+    String s = (raw ?? '').toString().trim();
+    if (s.isEmpty) return '';
+    s = s.replaceAll('Â°', '°').replaceAll('\u00A0', ' ').replaceAll('\u00a0', ' ');
+    final lower = s.toLowerCase();
+    if (!lower.contains('°c')) {
+      if (s.contains('°')) {
+        s = s.replaceAll('°', '°C');
+      } else {
+        s = '$s °C';
+      }
+    }
+    return s;
+  }
+
   factory FishSpecies.fromJson(Map<String, dynamic> json) {
+    // Prefer new key but support legacy variants and normalize
+    final tempRaw = json['temperature_range']
+        ?? json['temperature_range_c']
+        ?? json['temperature_range_(°c)']
+        ?? json['temperature_range_(Â°c)'];
     return FishSpecies(
       commonName: json['common_name'] ?? '',
       scientificName: json['scientific_name'] ?? '',
       maxSize: json['max_size']?.toString() ?? '',
       temperament: json['temperament'] ?? '',
       waterType: json['water_type'] ?? '',
-      temperatureRange: json['temperature_range'] ?? '',
+      temperatureRange: _cleanTempRange(tempRaw),
       phRange: json['ph_range'] ?? '',
       habitatType: json['habitat_type'] ?? '',
       socialBehavior: json['social_behavior'] ?? '',

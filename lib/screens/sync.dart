@@ -1046,12 +1046,14 @@ class _SyncScreenState extends State<SyncScreen> {
             if (_capturedImage1 != null) {
               _fish1ImagePath = _capturedImage1!.path;
             } else if (_fish1ImagePath.isEmpty) {
-              _fish1ImagePath = ApiConfig.getFishImageUrl(_selectedFish1!);
+              // Store the fish name so the renderer can resolve via /fish-image/{name}
+              _fish1ImagePath = _selectedFish1!;
             }
             if (_capturedImage2 != null) {
               _fish2ImagePath = _capturedImage2!.path;
             } else if (_fish2ImagePath.isEmpty) {
-              _fish2ImagePath = ApiConfig.getFishImageUrl(_selectedFish2!);
+              // Store the fish name so the renderer can resolve via /fish-image/{name}
+              _fish2ImagePath = _selectedFish2!;
             }
           });
           
@@ -1311,7 +1313,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                                 );
                                                 logbookProvider.addCompatibilityResult(newResult);
                                                 Navigator.of(dialogContext).pop();
-                                                showCustomNotification(context, 'Result saved to Log Book');
+                                                showCustomNotification(context, 'Result saved to History');
                                               },
                                               style: ElevatedButton.styleFrom(
                                                 backgroundColor: const Color(0xFF00ACC1),
@@ -1344,7 +1346,84 @@ class _SyncScreenState extends State<SyncScreen> {
     );
   }
 
-  Widget _buildFishResultImageWithBase64(File? capturedImage, String? base64Image, String fishName) {
+  Widget _buildNetworkFishImage(String imagePathOrName) {
+    final width = MediaQuery.of(context).size.width * 0.35;
+
+    // If a URL is provided, but it's the API endpoint (/fish-image/{name}),
+    // we must resolve it first. Only treat as direct image if it's NOT the API.
+    if (imagePathOrName.startsWith('http')) {
+      final lower = imagePathOrName.toLowerCase();
+      final isApiEndpoint = lower.contains('/fish-image/');
+      if (!isApiEndpoint) {
+        return Image.network(
+          imagePathOrName,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return const Icon(
+              Icons.error_outline,
+              color: Colors.grey,
+              size: 40,
+            );
+          },
+        );
+      }
+
+      // Extract fish name from the API URL path if possible
+      try {
+        final uri = Uri.parse(imagePathOrName);
+        final idx = uri.pathSegments.indexOf('fish-image');
+        if (idx != -1 && idx + 1 < uri.pathSegments.length) {
+          imagePathOrName = Uri.decodeComponent(uri.pathSegments[idx + 1]);
+        }
+      } catch (_) {
+        // If parsing fails, fall back to using the original string as a name
+      }
+    }
+
+    // Resolve via backend: fetch JSON to get the real image URL
+    return FutureBuilder<http.Response?>(
+      future: ApiConfig.makeRequestWithFailover(
+        endpoint: '/fish-image/${Uri.encodeComponent(imagePathOrName)}',
+        method: 'GET',
+      ),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(
+            width: width,
+            height: width,
+            color: Colors.grey[200],
+          );
+        }
+        final resp = snapshot.data;
+        if (resp != null && resp.statusCode == 200) {
+          try {
+            final Map<String, dynamic> jsonData = json.decode(resp.body);
+            final String url = (jsonData['url'] ?? '').toString();
+            if (url.isNotEmpty) {
+              return Image.network(
+                url,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return const Icon(
+                    Icons.error_outline,
+                    color: Colors.grey,
+                    size: 40,
+                  );
+                },
+              );
+            }
+          } catch (_) {}
+        }
+        return const Icon(
+          Icons.error_outline,
+          color: Colors.grey,
+          size: 40,
+        );
+      },
+    );
+  }
+
+  Widget _buildFishResultImageWithBase64(File? capturedImage, String? base64Image, String imagePathOrName) {
     final width = MediaQuery.of(context).size.width * 0.35;
     return Container(
       width: width,
@@ -1367,49 +1446,69 @@ class _SyncScreenState extends State<SyncScreen> {
                 capturedImage,
                 fit: BoxFit.cover,
               )
-            : base64Image != null && base64Image.isNotEmpty
-                ? Image.memory(
-                    base64Decode(base64Image),
-                    fit: BoxFit.cover,
-                  )
-                : FutureBuilder<http.Response>(
-                    future: http.get(Uri.parse(ApiConfig.getFishImageUrl(fishName))),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return Container(
-                          color: Colors.grey[200],
-                          child: const Center(child: CircularProgressIndicator()),
+            : () {
+                // Prefer base64 image if provided. Decode safely and fall back to network on error.
+                if (base64Image != null && base64Image.isNotEmpty) {
+                  try {
+                    final String cleaned = base64Image.contains(',')
+                        ? base64Image.split(',')[1]
+                        : base64Image;
+                    final bytes = base64Decode(cleaned);
+                    return Image.memory(
+                      bytes,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        // If base64 render fails, attempt local file path next, then network.
+                        try {
+                          if (imagePathOrName.isNotEmpty && File(imagePathOrName).existsSync()) {
+                            return Image.file(
+                              File(imagePathOrName),
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return _buildNetworkFishImage(imagePathOrName);
+                              },
+                            );
+                          }
+                        } catch (_) {
+                          // Ignore and fall through to network
+                        }
+                        return _buildNetworkFishImage(imagePathOrName);
+                      },
+                    );
+                  } catch (e) {
+                    // If base64 is invalid, try local file path first, then network
+                    try {
+                      if (imagePathOrName.isNotEmpty && File(imagePathOrName).existsSync()) {
+                        return Image.file(
+                          File(imagePathOrName),
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return _buildNetworkFishImage(imagePathOrName);
+                          },
                         );
                       }
-                      if (snapshot.hasError || !snapshot.hasData || snapshot.data!.statusCode != 200) {
-                        return Container(
-                          color: Colors.grey[200],
-                          child: const Icon(
-                            Icons.error_outline,
-                            color: Colors.grey,
-                            size: 40,
-                          ),
-                        );
-                      }
-                      final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                      final String? base64Image = jsonData['image_data'];
-                      if (base64Image == null || base64Image.isEmpty) {
-                        return Container(
-                          color: Colors.grey[200],
-                          child: const Icon(
-                            Icons.error_outline,
-                            color: Colors.grey,
-                            size: 40,
-                          ),
-                        );
-                      }
-                      final String base64Str = base64Image.contains(',') ? base64Image.split(',')[1] : base64Image;
-                      return Image.memory(
-                        base64Decode(base64Str),
-                        fit: BoxFit.cover,
-                      );
-                    },
-                  ),
+                    } catch (_) {
+                      // Ignore and fall through to network
+                    }
+                    return _buildNetworkFishImage(imagePathOrName);
+                  }
+                }
+                // No captured or base64 image: try local file path first, then network URL.
+                try {
+                  if (imagePathOrName.isNotEmpty && File(imagePathOrName).existsSync()) {
+                    return Image.file(
+                      File(imagePathOrName),
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return _buildNetworkFishImage(imagePathOrName);
+                      },
+                    );
+                  }
+                } catch (_) {
+                  // Ignore and fall through to network
+                }
+                return _buildNetworkFishImage(imagePathOrName);
+              }(),
       ),
     );
   }

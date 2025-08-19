@@ -53,6 +53,7 @@ class CaptureScreenState extends State<CaptureScreen> {
   }
 
   Future<void> _loadUserPlanAndCount() async {
+    if (!mounted) return;
     final user = Supabase.instance.client.auth.currentUser;
     String plan = 'free';
     int count = 0;
@@ -67,10 +68,12 @@ class CaptureScreenState extends State<CaptureScreen> {
       } catch (_) {}
       try {
         // Count saved captures from logbook provider
+        if (!mounted) return; // context not valid if unmounted
         final provider = Provider.of<LogBookProvider>(context, listen: false);
         count = provider.savedPredictions.length;
       } catch (_) {}
     }
+    if (!mounted) return;
     setState(() {
       _userPlan = plan;
       _savedCapturesCount = count;
@@ -113,6 +116,31 @@ class CaptureScreenState extends State<CaptureScreen> {
         );
       },
     );
+  }
+
+  // Safely pop the current route/dialog if possible
+  void _safePop() {
+    if (!mounted) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
+  }
+
+  // Handle back navigation safely to avoid popping when no history exists
+  void _handleBack() {
+    if (!mounted) return;
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.pop();
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const HomePage(initialTabIndex: 0),
+        ),
+      );
+    }
   }
 
   Future<void> _initializeCamera() async {
@@ -160,6 +188,25 @@ class CaptureScreenState extends State<CaptureScreen> {
     final fileName = 'fish_${DateTime.now().millisecondsSinceEpoch}${path.extension(imageFile.path)}';
     final savedImage = await io.File(imageFile.path).copy('${directory.path}/$fileName');
     return savedImage.path;
+  }
+
+  // Normalize temperature range from backend into a clean display string
+  String _cleanTempRange(dynamic raw) {
+    String s = (raw ?? '').toString().trim();
+    if (s.isEmpty) return '';
+    // Fix encoding artifacts
+    s = s.replaceAll('Â°', '°').replaceAll(' ', ' ');
+    // If it doesn't contain °C, append unit for clarity
+    final lower = s.toLowerCase();
+    if (!lower.contains('°c')) {
+      // Avoid duplicating unit if value already ends with a degree symbol
+      if (s.contains('°')) {
+        s = s.replaceAll('°', '°C');
+      } else {
+        s = '$s °C';
+      }
+    }
+    return s;
   }
 
   Future<void> _analyzeFishImage(XFile imageFile, String savedImagePath) async {
@@ -272,6 +319,7 @@ class CaptureScreenState extends State<CaptureScreen> {
       await Future.delayed(const Duration(seconds: 3));
 
       final uri = Uri.parse(ApiConfig.predictEndpoint);
+
       
       var request = http.MultipartRequest('POST', uri);
       
@@ -311,7 +359,7 @@ class CaptureScreenState extends State<CaptureScreen> {
           
           // Show a different loading dialog for AI analysis
           if (mounted) {
-            Navigator.pop(context); // Close the previous loading dialog
+            _safePop(); // Close the previous loading dialog if still present
             showDialog(
               context: context,
               barrierDismissible: false,
@@ -344,7 +392,7 @@ class CaptureScreenState extends State<CaptureScreen> {
           final aiResult = await OpenAIService.analyzeUnidentifiedFish(File(imageFile.path));
           
           if (mounted) {
-            Navigator.pop(context); // Close the AI loading dialog
+            _safePop(); // Close the AI loading dialog if still present
           }
           
           // Create an AI-assisted prediction
@@ -362,7 +410,7 @@ class CaptureScreenState extends State<CaptureScreen> {
             preferredFood: 'Unknown (AI estimate)',
             feedingFrequency: 'Unknown (AI estimate)',
             description: aiResult['care_notes'] ?? 'No AI-generated description available.',
-            temperatureRange: aiResult['temperature_range'] ?? 'Unknown (AI estimate)',
+            temperatureRange: _cleanTempRange(aiResult['temperature_range'] ?? 'Unknown (AI estimate)'),
             phRange: aiResult['pH_range'] ?? 'Unknown (AI estimate)',
             socialBehavior: aiResult['social_behavior'] ?? 'Unknown (AI estimate)',
             minimumTankSize: aiResult['tank_size'] ?? 'Unknown (AI estimate)'
@@ -383,30 +431,22 @@ class CaptureScreenState extends State<CaptureScreen> {
           
         } else {
           // Proceed with regular prediction
-          FishPrediction prediction = FishPrediction(
-            commonName: decodedResponse['common_name'] ?? 'Unknown',
-            scientificName: decodedResponse['scientific_name'] ?? 'Unknown',
-            waterType: decodedResponse['water_type'] ?? 'Unknown',
-            probability: '${((decodedResponse['classification_confidence'] ?? 0) * 100).toStringAsFixed(2)}%',
-            imagePath: savedImagePath,  // Use the saved image path
-            maxSize: '${decodedResponse['max_size'] ?? 'Unknown'}',
-            temperament: decodedResponse['temperament'] ?? 'Unknown',
-            careLevel: decodedResponse['care_level'] ?? 'Unknown',
-            lifespan: '${decodedResponse['lifespan'] ?? 'Unknown'}',
-            diet: decodedResponse['diet'] ?? 'Unknown',
-            preferredFood: decodedResponse['preferred_food'] ?? 'Unknown',
-            feedingFrequency: decodedResponse['feeding_frequency'] ?? 'Unknown',
-            description: '',  // Empty description that will be filled by OpenAI API
-            temperatureRange: decodedResponse['temperature_range_c'] ?? '',
-            phRange: decodedResponse['ph_range'] ?? '',
-            socialBehavior: decodedResponse['social_behavior'] ?? '',
-            minimumTankSize: decodedResponse['minimum_tank_size_l'] != null ? '${decodedResponse['minimum_tank_size_l']} L' : ''
-          );
+          // Use model's robust parser to handle all key variants and normalization
+          FishPrediction prediction = FishPrediction.fromJson(decodedResponse)
+              .copyWith(
+                // Ensure we set runtime fields for UI
+                imagePath: savedImagePath,
+                probability: '${((decodedResponse['classification_confidence'] ?? 0) * 100).toStringAsFixed(2)}%',
+                // Normalize minimum tank size if provided in liters
+                minimumTankSize: decodedResponse['minimum_tank_size_l'] != null
+                    ? '${decodedResponse['minimum_tank_size_l']} L'
+                    : (decodedResponse['minimum_tank_size']?.toString() ?? ''),
+              );
 
           print('Created prediction object: ${prediction.toJson()}');
 
           if (mounted) {
-            Navigator.pop(context); // Close the scanning dialog
+            _safePop(); // Close the scanning dialog if still present
             _loadDescriptionAndShowResults(imageFile, prediction, prediction.commonName, prediction.scientificName);
           }
         }
@@ -416,96 +456,19 @@ class CaptureScreenState extends State<CaptureScreen> {
         
         if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == true &&
             decodedResponse.containsKey('predicted_name')) {
-          // Fish was detected but not found in the database, try OpenAI Vision
-          if (!kIsWeb) {
-            print('Fish detected but not in database, trying OpenAI Vision API');
-            
-            // Show a different loading dialog for AI analysis
-            if (mounted) {
-              Navigator.pop(context); // Close the previous loading dialog
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (context) => Dialog(
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const CircularProgressIndicator(color: Colors.teal),
-                      const SizedBox(height: 20),
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Text(
-                          "Using AI for detailed analysis...",
-                          style: TextStyle(color: Colors.teal),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }
-            
-            // Use OpenAI Vision API for better identification
-            final aiResult = await OpenAIService.analyzeUnidentifiedFish(File(imageFile.path));
-            
-            if (mounted) {
-              Navigator.pop(context); // Close the AI loading dialog
-            }
-            
-            // Create an AI-assisted prediction
-            FishPrediction aiPrediction = FishPrediction(
-              commonName: aiResult['common_name'] ?? decodedResponse['predicted_name'] ?? 'Unidentified Fish',
-              scientificName: aiResult['scientific_name'] ?? 'Unknown',
-              waterType: aiResult['water_type'] ?? 'Unknown',
-              probability: '${aiResult['confidence_level'] ?? 'Low'} (AI-assisted)',
-              imagePath: savedImagePath,
-              maxSize: 'Unknown (AI estimate)',
-              temperament: 'Unknown (AI estimate)',
-              careLevel: 'Unknown (AI estimate)',
-              lifespan: 'Unknown (AI estimate)',
-              diet: 'Unknown (AI estimate)',
-              preferredFood: 'Unknown (AI estimate)',
-              feedingFrequency: 'Unknown (AI estimate)',
-              description: aiResult['care_notes'] ?? 'No AI-generated description available.',
-              temperatureRange: aiResult['temperature_range'] ?? 'Unknown (AI estimate)',
-              phRange: aiResult['pH_range'] ?? 'Unknown (AI estimate)',
-              socialBehavior: aiResult['social_behavior'] ?? 'Unknown (AI estimate)',
-              minimumTankSize: aiResult['tank_size'] ?? 'Unknown (AI estimate)'
+          // Fish was detected but not found in the database — no AI fallback. Just inform the user.
+          if (mounted) {
+            _safePop(); // Close the scanning dialog if still present
+            showCustomNotification(
+              context,
+              'Fish detected but not found in our database: ${decodedResponse['predicted_name']}.',
+              isError: true,
             );
-            
-            // Add distinctive features to the description
-            if (aiResult.containsKey('distinctive_features') && 
-                aiResult['distinctive_features'] != null &&
-                aiResult['distinctive_features'].toString().isNotEmpty) {
-              aiPrediction = aiPrediction.copyWith(
-                description: 'Distinctive features: ${aiResult['distinctive_features']}\n\n${aiPrediction.description}'
-              );
-            }
-            
-            if (mounted) {
-              _showAiAssistedResults(imageFile, aiPrediction);
-            }
-          } else {
-            // For web version, just show an error
-            if (mounted) {
-              Navigator.pop(context); // Close the scanning dialog
-              showCustomNotification(
-                context,
-                'Fish detected but not found in our database.',
-                isError: true,
-              );
-            }
           }
         } else {
           // Handle other 404 errors
           if (mounted) {
-            Navigator.pop(context);
+            _safePop();
             showCustomNotification(
               context,
               'Error: ${decodedResponse['detail']}',
@@ -515,7 +478,7 @@ class CaptureScreenState extends State<CaptureScreen> {
         }
       } else if (response.statusCode == 400) {
         if (mounted) {
-          Navigator.pop(context); // Close the scanning dialog
+          _safePop(); // Close the scanning dialog if still present
         }
         var decodedResponse = json.decode(response.body);
         
@@ -537,7 +500,7 @@ class CaptureScreenState extends State<CaptureScreen> {
       }
     } catch (e, stackTrace) {
       if (mounted) {
-        Navigator.pop(context); // Close the scanning dialog
+        _safePop(); // Close the scanning dialog if still present
       }
       print('Error getting predictions: $e');
       print('Stack trace: $stackTrace');
@@ -577,6 +540,7 @@ class CaptureScreenState extends State<CaptureScreen> {
               ),
               (route) => false,
             );
+            return; // Stop further execution; widget will likely be disposed
           }
         }
       } else {
@@ -591,7 +555,9 @@ class CaptureScreenState extends State<CaptureScreen> {
       }
     }
     // Refresh plan/count after save
-    await _loadUserPlanAndCount();
+    if (mounted) {
+      await _loadUserPlanAndCount();
+    }
   }
 
   void _showPredictionResults(XFile imageFile, List<FishPrediction> predictions) {
@@ -856,13 +822,13 @@ class CaptureScreenState extends State<CaptureScreen> {
       );
       
       if (mounted) {
-        Navigator.pop(context); // Close the loading dialog
+        _safePop(); // Close the loading dialog if still present
         _showPredictionResults(imageFile, [updatedPrediction]);
       }
     } catch (e) {
       print('Error loading description: $e');
       if (mounted) {
-        Navigator.pop(context); // Close the loading dialog
+        _safePop(); // Close the loading dialog if still present
         // Still show results but with an error message
         prediction = FishPrediction(
           commonName: prediction.commonName,
@@ -1049,9 +1015,7 @@ class CaptureScreenState extends State<CaptureScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           color: const Color(0xFF006064),
-          onPressed: () {
-            Navigator.pop(context);
-          },
+          onPressed: _handleBack,
         ),
         title: const Text('Fish Identifier', style: TextStyle(color: Color(0xFF006064))),
       ),
