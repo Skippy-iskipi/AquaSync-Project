@@ -7,6 +7,8 @@ import 'dart:convert';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../services/openai_service.dart';
+import '../widgets/expandable_reason.dart';
 
 class FishCalculatorVolume extends StatefulWidget {
   const FishCalculatorVolume({super.key});
@@ -24,6 +26,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   Map<String, int> _fishSelections = {};
   Map<String, dynamic>? _calculationData;
   List<String> _suggestions = [];
+
+  
 
   @override
   void initState() {
@@ -205,7 +209,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
         'tank_volume': volume,
         'fish_selections': _fishSelections,
       })}');
-
+      
       final response = await http.post(
         Uri.parse(ApiConfig.calculateCapacityEndpoint),
         headers: {
@@ -228,42 +232,12 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
 
         try {
           final data = jsonDecode(response.body);
-          _calculationData = {
-            ...data,
-            'fish_selections': _fishSelections,
-          };
-          
-          final tankDetails = data['tank_details'];
-          final waterConditions = data['water_conditions'];
-          final fishDetails = data['fish_details'];
-          final compatibilityIssues = data['compatibility_issues'] as List;
-
-          // Build compatibility issues text
-          String compatibilityText = '';
-          if (compatibilityIssues.isNotEmpty) {
-            compatibilityText = '\nCompatibility Issues:\n';
-            for (var issue in compatibilityIssues) {
-              final pair = issue['pair'] as List;
-              final reasons = issue['reasons'] as List;
-              compatibilityText += '• ${pair[0]} and ${pair[1]}:\n  ${reasons.join("\n  ")}\n';
-            }
-          }
-
-          // Build fish details text
-          String fishDetailsText = fishDetails.map((f) {
-            final recommendedQty = f['recommended_quantity'] ?? "N/A";
-            return '• ${f['name']}:\n'
-                '  Recommended: $recommendedQty\n'
-                '  Min Tank Size: ${f['individual_requirements']['minimum_tank_size']}';
-          }).join('\n\n');
-
           setState(() {
-                'Current Volume: ${tankDetails['volume']}\n\n'
-                'Water Conditions:\n'
-                '• Temperature: ${waterConditions['temperature_range'].replaceAll('Â', '')}\n'
-                '• pH Range: ${waterConditions['pH_range']}\n\n'
-                'Fish Details:\n$fishDetailsText\n'
-                '$compatibilityText';
+            _calculationData = {
+              ...data,
+              'fish_selections': _fishSelections,
+            };
+            _isCalculating = false;
           });
         } catch (e) {
           print('Error parsing response: $e');
@@ -742,26 +716,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                     ),
                                     const SizedBox(height: 8),
                                   ],
-                                  Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.info_outline,
-                                        size: 16,
-                                        color: Color(0xFF006064),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Flexible(
-                                        child: Text(
-                                          'Our recommendation is based on tank volume, fish bioload, and optimal living conditions.',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: Colors.grey[700],
-                                            fontStyle: FontStyle.italic,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                  
+                                  
                                 ],
                               ),
                             ),
@@ -1028,13 +984,19 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                     ),
                                     const SizedBox(width: 8),
                                     Expanded(
-                                      child: Text(
-                                        '${pair[0]} + ${pair[1]}',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w500,
-                                          color: Color(0xFFE53935),
-                                        ),
+                                      child: Builder(
+                                        builder: (context) {
+                                          final bool same = pair.length >= 2 && pair[0] == pair[1];
+                                          final String label = same ? '${pair[0]}' : '${pair[0]} + ${pair[1]}';
+                                          return Text(
+                                            label,
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w500,
+                                              color: Color(0xFFE53935),
+                                            ),
+                                          );
+                                        },
                                       ),
                                     ),
                                   ],
@@ -1056,9 +1018,9 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
-                                        child: Text(
-                                          reason.toString(),
-                                          style: const TextStyle(
+                                        child: ExpandableReason(
+                                          text: reason.toString(),
+                                          textStyle: const TextStyle(
                                             fontSize: 14,
                                             color: Colors.black87,
                                             height: 1.5,

@@ -120,7 +120,8 @@ def can_same_species_coexist(fish_name: str, fish_info: Dict[str, Any]) -> Tuple
         "betta", "siamese fighting fish", "paradise fish", 
         "dwarf gourami", "honey gourami", 
         "flowerhorn", "wolf cichlid", "oscar", "jaguar cichlid",
-        "rainbow shark", "red tail shark", "pearl gourami"
+        "rainbow shark", "red tail shark", "pearl gourami",
+        "silver arowana", "jardini arowana", "banjar arowana"
     ]
     
     # Check for known incompatible species
@@ -192,24 +193,64 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
     if fish1.get('water_type') != fish2.get('water_type'):
         reasons.append(f"Water type mismatch: {fish1.get('water_type')} vs {fish2.get('water_type')}")
 
-    # Rule 2: Size Difference
-    try:
-        size1 = float(fish1.get('max_size_(cm)', 0))
-        size2 = float(fish2.get('max_size_(cm)', 0))
-        if (size1 > 0 and size2 > 0) and (size1 / size2 >= 2 or size2 / size1 >= 2):
-            reasons.append("Significant size difference may lead to predation or bullying.")
-    except (ValueError, TypeError):
-        logger.warning(f"Could not parse size for compatibility check.")
+    # Extract commonly used fields safely
+    def _to_float(val) -> Optional[float]:
+        try:
+            if val is None:
+                return None
+            return float(val)
+        except (ValueError, TypeError):
+            return None
 
-    # Rule 3: Temperament
+    name1 = str(fish1.get('common_name') or '').lower()
+    name2 = str(fish2.get('common_name') or '').lower()
+    size1 = _to_float(fish1.get('max_size_(cm)')) or 0.0
+    size2 = _to_float(fish2.get('max_size_(cm)')) or 0.0
+    min_tank1 = (
+        _to_float(fish1.get('minimum_tank_size_l'))
+        or _to_float(fish1.get('minimum_tank_size_(l)'))
+        or _to_float(fish1.get('minimum_tank_size'))
+    )
+    min_tank2 = (
+        _to_float(fish2.get('minimum_tank_size_l'))
+        or _to_float(fish2.get('minimum_tank_size_(l)'))
+        or _to_float(fish2.get('minimum_tank_size'))
+    )
+
     temp1_str = fish1.get('temperament')
     temp2_str = fish2.get('temperament')
     temp1_score = get_temperament_score(temp1_str)
     temp2_score = get_temperament_score(temp2_str)
+    behavior1 = str(fish1.get('social_behavior') or '').lower()
+    behavior2 = str(fish2.get('social_behavior') or '').lower()
+
+    # Rule 2: Size Difference (general)
+    try:
+        if (size1 > 0 and size2 > 0) and (size1 / size2 >= 2 or size2 / size1 >= 2):
+            reasons.append("Significant size difference may lead to predation or bullying.")
+    except Exception:
+        logger.warning("Could not parse size for compatibility check.")
+
+    # Rule 3: Temperament
     if temp1_score == 2 and temp2_score == 0:
         reasons.append(f"Temperament conflict: '{temp1_str}' fish cannot be kept with '{temp2_str}' fish.")
     if temp2_score == 2 and temp1_score == 0:
         reasons.append(f"Temperament conflict: '{temp2_str}' fish cannot be kept with '{temp1_str}' fish.")
+
+    # New Rule 3b: Aggressive vs Aggressive is high-risk
+    if temp1_score == 2 and temp2_score == 2:
+        reasons.append("Both fish are aggressive; high risk of severe fighting and territorial disputes.")
+
+    # New Rule 3c: Territorial or Solitary behavior
+    if ("solitary" in behavior1) or ("solitary" in behavior2):
+        reasons.append("At least one species is solitary and prefers to live alone.")
+    if (temp1_str and isinstance(temp1_str, str) and "territorial" in temp1_str.lower()) or \
+       (temp2_str and isinstance(temp2_str, str) and "territorial" in temp2_str.lower()):
+        # Escalate if both are medium/large
+        if (size1 >= 20 and size2 >= 20):
+            reasons.append("Territorial species pairing (both medium/large) is likely to lead to conflict.")
+        else:
+            reasons.append("Territorial behavior increases conflict risk, especially in limited space.")
 
     # Rule 4: pH Range Overlap
     try:
@@ -227,6 +268,80 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
         if t1_min is not None and t2_min is not None and (t1_max < t2_min or t2_max < t1_min):
             reasons.append(f"Incompatible temperature requirements.")
     except (ValueError, TypeError):
+        pass
+
+    # New Rule 6: Predatory species heuristics by name (broad, not just arowanas)
+    predator_keywords = [
+        "arowana", "oscar", "flowerhorn", "wolf cichlid", "snakehead", "peacock bass",
+        "pike cichlid", "payara", "gar", "bichir", "datnoid", "dorado", "piranha",
+        "bull shark", "barracuda", "tiger shovelnose", "red tail catfish"
+    ]
+    is_pred1 = any(k in name1 for k in predator_keywords)
+    is_pred2 = any(k in name2 for k in predator_keywords)
+    if is_pred1 and is_pred2:
+        reasons.append("Both species are large predatory/territorial fish; cohabitation is generally unsafe.")
+
+    # New Rule 7: Predation risk using size and temperament
+    try:
+        if size1 > 0 and size2 > 0:
+            ratio = max(size1, size2) / min(size1, size2) if min(size1, size2) > 0 else None
+            if ratio and ratio >= 1.5 and (is_pred1 or is_pred2 or temp1_score >= 1 or temp2_score >= 1):
+                reasons.append("Size imbalance with predatory/territorial temperament increases predation/bullying risk.")
+    except Exception:
+        pass
+
+    # New Rule 7b: Diet-based risks (using 'diet' and 'preferred_food')
+    def _diet_category(diet: str, pref: str) -> str:
+        s = f"{diet} {pref}".lower()
+        if any(k in s for k in ["piscivore", "feeds on fish", "fish-based", "fish prey"]):
+            return "piscivore"
+        if "carniv" in s or any(k in s for k in ["meat", "predator", "live food"]):
+            return "carnivore"
+        if "herbiv" in s or any(k in s for k in ["algae", "vegetable", "plant"]):
+            return "herbivore"
+        if "omniv" in s:
+            return "omnivore"
+        if any(k in s for k in ["plankt", "zooplank"]):
+            return "planktivore"
+        if any(k in s for k in ["insect", "invertebr", "worm"]):
+            return "invertivore"
+        return "unknown"
+
+    diet1_raw = str(fish1.get('diet') or '').lower()
+    pref1_raw = str(fish1.get('preferred_food') or '').lower()
+    diet2_raw = str(fish2.get('diet') or '').lower()
+    pref2_raw = str(fish2.get('preferred_food') or '').lower()
+    cat1 = _diet_category(diet1_raw, pref1_raw)
+    cat2 = _diet_category(diet2_raw, pref2_raw)
+
+    # Carnivore/piscivore with smaller tankmates
+    try:
+        if size1 > 0 and size2 > 0:
+            if cat1 in ("piscivore", "carnivore") and size1 >= size2 * 1.3:
+                reasons.append("Carnivorous/piscivorous diet with a much smaller tankmate increases predation risk.")
+            if cat2 in ("piscivore", "carnivore") and size2 >= size1 * 1.3:
+                reasons.append("Carnivorous/piscivorous diet with a much smaller tankmate increases predation risk.")
+    except Exception:
+        pass
+
+    # Both carnivorous/piscivorous and medium/large size → feeding aggression
+    if (cat1 in ("piscivore", "carnivore")) and (cat2 in ("piscivore", "carnivore")) and (size1 >= 20 and size2 >= 20):
+        reasons.append("Both species are carnivorous/piscivorous and medium/large; high competition and aggression during feeding.")
+
+    # Herbivore with large carnivore/piscivore
+    if (cat1 == "herbivore" and cat2 in ("piscivore", "carnivore") and size2 >= 20) or \
+       (cat2 == "herbivore" and cat1 in ("piscivore", "carnivore") and size1 >= 20):
+        reasons.append("Herbivore paired with a large carnivore/piscivore is at risk of harassment or predation.")
+
+    # New Rule 8: Large aggressive/territorial combo
+    if (size1 >= 30 and size2 >= 30) and (temp1_score >= 1 and temp2_score >= 1):
+        reasons.append("Both species are large and non-peaceful; high likelihood of severe aggression in shared tanks.")
+
+    # New Rule 9: Extremely large minimum tank requirements suggest incompatibility without exceptionally large systems
+    try:
+        if (min_tank1 and min_tank2) and (min_tank1 >= 300 or min_tank2 >= 300):
+            reasons.append("One or both species require very large tanks; mixing species further increases risk in typical setups.")
+    except Exception:
         pass
 
     return not reasons, reasons
@@ -1070,8 +1185,10 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
         fish_details = []
         compatibility_issues = []
         fish_info_map = {}
+        species_rules: Dict[str, Dict[str, Any]] = {}
+        species_notes: Dict[str, List[str]] = {}
 
-        # First pass: Get fish information and check compatibility
+        # First pass: Get fish information and gather rules
         for fish_name in fish_selections.keys():
             response = db.table('fish_species').select('*').eq('common_name', fish_name).execute()
             fish_info = response.data[0] if response.data else None
@@ -1082,6 +1199,7 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                     content={"error": f"Fish not found: {fish_name}"}
                 )
             fish_info_map[fish_name] = fish_info
+            species_notes.setdefault(fish_name, [])
             
             # Parse temperature range (try all possible fields)
             temp_min, temp_max = parse_range(
@@ -1106,7 +1224,53 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
             if ph_max is not None:
                 max_ph = min(max_ph, ph_max)
 
-        # Check compatibility between fish pairs
+            # Build species-specific rules
+            can_coexist, reason_same = can_same_species_coexist(fish_name, fish_info)
+            behavior = str(fish_info.get('social_behavior') or '').lower()
+            is_schooling = ('school' in behavior) or ('shoal' in behavior)
+            min_group = 6 if is_schooling else 1
+            species_rules[fish_name] = {
+                "solitary": not can_coexist,
+                "reason_same": reason_same,
+                "schooling": is_schooling,
+                "min_group": min_group,
+            }
+            # If user requested more than allowed for solitary species, log an issue
+            if (not can_coexist) and fish_selections.get(fish_name, 0) > 1:
+                compatibility_issues.append({
+                    "pair": [fish_name, fish_name],
+                    "reasons": [reason_same, "This species is capped to 1 per tank in recommendations."]
+                })
+                species_notes[fish_name].append("Capped to 1 due to conspecific aggression/solitary behavior.")
+
+            # Enforce minimum tank size constraint per species against provided tank volume
+            try:
+                min_tank_size_candidate = None
+                for key in ['minimum_tank_size_l', 'minimum_tank_size_(l)', 'minimum_tank_size']:
+                    val = fish_info.get(key)
+                    if val is not None:
+                        try:
+                            min_tank_size_candidate = float(val)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                if min_tank_size_candidate is not None and min_tank_size_candidate > 0:
+                    if tank_volume < min_tank_size_candidate:
+                        # Record as a compatibility issue and add a note so UI can surface it
+                        compatibility_issues.append({
+                            "pair": [fish_name, fish_name],
+                            "reasons": [
+                                f"Tank volume {tank_volume} L is below the minimum required size of {min_tank_size_candidate} L for {fish_name}."
+                            ]
+                        })
+                        species_notes[fish_name].append(
+                            f"Tank volume is insufficient for this species (needs at least {min_tank_size_candidate} L)."
+                        )
+            except Exception:
+                # If parsing fails, do not block but also do not add the constraint
+                pass
+
+        # Check compatibility between different species pairs
         fish_names = list(fish_selections.keys())
         are_compatible = True
         if len(fish_names) >= 2:
@@ -1115,27 +1279,13 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
             for fish1_name, fish2_name in pairwise_combinations:
                 fish1 = fish_info_map[fish1_name]
                 fish2 = fish_info_map[fish2_name]
-
-                # Special case: Handle same-species compatibility issues
-                if fish1_name == fish2_name:
-                    # Use the helper function to determine compatibility
-                    can_coexist, reason = can_same_species_coexist(fish1_name, fish1)
-                    
-                    if not can_coexist and fish_selections[fish1_name] > 1:
-                        are_compatible = False
-                        compatibility_issues.append({
-                            "pair": [fish1_name, fish2_name],
-                            "reasons": [reason]
-                        })
-                        continue
-                else:
-                    is_pair_compatible, reasons = check_pairwise_compatibility(fish1, fish2)
-                    if not is_pair_compatible:
-                        are_compatible = False
-                        compatibility_issues.append({
-                            "pair": [fish1_name, fish2_name],
-                            "reasons": reasons
-                        })
+                is_pair_compatible, reasons = check_pairwise_compatibility(fish1, fish2)
+                if not is_pair_compatible:
+                    are_compatible = False
+                    compatibility_issues.append({
+                        "pair": [fish1_name, fish2_name],
+                        "reasons": reasons
+                    })
 
         # Calculate optimal fish distribution if compatible
         if are_compatible:
@@ -1170,12 +1320,39 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                         status_code=400,
                         content={"error": f"Fish '{fish_name}' has invalid or missing minimum tank size in the database."}
                     )
-                max_quantities[fish_name] = int(tank_volume / min_size)
+                max_q = int(tank_volume / min_size)
+                # Enforce solitary cap
+                rules = species_rules.get(fish_name, {})
+                if rules.get("solitary"):
+                    max_q = min(max_q, 1)
+                max_quantities[fish_name] = max_q
             
             # First, allocate minimum quantities (1 for each species)
             for fish_name, min_size in min_sizes.items():
                 base_quantities[fish_name] = 1
                 total_space -= min_size
+
+            # Priority phase: bring schooling species up to their minimum group size
+            for fish_name, min_size in min_sizes.items():
+                rules = species_rules.get(fish_name, {})
+                if rules.get("schooling"):
+                    target = max(1, rules.get("min_group", 6))
+                    while (
+                        base_quantities[fish_name] < target and
+                        base_quantities[fish_name] < max_quantities[fish_name] and
+                        total_space >= min_size
+                    ):
+                        base_quantities[fish_name] += 1
+                        total_space -= min_size
+                    if base_quantities[fish_name] < target:
+                        needed = target - base_quantities[fish_name]
+                        species_notes[fish_name].append(
+                            f"Could not reach minimum schooling group of {target}. Short by {needed} due to tank volume."
+                        )
+                        compatibility_issues.append({
+                            "pair": [fish_name, fish_name],
+                            "reasons": [f"Minimum group size for schooling species is {target}; tank volume limits this to {base_quantities[fish_name]}."]
+                        })
 
             # Then distribute remaining space proportionally
             while total_space > 0:
@@ -1205,7 +1382,8 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                         "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(Â°c)') or fish_info.get('temperature_range', 'Unknown'),
                         "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                         "minimum_tank_size": f"{min_tank_size} L"
-                    }
+                    },
+                    "notes": species_notes.get(fish_name) or []
                 })
 
         else:
@@ -1240,7 +1418,8 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                         "temperature": fish_info.get('temperature_range_c') or fish_info.get('temperature_range_(Â°c)') or fish_info.get('temperature_range', 'Unknown'),
                         "pH": fish_info.get('ph_range') or fish_info.get('pH_range', 'Unknown'),
                         "minimum_tank_size": f"{min_tank_size} L"
-                    }
+                    },
+                    "notes": species_notes.get(fish_name) or []
                 })
 
         # If any value is still -inf/inf, set to 'Unknown'

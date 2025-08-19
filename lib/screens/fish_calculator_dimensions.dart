@@ -8,6 +8,8 @@ import 'dart:async';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../services/openai_service.dart';
+import '../widgets/expandable_reason.dart';
 
 class FishCalculatorDimensions extends StatefulWidget {
   const FishCalculatorDimensions({super.key});
@@ -30,6 +32,17 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
   Map<String, dynamic>? _calculationData;
   List<String> _availableFish = [];
   Map<String, int> _fishSelections = {};
+
+  // Keep reasons concise: first 1–2 sentences with a soft character cap
+  String _shortenReason(String text, {int maxSentences = 2, int maxChars = 220}) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final parts = trimmed.split(RegExp(r'(?<=[.!?])\s+'));
+    final take = parts.take(maxSentences).join(' ').trim();
+    if (take.length <= maxChars) return take;
+    return take.substring(0, maxChars).trimRight() + '…';
+  }
+
 
   @override
   void initState() {
@@ -139,6 +152,8 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
     });
   }
 
+  
+
   Future<void> _calculateRequirements() async {
     if (_fishSelections.isEmpty) {
       showCustomNotification(
@@ -182,47 +197,12 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
 
       final responseData = json.decode(response.body);
       
-      // Store the full calculation data for later use
-      _calculationData = {
-        ...responseData,
-        'fish_selections': _fishSelections,
-      };
-      
-      // Extract recommended quantities for display
-      Map<String, int> recommendedQuantities = {};
-      if (responseData.containsKey('fish_details')) {
-        for (var fish in responseData['fish_details']) {
-          final name = fish['name'] as String;
-          final recommended = fish['recommended_quantity'];
-          if (recommended != null && recommended != "N/A") {
-            print('Found recommended quantity for $name: $recommended');
-            if (recommended is int) {
-              recommendedQuantities[name] = recommended;
-            } else if (recommended is String) {
-              recommendedQuantities[name] = int.tryParse(recommended) ?? 1;
-            }
-          }
-        }
-      }
-      _calculationData!['recommended_quantities'] = recommendedQuantities;
-      
       setState(() {
-        _result = 'Tank Volume: ${volume.toStringAsFixed(1)} L\n\n'
-            'Recommended Water Parameters:\n'
-            'Temperature: ${responseData['water_conditions']['temperature_range'].replaceAll('Â', '')}\n'
-            'pH: ${responseData['water_conditions']['pH_range']}\n\n';
-
-        // Handle compatibility issues if they exist
-        final compatibilityIssues = responseData['compatibility_issues'] as List?;
-        if (compatibilityIssues != null && compatibilityIssues.isNotEmpty) {
-          final issuesText = StringBuffer('Compatibility Issues:\n');
-          for (var issue in compatibilityIssues) {
-            final pair = issue['pair'] as List;
-            final reasons = issue['reasons'] as List;
-            issuesText.write('${pair[0]} and ${pair[1]}: ${reasons.join(', ')}\n');
-          }
-          _result = '${_result!}$issuesText';
-        }
+        _calculationData = {
+          ...responseData,
+          'fish_selections': _fishSelections,
+        };
+        _isCalculating = false;
       });
     } catch (e) {
       print('Error calculating capacity: $e');
@@ -299,7 +279,7 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
       final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
       logBookProvider.addFishCalculation(calculation);
 
-      showCustomNotification(context, 'Fish calculation saved to logbook');
+      showCustomNotification(context, 'Fish calculation saved to history');
       
       // Clear all inputs and reset state
       setState(() {
@@ -692,52 +672,57 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
                           ),
                           subtitle: Padding(
                             padding: const EdgeInsets.only(top: 6),
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    gradient: const LinearGradient(
-                                      colors: [Color(0xFF00BCD4), Color(0xFF006064)],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.1),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      const Icon(
-                                        Icons.recommend,
-                                        color: Colors.white,
-                                        size: 14,
-                                      ),
-                                      const SizedBox(width: 5),
-                                      Text(
-                                        '${fish['recommended_quantity']}',
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        gradient: const LinearGradient(
+                                          colors: [Color(0xFF00BCD4), Color(0xFF006064)],
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
                                         ),
+                                        borderRadius: BorderRadius.circular(8),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(0.1),
+                                            blurRadius: 4,
+                                            offset: const Offset(0, 2),
+                                          ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                const Text(
-                                  'recommended',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Color(0xFF006064),
-                                  ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(
+                                            Icons.recommend,
+                                            color: Colors.white,
+                                            size: 14,
+                                          ),
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            '${fish['recommended_quantity']}',
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    const Text(
+                                      'recommended',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF006064),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
@@ -789,26 +774,7 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
                                     ),
                                     const SizedBox(height: 8),
                                   ],
-                                  Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.info_outline,
-                                        size: 16,
-                                        color: Color(0xFF006064),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Flexible(
-                                        child: Text(
-                                          'Our recommendation is based on tank size, fish bioload, and optimal living conditions.',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: Colors.grey[700],
-                                            fontStyle: FontStyle.italic,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                  
                                 ],
                               ),
                             ),
@@ -1136,13 +1102,19 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
                                     ),
                                     const SizedBox(width: 8),
                                     Expanded(
-                                      child: Text(
-                                        '${pair[0]} + ${pair[1]}',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w500,
-                                          color: Color(0xFFE53935),
-                                        ),
+                                      child: Builder(
+                                        builder: (context) {
+                                          final bool same = pair.length >= 2 && pair[0] == pair[1];
+                                          final String label = same ? '${pair[0]}' : '${pair[0]} + ${pair[1]}';
+                                          return Text(
+                                            label,
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.w500,
+                                              color: Color(0xFFE53935),
+                                            ),
+                                          );
+                                        },
                                       ),
                                     ),
                                   ],
@@ -1164,9 +1136,9 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
-                                        child: Text(
-                                          reason.toString(),
-                                          style: const TextStyle(
+                                        child: ExpandableReason(
+                                          text: reason.toString(),
+                                          textStyle: const TextStyle(
                                             fontSize: 14,
                                             color: Colors.black87,
                                             height: 1.5,

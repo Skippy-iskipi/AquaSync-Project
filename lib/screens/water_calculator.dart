@@ -9,6 +9,7 @@ import '../widgets/custom_notification.dart';
 import 'dart:async';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../services/openai_service.dart';
+import '../widgets/expandable_reason.dart';
 
 class FishCard {
   final TextEditingController controller;
@@ -41,6 +42,9 @@ class _WaterCalculatorState extends State<WaterCalculator> {
   Map<String, dynamic>? _calculationResult;
   Map<String, String>? _careRecommendationsMap; // Per-fish recommendations
   bool _isGeneratingRecommendations = false;
+
+  // Import the ExpandableReason widget
+  bool _isReasonExpanded = false;
 
   @override
   void initState() {
@@ -318,15 +322,20 @@ Future<void> _generateAllRecommendations() async {
 
     setState(() => _isLoading = true);
     try {
-      // Check compatibility for 2 or more fish
-      if (_fishSelections.length >= 2) {
+      // Check compatibility for total count >= 2 using expanded list by quantity
+      final totalCount = _fishSelections.values.fold<int>(0, (sum, v) => sum + v);
+      if (totalCount >= 2) {
+        final expandedFishNames = _fishSelections.entries
+            .expand((e) => List.filled(e.value, e.key))
+            .toList();
+
         final compatibilityResponse = await http.post(
           Uri.parse(ApiConfig.checkGroupEndpoint),
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
           },
-          body: json.encode({'fish_names': _fishSelections.keys.toList()}),
+          body: json.encode({'fish_names': expandedFishNames}),
         ).timeout(ApiConfig.timeout);
 
         if (compatibilityResponse.statusCode != 200) {
@@ -335,19 +344,48 @@ Future<void> _generateAllRecommendations() async {
 
         final compatibilityData = json.decode(compatibilityResponse.body);
         bool hasIncompatiblePairs = false;
-        List<Map<String, dynamic>> incompatiblePairs = [];
+        final List<Map<String, dynamic>> incompatiblePairs = [];
+        final Set<String> seenPairs = {};
         
         for (var result in compatibilityData['results']) {
           if (result['compatibility'] == 'Not Compatible') {
-            hasIncompatiblePairs = true;
-            incompatiblePairs.add({
-              'pair': result['pair'],
-              'reasons': result['reasons'],
-            });
+            final pair = List<String>.from(result['pair'].map((e) => e.toString()));
+            if (pair.length == 2) {
+              final a = pair[0].toLowerCase();
+              final b = pair[1].toLowerCase();
+              final key = ([a, b]..sort()).join('|');
+              if (!seenPairs.contains(key)) {
+                seenPairs.add(key);
+                hasIncompatiblePairs = true;
+                incompatiblePairs.add({
+                  'pair': result['pair'],
+                  'reasons': result['reasons'],
+                });
+              }
+            }
           }
         }
 
         if (hasIncompatiblePairs) {
+          // Enrich reasons with AI explanations (cached) before presenting/storing
+          for (final item in incompatiblePairs) {
+            final pair = (item['pair'] as List).cast<dynamic>();
+            if (pair.length == 2) {
+              final reasons = (item['reasons'] as List).cast<String>();
+              try {
+                final detailed = await OpenAIService.getOrExplainIncompatibilityReasons(
+                  pair[0].toString(),
+                  pair[1].toString(),
+                  reasons,
+                );
+                if (detailed.isNotEmpty) {
+                  item['reasons'] = detailed;
+                }
+              } catch (_) {
+                // keep base reasons on failure
+              }
+            }
+          }
           setState(() {
             _calculationResult = {
               'error': 'Incompatible Fish Combinations',
@@ -1102,9 +1140,9 @@ Future<void> _generateAllRecommendations() async {
                               ),
                               const SizedBox(width: 12),
                               Expanded(
-                                child: Text(
-                                  reason.toString(),
-                                  style: const TextStyle(
+                                child: ExpandableReason(
+                                  text: reason.toString(),
+                                  textStyle: const TextStyle(
                                     fontSize: 14,
                                     color: Colors.black87,
                                     height: 1.5,

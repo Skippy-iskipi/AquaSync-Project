@@ -20,6 +20,7 @@ import 'package:dropdown_search/dropdown_search.dart';
 import 'package:provider/provider.dart';
 import '../models/compatibility_result.dart';
 import '../screens/logbook_provider.dart';
+import '../widgets/expandable_reason.dart';
 
 
 
@@ -42,6 +43,8 @@ class _SyncScreenState extends State<SyncScreen> {
   String? _selectedFish1;
   String? _selectedFish2;
   bool _isLoading = false;
+  // Cache for resolving fish image URLs so FutureBuilder doesn't refetch on rebuild
+  final Map<String, Future<http.Response?>> _imageResolveCache = {};
   // Controllers and suggestions are no longer needed
   // final TextEditingController _controller1 = TextEditingController();
   // final TextEditingController _controller2 = TextEditingController();
@@ -61,6 +64,18 @@ class _SyncScreenState extends State<SyncScreen> {
   int _compatibilityChecksCount = 0;
   String _userPlan = 'free';
   
+  // Track which reasons are expanded
+  final Map<int, bool> _expandedReasons = {};
+  
+  String _shortenReason(String text, {int maxSentences = 2, int maxChars = 220}) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final parts = trimmed.split(RegExp(r'(?<=[.!?])\s+'));
+    final take = parts.take(maxSentences).join(' ').trim();
+    if (take.length <= maxChars) return take;
+    return take.substring(0, maxChars).trimRight() + '…';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +90,16 @@ class _SyncScreenState extends State<SyncScreen> {
         _fish1Name = widget.initialFish!;
       });
     }
+
+  // Helper: keep only the first 1–2 sentences and cap overly long text
+  String _shortenReason(String text, {int maxSentences = 2, int maxChars = 220}) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final parts = trimmed.split(RegExp(r'(?<=[.!?])\s+'));
+    final take = parts.take(maxSentences).join(' ').trim();
+    if (take.length <= maxChars) return take;
+    return take.substring(0, maxChars).trimRight() + '…';
+  }
     if (widget.initialFishImage != null) {
       setState(() {
         _capturedImage1 = widget.initialFishImage;
@@ -1087,6 +1112,7 @@ class _SyncScreenState extends State<SyncScreen> {
     List<String> currentReasons = baseReasons;
     bool isLoadingDetails = false;
     bool hasFetched = false;
+    bool showAllReasons = false; // UI toggle: show all vs top 3
 
     // Normalize plan string for robust comparison
     String normalizedPlan = _userPlan.trim().toLowerCase().replaceAll(' ', '_');
@@ -1241,35 +1267,77 @@ class _SyncScreenState extends State<SyncScreen> {
                                       ],
                                     ),
                                     const SizedBox(height: 12),
-                                    ...List.generate(
-                                      currentReasons.length,
-                                      (index) => Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 6),
-                                        child: Row(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                    // Show a concise list by default (top 3). Allow user to expand/collapse.
+                                    Builder(
+                                      builder: (context) {
+                                        final reasonsToShow = showAllReasons
+                                            ? currentReasons
+                                            : currentReasons.take(3).toList();
+                                        return Column(
                                           children: [
-                                            Icon(
-                                              Icons.info,
-                                              size: 20,
-                                              color: isCompatible ? Colors.green : Colors.red,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: Text(
-                                                isCompatible && index == 0
-                                                    ? "Both can be kept together in the same aquarium"
-                                                    : currentReasons[index],
-                                                style: const TextStyle(
-                                                  fontSize: 16,
-                                                  color: Colors.black87,
-                                                  height: 1.4,
+                                            ...List.generate(
+                                              reasonsToShow.length,
+                                              (index) => Padding(
+                                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                                child: Row(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Icon(
+                                                      Icons.info,
+                                                      size: 20,
+                                                      color: isCompatible ? Colors.green : Colors.red,
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: Column(
+                                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                                        children: [
+                                                          ExpandableReason(
+                                                            text: isCompatible && index == 0 && !showAllReasons
+                                                                ? "Both can be kept together in the same aquarium"
+                                                                : reasonsToShow[index],
+                                                            textStyle: const TextStyle(
+                                                              fontSize: 16,
+                                                              color: Colors.black87,
+                                                              height: 1.4,
+                                                            ),
+                                                            textAlign: TextAlign.justify,
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
-                                                textAlign: TextAlign.justify,
                                               ),
                                             ),
+                                            if (currentReasons.length > 3)
+                                              Padding(
+                                                padding: const EdgeInsets.only(top: 4.0),
+                                                child: Row(
+                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                  children: [
+                                                    if (!showAllReasons)
+                                                      Text(
+                                                        '+ ${currentReasons.length - 3} more',
+                                                        style: const TextStyle(
+                                                          color: Colors.black54,
+                                                          fontSize: 14,
+                                                        ),
+                                                      ),
+                                                    TextButton(
+                                                      onPressed: () {
+                                                        setDialogState(() {
+                                                          showAllReasons = !showAllReasons;
+                                                        });
+                                                      },
+                                                      child: Text(showAllReasons ? 'Show less' : 'Show more'),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
                                           ],
-                                        ),
-                                      ),
+                                        );
+                                      },
                                     ),
                                     const SizedBox(height: 20),
                                     Row(
@@ -1358,6 +1426,7 @@ class _SyncScreenState extends State<SyncScreen> {
         return Image.network(
           imagePathOrName,
           fit: BoxFit.cover,
+          gaplessPlayback: true,
           errorBuilder: (context, error, stackTrace) {
             return const Icon(
               Icons.error_outline,
@@ -1381,11 +1450,13 @@ class _SyncScreenState extends State<SyncScreen> {
     }
 
     // Resolve via backend: fetch JSON to get the real image URL
+    final cacheKey = imagePathOrName;
+    _imageResolveCache[cacheKey] ??= ApiConfig.makeRequestWithFailover(
+      endpoint: '/fish-image/${Uri.encodeComponent(imagePathOrName)}',
+      method: 'GET',
+    );
     return FutureBuilder<http.Response?>(
-      future: ApiConfig.makeRequestWithFailover(
-        endpoint: '/fish-image/${Uri.encodeComponent(imagePathOrName)}',
-        method: 'GET',
-      ),
+      future: _imageResolveCache[cacheKey],
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Container(
@@ -1403,6 +1474,7 @@ class _SyncScreenState extends State<SyncScreen> {
               return Image.network(
                 url,
                 fit: BoxFit.cover,
+                gaplessPlayback: true,
                 errorBuilder: (context, error, stackTrace) {
                   return const Icon(
                     Icons.error_outline,
@@ -1445,6 +1517,7 @@ class _SyncScreenState extends State<SyncScreen> {
             ? Image.file(
                 capturedImage,
                 fit: BoxFit.cover,
+                gaplessPlayback: true,
               )
             : () {
                 // Prefer base64 image if provided. Decode safely and fall back to network on error.
@@ -1457,6 +1530,7 @@ class _SyncScreenState extends State<SyncScreen> {
                     return Image.memory(
                       bytes,
                       fit: BoxFit.cover,
+                      gaplessPlayback: true,
                       errorBuilder: (context, error, stackTrace) {
                         // If base64 render fails, attempt local file path next, then network.
                         try {
@@ -1464,32 +1538,25 @@ class _SyncScreenState extends State<SyncScreen> {
                             return Image.file(
                               File(imagePathOrName),
                               fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return _buildNetworkFishImage(imagePathOrName);
-                              },
+                              gaplessPlayback: true,
                             );
                           }
-                        } catch (_) {
-                          // Ignore and fall through to network
-                        }
+                        } catch (_) {}
+                        // Fall back to network resolution
                         return _buildNetworkFishImage(imagePathOrName);
                       },
                     );
-                  } catch (e) {
-                    // If base64 is invalid, try local file path first, then network
+                  } catch (_) {
+                    // If base64 decoding fails, try local file path, then network
                     try {
                       if (imagePathOrName.isNotEmpty && File(imagePathOrName).existsSync()) {
                         return Image.file(
                           File(imagePathOrName),
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return _buildNetworkFishImage(imagePathOrName);
-                          },
+                          gaplessPlayback: true,
                         );
                       }
-                    } catch (_) {
-                      // Ignore and fall through to network
-                    }
+                    } catch (_) {}
                     return _buildNetworkFishImage(imagePathOrName);
                   }
                 }

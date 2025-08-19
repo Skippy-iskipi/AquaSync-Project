@@ -2,6 +2,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class OpenAIService {
 
@@ -72,6 +73,44 @@ Only return the JSON. Do not include explanations or any text outside the JSON o
       }
     } else {
       return {'error': 'Error: [${response.statusCode}]\n${response.body}'};
+    }
+  }
+
+  // Cache-aware wrapper: returns cached AI explanations if available, else calls OpenAI
+  static Future<List<String>> getOrExplainIncompatibilityReasons(
+    String fish1,
+    String fish2,
+    List<String> baseReasons,
+  ) async {
+    try {
+      // Build a deterministic cache key without external hash deps
+      final reasonsJoined = baseReasons.join('||');
+      final keyPayload = jsonEncode({
+        'f1': fish1.trim().toLowerCase(),
+        'f2': fish2.trim().toLowerCase(),
+        'reasons': reasonsJoined,
+      });
+      final keyBase64 = base64Url.encode(utf8.encode(keyPayload));
+      final cacheKey = 'ai_explanations_v1:$keyBase64';
+
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getStringList(cacheKey);
+      if (cached != null && cached.isNotEmpty) {
+        return cached;
+      }
+
+      // Call OpenAI to generate explanations
+      final explanations = await explainIncompatibilityReasons(fish1, fish2, baseReasons);
+
+      // Cache only if the response looks valid (non-error and non-empty)
+      if (explanations.isNotEmpty && !explanations[0].startsWith('Error:') && !explanations[0].contains('API key not found')) {
+        await prefs.setStringList(cacheKey, explanations);
+      }
+
+      return explanations;
+    } catch (e) {
+      // On any caching error, just fall back to base reasons to avoid user impact
+      return baseReasons;
     }
   }
   final String _baseUrl = 'https://api.openai.com/v1/chat/completions';
