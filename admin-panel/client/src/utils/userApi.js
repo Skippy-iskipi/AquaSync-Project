@@ -100,7 +100,19 @@ const userApi = {
     try {
       console.log('Fetching all users...');
       const response = await api.get('/users');
-      console.log('Users fetched successfully:', response.data?.length || 0);
+      console.log('API Response:', response);
+      
+      if (!response.data) {
+        console.error('No data in response');
+        return [];
+      }
+      
+      if (!Array.isArray(response.data)) {
+        console.error('Expected array but got:', typeof response.data, response.data);
+        return [];
+      }
+      
+      console.log(`Successfully fetched ${response.data.length} users`);
       return response.data.map(user => ({
         ...user,
         key: user.id,
@@ -108,7 +120,16 @@ const userApi = {
         lastSignIn: user.user?.last_sign_in_at ? new Date(user.user.last_sign_in_at) : null
       }));
     } catch (error) {
-      console.error('Error in getAllUsers:', error);
+      console.error('Error in getAllUsers:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          headers: error.config?.headers
+        }
+      });
       throw error;
     }
   },
