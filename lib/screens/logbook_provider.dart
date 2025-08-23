@@ -4,6 +4,7 @@ import '../models/fish_prediction.dart';
 import '../models/water_calculation.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_calculation.dart';
+import '../models/diet_calculation.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/api_config.dart';
@@ -18,11 +19,13 @@ class LogBookProvider with ChangeNotifier {
   List<FishCalculation> _savedFishCalculations = [];
   List<CompatibilityResult> _savedCompatibilityResults = [];
   List<FishPrediction> _savedPredictions = [];
+  List<DietCalculation> _savedDietCalculations = [];
 
   List<WaterCalculation> get savedCalculations => _savedCalculations;
   List<FishCalculation> get savedFishCalculations => _savedFishCalculations;
   List<CompatibilityResult> get savedCompatibilityResults => _savedCompatibilityResults;
   List<FishPrediction> get savedPredictions => _savedPredictions;
+  List<DietCalculation> get savedDietCalculations => _savedDietCalculations;
 
   LogBookProvider() {
     init();
@@ -56,6 +59,7 @@ class LogBookProvider with ChangeNotifier {
     _savedCalculations.clear();
     _savedFishCalculations.clear();
     _savedCompatibilityResults.clear();
+    _savedDietCalculations.clear();
     notifyListeners();
   }
 
@@ -104,6 +108,21 @@ class LogBookProvider with ChangeNotifier {
       _savedCompatibilityResults = parsedResults;
       
       print('Parsed ${_savedCompatibilityResults.length} compatibility results.');
+
+      // Load diet calculations
+      try {
+        final List<dynamic> dietCalculationsData = await _supabase
+            .from('diet_calculations')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false);
+        print('Raw diet calculations data: $dietCalculationsData');
+        _savedDietCalculations = dietCalculationsData.map((json) => DietCalculation.fromJson(json)).toList();
+        print('Loaded ${_savedDietCalculations.length} diet calculations');
+      } catch (e) {
+        print('Error loading diet calculations: $e');
+        _savedDietCalculations = [];
+      }
 
     } catch (e) {
       print('Error loading data from Supabase: $e');
@@ -406,6 +425,7 @@ class LogBookProvider with ChangeNotifier {
       ..._savedCalculations,
       ..._savedFishCalculations,
       ..._savedCompatibilityResults,
+      ..._savedDietCalculations,
     ]..sort((a, b) {
         DateTime dateA;
         DateTime dateB;
@@ -415,6 +435,8 @@ class LogBookProvider with ChangeNotifier {
         } else if (a is WaterCalculation) {
           dateA = a.dateCalculated;
         } else if (a is FishCalculation) {
+          dateA = a.dateCalculated;
+        } else if (a is DietCalculation) {
           dateA = a.dateCalculated;
         } else {
           dateA = (a as CompatibilityResult).createdAt ?? DateTime(0);
@@ -426,12 +448,16 @@ class LogBookProvider with ChangeNotifier {
           dateB = b.dateCalculated;
         } else if (b is FishCalculation) {
           dateB = b.dateCalculated;
+        } else if (b is DietCalculation) {
+          dateB = b.dateCalculated;
         } else {
           dateB = (b as CompatibilityResult).createdAt ?? DateTime(0);
         }
 
         return dateB.compareTo(dateA);
       });
+    
+    print('AllItems count: ${allItems.length} (Predictions: ${_savedPredictions.length}, Water: ${_savedCalculations.length}, Fish: ${_savedFishCalculations.length}, Compatibility: ${_savedCompatibilityResults.length}, Diet: ${_savedDietCalculations.length})');
     return allItems;
   }
 
@@ -469,6 +495,41 @@ class LogBookProvider with ChangeNotifier {
 
     _savedFishCalculations = response
         .map((json) => FishCalculation.fromJson(json))
+        .toList();
+    notifyListeners();
+  }
+
+  void addDietCalculation(DietCalculation calculation) {
+    _savedDietCalculations.insert(0, calculation);
+    print('Diet calculation added to provider. Total count: ${_savedDietCalculations.length}');
+    notifyListeners();
+  }
+
+  Future<void> removeDietCalculation(DietCalculation calculation) async {
+    try {
+      await _supabase
+          .from('diet_calculations')
+          .delete()
+          .eq('id', calculation.id!);
+      _savedDietCalculations.removeWhere((c) => c.id == calculation.id);
+      notifyListeners();
+    } catch (e) {
+      print('Error removing diet calculation from Supabase: $e');
+    }
+  }
+
+  Future<void> fetchDietCalculations() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    final response = await Supabase.instance.client
+        .from('diet_calculations')
+        .select()
+        .eq('user_id', userId)
+        .order('date_calculated', ascending: false);
+
+    _savedDietCalculations = response
+        .map((json) => DietCalculation.fromJson(json))
         .toList();
     notifyListeners();
   }

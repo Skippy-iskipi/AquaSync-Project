@@ -54,6 +54,7 @@ async def get_datasets():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error fetching datasets: {str(e)}")
 
+
 @router.post("/train")
 async def train_model(
     model_type: str = Form(...),

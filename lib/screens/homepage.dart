@@ -12,6 +12,7 @@ import '../models/water_calculation.dart';
 import '../models/fish_calculation.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_prediction.dart';
+import '../models/diet_calculation.dart';
 import '../screens/calculator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/auth_screen.dart';
@@ -102,14 +103,14 @@ class _HomePageState extends State<HomePage> {
       case 0:
         return _buildHomeContent();
       case 1:
-        return LogBook(initialTabIndex: _logBookTabIndex);
-      case 2:
-        return const Calculator();
-      case 3:
         return SyncScreen(
           initialFish: widget.initialFish,
           initialFishImage: widget.initialFishImage,
         );
+      case 2:
+        return const Calculator();
+      case 3:
+        return LogBook(initialTabIndex: _logBookTabIndex);
       default:
         return _buildHomeContent();
     }
@@ -189,14 +190,17 @@ class _HomePageState extends State<HomePage> {
                   children: allItems.take(5).map((item) => _ModernRecentActivityCard(item: item, onTap: () {
                     setState(() {
                       if (item is CompatibilityResult) {
-                        _selectedIndex = 1;
+                        _selectedIndex = 3;
                         _logBookTabIndex = 2;
                       } else if (item is FishPrediction) {
-                        _selectedIndex = 1;
+                        _selectedIndex = 3;
                         _logBookTabIndex = 0;
                       } else if (item is WaterCalculation || item is FishCalculation) {
-                        _selectedIndex = 1;
+                        _selectedIndex = 3;
                         _logBookTabIndex = 1;
+                      } else if (item is DietCalculation) {
+                        _selectedIndex = 3;
+                        _logBookTabIndex = 1; // Diet calculations go to Calculator tab
                       }
                     });
                   })).toList(),
@@ -226,8 +230,8 @@ class _HomePageState extends State<HomePage> {
             appBar: AppBar(
               title: Text(
                 _selectedIndex == 0 ? 'AquaSync' :
-                _selectedIndex == 1 ? 'History' :
-                _selectedIndex == 2 ? 'Calculator' : 'Sync',
+                _selectedIndex == 1 ? 'Sync' :
+                _selectedIndex == 2 ? 'Calculator' : 'History',
                 style: const TextStyle(
                   color: Color(0xFF006064),
                   fontSize: 24,
@@ -429,6 +433,13 @@ class _ModernRecentActivityCard extends StatelessWidget {
       icon = Icons.compare_arrows;
       iconColor = Colors.deepPurple;
       time = _relativeTime(item.dateChecked);
+    } else if (item is DietCalculation) {
+      title = 'Diet Calculator';
+      final fishNames = item.fishSelections.keys.join(', ');
+      subtitle = 'Fish: $fishNames\nTotal portions: ${item.totalPortion}';
+      icon = Icons.restaurant;
+      iconColor = Colors.orange;
+      time = _relativeTime(item.dateCalculated);
     } else {
       title = 'Activity';
       subtitle = 'Details about the activity';

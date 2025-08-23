@@ -934,6 +934,7 @@ class _SyncScreenState extends State<SyncScreen> {
           .select('tier_plan')
           .eq('id', user.id)
           .single();
+      if (!mounted) return;
       setState(() {
         _userPlan = data['tier_plan'] ?? 'free';
       });
@@ -950,11 +951,13 @@ class _SyncScreenState extends State<SyncScreen> {
               .select('compatibility_checks_count')
               .eq('id', user.id)
               .single();
+          if (!mounted) return;
           setState(() {
             _compatibilityChecksCount = data['compatibility_checks_count'] ?? 0;
           });
         } catch (e) {
           print('Error loading compatibility checks count: $e');
+          if (!mounted) return;
           setState(() {
             _compatibilityChecksCount = 0;
           });
@@ -974,6 +977,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 'compatibility_checks_count': _compatibilityChecksCount + 1
               })
               .eq('id', user.id);
+          if (!mounted) return;
           setState(() {
             _compatibilityChecksCount++;
           });

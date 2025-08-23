@@ -964,21 +964,40 @@ async def get_all_fish_species(db: Client = Depends(get_supabase_client)):
 
 @app.post("/check-group")
 async def check_group_compatibility(payload: FishGroup, db: Client = Depends(get_supabase_client)):
+    # Cache for fish data and images to avoid redundant DB calls
+    fish_data_cache = {}
+    fish_image_cache = {}
+    
+    async def fetch_fish_data(fish_name: str):
+        if fish_name in fish_data_cache:
+            return fish_data_cache[fish_name]
+        
+        response = db.table('fish_species').select('*').ilike('common_name', fish_name).execute()
+        fish_data = response.data[0] if response.data else None
+        fish_data_cache[fish_name] = fish_data
+        return fish_data
+
     async def fetch_fish_image_base64(fish_name: str) -> str:
+        if fish_name in fish_image_cache:
+            return fish_image_cache[fish_name]
+            
         response = db.table('fish_images_dataset').select('*').ilike('common_name', fish_name).execute()
         images = response.data if response.data else []
-        if not images:
-            return None
-        image = random.choice(images)
-        image_data = image.get('image_data')
-        if not image_data:
-            return None
-        if isinstance(image_data, str) and image_data.startswith('data:image'):
-            return image_data
-        elif isinstance(image_data, str):
-            return f"data:image/jpeg;base64,{image_data}"
-        else:
-            return f"data:image/jpeg;base64,{base64.b64encode(image_data).decode('utf-8')}"
+        
+        image_result = None
+        if images:
+            image = random.choice(images)
+            image_data = image.get('image_data')
+            if image_data:
+                if isinstance(image_data, str) and image_data.startswith('data:image'):
+                    image_result = image_data
+                elif isinstance(image_data, str):
+                    image_result = f"data:image/jpeg;base64,{image_data}"
+                else:
+                    image_result = f"data:image/jpeg;base64,{base64.b64encode(image_data).decode('utf-8')}"
+        
+        fish_image_cache[fish_name] = image_result
+        return image_result
 
     try:
         fish_names = payload.fish_names
@@ -986,26 +1005,31 @@ async def check_group_compatibility(payload: FishGroup, db: Client = Depends(get
             raise HTTPException(status_code=400, detail="Please provide at least two fish names.")
 
         logger.info(f"Checking compatibility for fish: {fish_names}")
+        
+        # Pre-fetch all unique fish data to reduce DB calls
+        unique_fish_names = list(set(fish_names))
+        for fish_name in unique_fish_names:
+            await fetch_fish_data(fish_name)
+            await fetch_fish_image_base64(fish_name)
+        
         pairwise_combinations = list(combinations(fish_names, 2))
         results = []
 
         for fish1_name, fish2_name in pairwise_combinations:
             logger.info(f"Checking pair: {fish1_name} and {fish2_name}")
             
-            # Find fish in database using case-insensitive comparison
-            response1 = db.table('fish_species').select('*').ilike('common_name', fish1_name).execute()
-            fish1 = response1.data[0] if response1.data else None
-            response2 = db.table('fish_species').select('*').ilike('common_name', fish2_name).execute()
-            fish2 = response2.data[0] if response2.data else None
+            # Use cached data
+            fish1 = fish_data_cache.get(fish1_name)
+            fish2 = fish_data_cache.get(fish2_name)
             
             if not fish1:
                 raise HTTPException(status_code=404, detail=f"Fish not found: {fish1_name}")
             if not fish2:
                 raise HTTPException(status_code=404, detail=f"Fish not found: {fish2_name}")
 
-            # Fetch images for both fish
-            fish1_image = await fetch_fish_image_base64(fish1_name)
-            fish2_image = await fetch_fish_image_base64(fish2_name)
+            # Use cached images
+            fish1_image = fish_image_cache.get(fish1_name)
+            fish2_image = fish_image_cache.get(fish2_name)
 
             reasons = []
             compatibility_str = "Compatible"
@@ -1947,4 +1971,153 @@ async def test_webhook(request: Request):
         return {"received": True, "test": True, "payload": payload}
     except Exception as e:
         logger.error(f"Error in test webhook: {str(e)}")
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Webhook test error: {str(e)}")
+
+# --- Diet Calculator Endpoints ---
+
+class DietCalculationRequest(BaseModel):
+    fish_selections: Dict[str, int]
+    total_portion: int
+    total_portion_range: Optional[str] = None
+    portion_details: Dict[str, Any]
+    compatibility_issues: Optional[List[str]] = None
+    feeding_notes: Optional[str] = None
+
+@app.post("/save-diet-calculation/")
+async def save_diet_calculation(
+    diet_request: DietCalculationRequest,
+    request: Request,
+    db: Client = Depends(get_supabase_client)
+):
+    """Save a diet calculation to the database"""
+    calculation_data = None
+    try:
+        # Get authenticated user ID from request headers or auth token
+        user_id = None
+        
+        # Try to get user_id from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            try:
+                # Extract token and get user from Supabase
+                token = auth_header.replace('Bearer ', '')
+                user_response = db.auth.get_user(token)
+                if user_response.user:
+                    user_id = user_response.user.id
+                    logger.info(f"Authenticated user: {user_id}")
+                else:
+                    logger.warning("Invalid token provided")
+            except Exception as token_error:
+                logger.warning(f"Token validation error: {token_error}")
+        
+        # If no valid user found, reject the request
+        if not user_id:
+            raise HTTPException(
+                status_code=401, 
+                detail="Authentication required. Please login to save diet calculations."
+            )
+        
+        calculation_data = {
+            'user_id': user_id,
+            'fish_selections': diet_request.fish_selections,
+            'total_portion': diet_request.total_portion,
+            # Optional range string like '24-40'
+            **({'total_portion_range': diet_request.total_portion_range} if diet_request.total_portion_range else {}),
+            'portion_details': diet_request.portion_details,
+            'date_calculated': datetime.utcnow().isoformat(),
+            'saved_plan': 'free'
+        }
+        
+        # Add optional fields only if they have values
+        if diet_request.compatibility_issues:
+            calculation_data['compatibility_issues'] = diet_request.compatibility_issues
+        if diet_request.feeding_notes:
+            calculation_data['feeding_notes'] = diet_request.feeding_notes
+        
+        # First check if table exists by trying a simple query
+        try:
+            db.table('diet_calculations').select('id').limit(1).execute()
+        except Exception as table_error:
+            logger.error(f"Table 'diet_calculations' may not exist: {table_error}")
+            return {
+                "success": False,
+                "message": "Database table not found. Please create the diet_calculations table first.",
+                "error": "table_not_found"
+            }
+        
+        response = db.table('diet_calculations').insert(calculation_data).execute()
+        
+        if response.data and len(response.data) > 0:
+            return {
+                "success": True,
+                "calculation_id": response.data[0]['id'],
+                "message": "Diet calculation saved successfully"
+            }
+        else:
+            logger.error(f"Insert response: {response}")
+            raise HTTPException(status_code=500, detail="Failed to save diet calculation - no data returned")
+            
+    except Exception as e:
+        logger.error(f"Error saving diet calculation: {str(e)}")
+        if calculation_data:
+            logger.error(f"Calculation data: {calculation_data}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error saving diet calculation: {str(e)}")
+
+class CompatibilityRequest(BaseModel):
+    fish_names: List[str]
+
+@app.post("/check_compatibility")
+async def check_fish_compatibility(
+    request: CompatibilityRequest,
+    db: Client = Depends(get_supabase_client)
+):
+    """Check compatibility between multiple fish species"""
+    try:
+        fish_names = request.fish_names
+        
+        if len(fish_names) < 2:
+            return {"compatible": True, "reason": "Single fish species"}
+        
+        # Get fish data from database
+        fish_data = {}
+        for fish_name in fish_names:
+            response = db.table('fish_species').select('*').ilike('common_name', fish_name).execute()
+            if response.data:
+                fish_data[fish_name] = response.data[0]
+            else:
+                return {
+                    "compatible": False, 
+                    "reason": f"Fish '{fish_name}' not found in database"
+                }
+        
+        # Check pairwise compatibility
+        fish_list = list(fish_data.values())
+        for i in range(len(fish_list)):
+            for j in range(i + 1, len(fish_list)):
+                fish1, fish2 = fish_list[i], fish_list[j]
+                
+                # Check if same species can coexist
+                if fish1['common_name'].lower() == fish2['common_name'].lower():
+                    can_coexist, reason = can_same_species_coexist(fish1['common_name'], fish1)
+                    if not can_coexist:
+                        return {"compatible": False, "reason": reason}
+                else:
+                    # Check different species compatibility
+                    compatible, reasons = check_pairwise_compatibility(fish1, fish2)
+                    if not compatible:
+                        return {
+                            "compatible": False,
+                            "reason": f"{fish1['common_name']} and {fish2['common_name']} are not compatible: {'; '.join(reasons)}"
+                        }
+        
+        return {"compatible": True, "reason": "All fish are compatible"}
+        
+    except Exception as e:
+        logger.error(f"Error checking compatibility: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to check compatibility: {str(e)}")
+
+# Note: Diet calculation is now handled client-side using OpenAI service
+# The /calculate_diet endpoint has been removed as diet portions are generated
+# using OpenAI's generateCareRecommendations function in the Flutter app

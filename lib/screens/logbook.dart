@@ -11,6 +11,7 @@ import 'package:intl/intl.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_calculation.dart';
 import '../models/water_calculation.dart';
+import '../models/diet_calculation.dart';
 import '../widgets/custom_notification.dart';
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
@@ -432,7 +433,11 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               onPressed: () => Navigator.pop(context),
             ),
             title: Text(
-              calculation is WaterCalculation ? 'Water Requirements' : 'Fish Requirements',
+              calculation is WaterCalculation 
+                  ? 'Water Requirements' 
+                  : calculation is FishCalculation
+                    ? 'Fish Requirements'
+                    : 'Diet Calculation',
               style: const TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -443,7 +448,9 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
           body: SingleChildScrollView(
             child: calculation is WaterCalculation
                 ? _buildWaterCalculationDetails(calculation)
-                : _buildFishCalculationDetails(calculation as FishCalculation),
+                : calculation is FishCalculation
+                  ? _buildFishCalculationDetails(calculation as FishCalculation)
+                  : _buildDietCalculationDetails(calculation as DietCalculation),
           ),
         ),
       ),
@@ -889,12 +896,236 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 
+  Widget _buildDietCalculationDetails(DietCalculation calculation) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 24),
+          // Fish Details Cards
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: calculation.fishSelections.length,
+            itemBuilder: (context, index) {
+              final fishName = calculation.fishSelections.keys.elementAt(index);
+              final quantity = calculation.fishSelections[fishName];
+              return Card(
+                margin: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Fish image
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                      child: _buildResolvedFishImage(fishName, height: 200),
+                    ),
+                    // Fish details
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                fishName,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF006064),
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[200],
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Text(
+                                  'Quantity: ${quantity ?? 1}',
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                    color: Color(0xFF006064),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          // Diet Summary Card
+          SizedBox(
+            width: double.infinity,
+            child: Card(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Diet Summary',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const SizedBox.shrink(),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Tank total per feeding:',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Color(0xFF006064),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      ' • ${calculation.totalPortionRange ?? '${calculation.totalPortion} pcs of ${_inferFoodLabelFromPortionDetails(calculation.portionDetails ?? const {})}'}',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (calculation.portionDetails?.isNotEmpty == true) ...[
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Per Fish Portions:',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      ...(calculation.portionDetails ?? const {}).entries.map((e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('• ', style: TextStyle(fontSize: 16, color: Colors.black87)),
+                                Expanded(
+                                  child: Text(
+                                    '${e.key}: ${e.value}',
+                                    style: const TextStyle(fontSize: 16, color: Colors.black87),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )),
+                    ],
+                    if (calculation.feedingNotes?.isNotEmpty == true) ...[
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Feeding Notes:',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      ...calculation.feedingNotes!
+                          .split(RegExp(r'\r?\n'))
+                          .where((line) => line.trim().isNotEmpty)
+                          .map((line) => Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('• ', style: TextStyle(fontSize: 16, color: Colors.black87)),
+                                    Expanded(
+                                      child: Text(
+                                        line.replaceFirst(RegExp(r'^[-•]\s*'), '').trim(),
+                                        style: const TextStyle(fontSize: 16, color: Colors.black87),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )),
+                    ],
+                    if (calculation.feedingsPerDay != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Feeding Frequency:',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Color(0xFF006064),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        ' • ${calculation.feedingsPerDay} times per day',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
 String _cleanNeedsDescription(String input) {
   final unwantedWords = ['low', 'medium', 'moderate', 'high'];
   final pattern = RegExp(r'\b(' + unwantedWords.join('|') + r')\b', caseSensitive: false);
   final cleaned = input.replaceAll(pattern, '').replaceAll(RegExp(r'\s+'), ' ').trim();
   return cleaned;
 }
+
+
+  // Infer a concise food label (e.g., 'pellets', 'flakes') from portionDetails values
+  String _inferFoodLabelFromPortionDetails(Map<String, dynamic> details) {
+    if (details.isEmpty) return 'food';
+    final foods = <String>{};
+    final known = <String>{
+      'flakes','flake','pellet','pellets','sinking pellets','micro pellets','granules',
+      'algae wafer','algae wafers','wafer','wafers','bloodworms','brine shrimp','daphnia','tubifex',
+      'vegetable','veggies','spirulina','frozen','live food'
+    };
+    for (final v in details.values) {
+      final s = (v ?? '').toString().toLowerCase();
+      // Try to capture pattern like '... (2-3 small pellets each)' or '... of flakes'
+      final ofMatch = RegExp(r'\bof\s+([a-zA-Z ]+?)(?=\s*(?:each|per\s*day|/day|daily|\.|,|$))')
+          .firstMatch(s);
+      if (ofMatch != null) {
+        var label = ofMatch.group(1)!.trim();
+        label = label.replaceAll(RegExp(r'\b(food|feeds?)\b'), '').trim();
+        if (label.isNotEmpty) foods.add(label);
+        continue;
+      }
+      // Otherwise search for known keywords
+      for (final k in known) {
+        if (s.contains(k)) {
+          foods.add(k);
+        }
+      }
+    }
+    if (foods.isEmpty) return 'food';
+    if (foods.length == 1) return foods.first;
+    return 'mixed food';
+  }
 
 
   Widget _buildFishCollectionTab() {
@@ -1104,9 +1335,31 @@ String _cleanNeedsDescription(String input) {
         final allCalculations = [
           ...provider.savedCalculations,
           ...provider.savedFishCalculations,
+          ...provider.savedDietCalculations,
         ]..sort((a, b) {
-            DateTime dateA = (a is WaterCalculation) ? a.dateCalculated : (a as FishCalculation).dateCalculated;
-            DateTime dateB = (b is WaterCalculation) ? b.dateCalculated : (b as FishCalculation).dateCalculated;
+            DateTime dateA;
+            DateTime dateB;
+            
+            if (a is WaterCalculation) {
+              dateA = a.dateCalculated;
+            } else if (a is FishCalculation) {
+              dateA = a.dateCalculated;
+            } else if (a is DietCalculation) {
+              dateA = a.dateCalculated;
+            } else {
+              dateA = DateTime(0);
+            }
+            
+            if (b is WaterCalculation) {
+              dateB = b.dateCalculated;
+            } else if (b is FishCalculation) {
+              dateB = b.dateCalculated;
+            } else if (b is DietCalculation) {
+              dateB = b.dateCalculated;
+            } else {
+              dateB = DateTime(0);
+            }
+            
             return dateB.compareTo(dateA);
           });
 
@@ -1172,7 +1425,9 @@ String _cleanNeedsDescription(String input) {
             return Dismissible(
               key: Key((calculation is WaterCalculation) 
                   ? calculation.dateCalculated.toString() 
-                  : (calculation as FishCalculation).dateCalculated.toString()),
+                  : (calculation is FishCalculation) 
+                    ? (calculation as FishCalculation).dateCalculated.toString()
+                    : (calculation as DietCalculation).dateCalculated.toString()),
               background: Container(
                 color: const Color.fromARGB(255, 255, 17, 0),
                 alignment: Alignment.center,
@@ -1195,6 +1450,9 @@ String _cleanNeedsDescription(String input) {
                 } else if (calculation is FishCalculation) {
                   provider.removeFishCalculation(calculation);
                   showCustomNotification(context, 'Fish calculation removed');
+                } else if (calculation is DietCalculation) {
+                  provider.removeDietCalculation(calculation);
+                  showCustomNotification(context, 'Diet calculation removed');
                 }
               },
               child: Card(
@@ -1218,7 +1476,11 @@ String _cleanNeedsDescription(String input) {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
-                            calculation is WaterCalculation ? Icons.water_drop : Icons.water,
+                            calculation is WaterCalculation 
+                                ? Icons.water_drop 
+                                : calculation is FishCalculation 
+                                  ? Icons.water
+                                  : Icons.restaurant,
                             color: const Color(0xFF006064),
                             size: 30,
                           ),
@@ -1229,7 +1491,11 @@ String _cleanNeedsDescription(String input) {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                calculation is WaterCalculation ? 'Water Calculator' : 'Fish Calculator',
+                                calculation is WaterCalculation 
+                                    ? 'Water Calculator' 
+                                    : calculation is FishCalculation 
+                                      ? 'Fish Calculator'
+                                      : 'Diet Calculator',
                                 style: const TextStyle(
                                   color: Color(0xFF006064),
                                   fontSize: 12,
@@ -1240,7 +1506,9 @@ String _cleanNeedsDescription(String input) {
                               Text(
                                 calculation is WaterCalculation
                                     ? 'Tank Volume: ${calculation.minimumTankVolume}'
-                                    : 'Tank Volume: ${(calculation as FishCalculation).tankVolume}',
+                                    : calculation is FishCalculation
+                                      ? 'Tank Volume: ${(calculation as FishCalculation).tankVolume}'
+                                      : 'Fish name: ${(calculation as DietCalculation).fishSelections.keys.join(', ')}',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 16,
@@ -1248,9 +1516,11 @@ String _cleanNeedsDescription(String input) {
                               ),
                               Text(
                                 DateFormat('MMM d, y').format(
-                                  (calculation is WaterCalculation)
+                                  calculation is WaterCalculation
                                       ? calculation.dateCalculated
-                                      : (calculation as FishCalculation).dateCalculated,
+                                      : calculation is FishCalculation
+                                        ? (calculation as FishCalculation).dateCalculated
+                                        : (calculation as DietCalculation).dateCalculated,
                                 ),
                                 style: const TextStyle(
                                   color: Colors.grey,
@@ -1280,6 +1550,10 @@ String _cleanNeedsDescription(String input) {
       content = 'Are you sure you want to remove this water calculation?';
     } else if (calculation is FishCalculation) {
       content = 'Are you sure you want to remove this fish calculation?';
+    } else if (calculation is DietCalculation) {
+      final String rangeOrTotal = (calculation as DietCalculation).totalPortionRange
+          ?? (calculation as DietCalculation).totalPortion.toString();
+      content = 'Are you sure you want to remove this diet calculation?';
     }
     return await showDialog<bool>(
       context: context,

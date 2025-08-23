@@ -1230,22 +1230,17 @@ Future<void> _generateAllRecommendations() async {
                     children: [
                       if (_calculationResult == null) ...[
                         Expanded(
-                          child: ElevatedButton(
+                          child: OutlinedButton.icon(
                             onPressed: _addNewTextField,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF00BCD4),
+                            style: OutlinedButton.styleFrom(
                               padding: const EdgeInsets.symmetric(vertical: 16),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
+                              side: const BorderSide(color: Color(0xFF00BCD4)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
-                            child: const Text(
-                              'Add',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w500,
-                              ),
+                            icon: const Icon(Icons.add, color: Color(0xFF00BCD4)),
+                            label: const Text(
+                              'Add Fish',
+                              style: TextStyle(color: Color(0xFF00BCD4), fontWeight: FontWeight.w600),
                             ),
                           ),
                         ),
@@ -1283,7 +1278,7 @@ Future<void> _generateAllRecommendations() async {
                               ),
                             ),
                             child: const Text(
-                              'Clear',
+                              'Try Again',
                               style: TextStyle(
                                 color: Colors.black87,
                                 fontWeight: FontWeight.w500,

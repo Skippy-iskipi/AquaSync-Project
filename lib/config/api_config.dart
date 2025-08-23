@@ -46,6 +46,7 @@ class ApiConfig {
       '$baseUrl/calculate-fish-capacity/';
   static String get predictEndpoint => '$baseUrl/predict';
   static String get saveFishCalculationEndpoint => '$baseUrl/save-fish-calculation/';
+  static String get saveDietCalculationEndpoint => '$baseUrl/save-diet-calculation/';
 
   // Get fish image URL - ensures proper encoding
   static String getFishImageUrl(String fishName) {

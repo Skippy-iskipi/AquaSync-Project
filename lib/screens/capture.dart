@@ -96,12 +96,12 @@ class CaptureScreenState extends State<CaptureScreen> {
           content: Text(message),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.maybePop(context),
               child: const Text('Cancel'),
             ),
             ElevatedButton(
               onPressed: () {
-                Navigator.pop(context);
+                Navigator.maybePop(context);
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const SubscriptionPage()),
@@ -122,9 +122,7 @@ class CaptureScreenState extends State<CaptureScreen> {
   void _safePop() {
     if (!mounted) return;
     final navigator = Navigator.of(context, rootNavigator: true);
-    if (navigator.canPop()) {
-      navigator.pop();
-    }
+    navigator.maybePop();
   }
 
   // Handle back navigation safely to avoid popping when no history exists
@@ -512,9 +510,11 @@ class CaptureScreenState extends State<CaptureScreen> {
         );
       }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -533,10 +533,9 @@ class CaptureScreenState extends State<CaptureScreen> {
           showCustomNotification(context, 'Fish saved to collection');
           await Future.delayed(const Duration(milliseconds: 1500));
           if (mounted) {
-            Navigator.pushAndRemoveUntil(
-              context,
+            Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
               MaterialPageRoute(
-                builder: (context) => const HomePage(initialTabIndex: 1),
+                builder: (context) => const HomePage(initialTabIndex: 3),
               ),
               (route) => false,
             );
@@ -572,8 +571,17 @@ class CaptureScreenState extends State<CaptureScreen> {
         builder: (BuildContext context) {
           return WillPopScope(
             onWillPop: () async {
-              Navigator.of(context).pop();
-              return false;
+              final nav = Navigator.of(context);
+              if (nav.canPop()) {
+                nav.pop();
+                return false;
+              } else {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 0)),
+                );
+                return false;
+              }
             },
             child: Scaffold(
               backgroundColor: Colors.white,
@@ -582,7 +590,17 @@ class CaptureScreenState extends State<CaptureScreen> {
                 elevation: 0,
                 leading: IconButton(
                   icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () {
+                    final nav = Navigator.of(context);
+                    if (nav.canPop()) {
+                      nav.pop();
+                    } else {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 0)),
+                      );
+                    }
+                  },
                 ),
                 title: const Text(
                   'Prediction Result',
@@ -746,7 +764,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                                       context,
                                       MaterialPageRoute(
                                         builder: (context) => HomePage(
-                                          initialTabIndex: 3,
+                                          initialTabIndex: 1,
                                           initialFish: highestPrediction.commonName,
                                           initialFishImage: io.File(imageFile.path),
                                         ),
@@ -1184,8 +1202,17 @@ class CaptureScreenState extends State<CaptureScreen> {
         builder: (BuildContext context) {
           return WillPopScope(
             onWillPop: () async {
-              Navigator.of(context).pop();
-              return false;
+              final nav = Navigator.of(context);
+              if (nav.canPop()) {
+                nav.pop();
+                return false;
+              } else {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 0)),
+                );
+                return false;
+              }
             },
             child: Scaffold(
               backgroundColor: Colors.white,
@@ -1194,7 +1221,17 @@ class CaptureScreenState extends State<CaptureScreen> {
                 elevation: 0,
                 leading: IconButton(
                   icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () {
+                    final nav = Navigator.of(context);
+                    if (nav.canPop()) {
+                      nav.pop();
+                    } else {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 0)),
+                      );
+                    }
+                  },
                 ),
                 title: const Text(
                   'AI-Assisted Analysis',
@@ -1374,7 +1411,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                             children: [
                               Expanded(
                                 child: OutlinedButton(
-                                  onPressed: () => Navigator.of(context).pop(),
+                                  onPressed: () => Navigator.maybePop(context),
                                   style: OutlinedButton.styleFrom(
                                     side: const BorderSide(color: Color(0xFF006064)),
                                     padding: const EdgeInsets.symmetric(vertical: 12),

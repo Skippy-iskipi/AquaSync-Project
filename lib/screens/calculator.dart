@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../screens/water_calculator.dart';
 import '../screens/fish_calculator_volume.dart';
 import '../screens/fish_calculator_dimensions.dart';
+import '../screens/diet_calculator.dart';
 
 class Calculator extends StatefulWidget {
   const Calculator({super.key});
@@ -17,7 +18,7 @@ class _CalculatorState extends State<Calculator> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -252,6 +253,7 @@ class _CalculatorState extends State<Calculator> with SingleTickerProviderStateM
             tabs: const [
               Tab(text: 'Tank Volume Calculator'),
               Tab(text: 'Fish Calculator'),
+              Tab(text: 'Diet Recommendation'),
             ],
           ),
         ),
@@ -261,6 +263,7 @@ class _CalculatorState extends State<Calculator> with SingleTickerProviderStateM
             children: [
               const WaterCalculator(),
               _buildFishCalculator(),
+              const DietCalculator(),
             ],
           ),
         ),
