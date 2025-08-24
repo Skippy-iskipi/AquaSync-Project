@@ -412,7 +412,8 @@ def load_classifier_model_sync(model_path: str) -> Tuple[torch.nn.Module, List[s
     try:
         log_memory_usage("before classifier load")
 
-        checkpoint = torch.load(model_path, map_location="cpu")
+        with torch.no_grad():
+            checkpoint = torch.load(model_path, map_location="cpu")
 
         # Determine if we were given a raw state_dict or a full checkpoint
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
@@ -432,22 +433,41 @@ def load_classifier_model_sync(model_path: str) -> Tuple[torch.nn.Module, List[s
             raise RuntimeError("num_classes not found in checkpoint and cannot be inferred.")
 
         # Build the exact architecture used in training
-        model = create_large_scale_model(
-            num_classes=num_classes,
-            architecture=architecture,
-            dropout_rate=0.3,
-            device=torch.device('cpu'),
-            use_pretrained=False  # avoid downloading torchvision weights during inference
-        )
+        with torch.no_grad():
+            model = create_large_scale_model(
+                num_classes=num_classes,
+                architecture=architecture,
+                dropout_rate=0.3,
+                device=torch.device('cpu'),
+                use_pretrained=False  # avoid downloading torchvision weights during inference
+            )
 
+        with torch.no_grad():
+            try:
+                model.load_state_dict(model_state, strict=True)
+                logger.info("Successfully loaded model state_dict from checkpoint")
+            except Exception as e:
+                logger.warning(f"Strict load failed: {e}. Retrying with strict=False")
+                model.load_state_dict(model_state, strict=False)
+
+        # Quantize dynamically to shrink memory on CPU (Linear layers)
         try:
-            model.load_state_dict(model_state, strict=True)
-            logger.info("Successfully loaded model state_dict from checkpoint")
-        except Exception as e:
-            logger.warning(f"Strict load failed: {e}. Retrying with strict=False")
-            model.load_state_dict(model_state, strict=False)
+            log_memory_usage("before quantization")
+            from torch.ao.quantization import quantize_dynamic
+        except Exception:
+            # Fallback import path for older torch
+            try:
+                from torch.quantization import quantize_dynamic  # type: ignore
+            except Exception:
+                quantize_dynamic = None  # type: ignore
 
-        model.to("cpu").float().eval()
+        if quantize_dynamic is not None:
+            with torch.no_grad():
+                model = quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8)
+                logger.info("Applied dynamic quantization to classifier model (Linear -> int8)")
+                log_memory_usage("after quantization")
+
+        model.to("cpu").eval()
 
         # Clear memory
         gc.collect()
