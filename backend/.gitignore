@@ -10,6 +10,11 @@ __pycache__/
 *.h5
 *.pkl
 
+# Allow committing the specific classifier checkpoint
+!app/models/trained_models/efficientnet_b3_fish_classifier_checkpoint.pth
+!app/models/trained_models/efficientnet_b3_fish_classifier.pth
+
+
 # Training data and temporary files
 training_progress/
 stop_training_signal.txt
