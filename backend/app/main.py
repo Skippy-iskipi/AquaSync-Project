@@ -40,6 +40,10 @@ from supabase import Client
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
+
+def run_yolo_infer(img):
+    """Helper for YOLO inference to use within ThreadPoolExecutor."""
+    return yolo_model(img, imgsz=384, device='cpu')
 logger = logging.getLogger(__name__)
 
 # Global model variables
@@ -61,8 +65,8 @@ try:
 except Exception:
     pass
 
-# Thread pool for CPU-intensive tasks (keep minimal)
-executor = ThreadPoolExecutor(max_workers=1)
+# Thread pool for CPU-intensive tasks (keep small but allow parallelism)
+executor = ThreadPoolExecutor(max_workers=2)
 
 app = FastAPI(
     title="AquaSync API",
@@ -465,16 +469,27 @@ async def load_models_background():
         log_memory_usage("start model loading")
         logger.info("Starting background model loading...")
 
-        # Step 1: Get YOLO from storage, but load classifier checkpoint from local disk
+        # Step 1: Prepare YOLO and classifier paths (use disk cache for YOLO)
         storage = get_supabase_client().storage.from_("models")
         try:
-            logger.info("Fetching YOLO weights from storage and classifier checkpoint from disk...")
-            yolo_data = await asyncio.get_event_loop().run_in_executor(
-                executor, download_file_with_retry, storage, "yolov8n.pt"
-            )
+            logger.info("Preparing YOLO weights and classifier checkpoint...")
+            cache_dir = Path(os.getenv("MODEL_CACHE_DIR", "app/model_cache"))
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            yolo_cache_path = cache_dir / "yolov8n.pt"
+
+            if not yolo_cache_path.exists() or yolo_cache_path.stat().st_size == 0:
+                logger.info("YOLO cache miss. Downloading yolov8n.pt to cache...")
+                yolo_bytes = await asyncio.get_event_loop().run_in_executor(
+                    executor, download_file_with_retry, storage, "yolov8n.pt"
+                )
+                with open(yolo_cache_path, "wb") as f:
+                    f.write(yolo_bytes)
+                # Free memory buffer
+                del yolo_bytes
+            else:
+                logger.info(f"Using cached YOLO weights at {yolo_cache_path}")
 
             # Resolve local checkpoint path
-            # Base directory is this file's directory: backend/app/
             base_dir = Path(__file__).resolve().parent
             ckpt_path = base_dir / "models" / "trained_models" / "efficientnet_b3_fish_classifier_checkpoint.pth"
             if not ckpt_path.exists():
@@ -486,18 +501,8 @@ async def load_models_background():
             model_load_error = f"Model file error: {e}"
             return
         
-        # Step 3: Save to temporary files and load models
+        # Step 3: Load models (from cached/local files)
         try:
-            # Create temporary file for YOLO weights
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as yolo_temp:
-                yolo_temp.write(yolo_data)
-                yolo_path = yolo_temp.name
-            # Free the in-memory buffer ASAP
-            try:
-                del yolo_data
-            except NameError:
-                pass
-            
             # Load models sequentially to reduce peak memory usage
             logger.info("Loading classifier model (sequential)...")
             classifier_loaded = await asyncio.get_event_loop().run_in_executor(
@@ -507,18 +512,11 @@ async def load_models_background():
 
             logger.info("Loading YOLO model (sequential)...")
             yolo_loaded = await asyncio.get_event_loop().run_in_executor(
-                executor, load_yolo_model_sync, yolo_path
+                executor, load_yolo_model_sync, str(yolo_cache_path)
             )
             # assign after successful load
             globals()['yolo_model'] = yolo_loaded
             idx_to_common_name = {i: name for i, name in enumerate(class_names)}
-            
-            # Cleanup temp files
-            try:
-                os.unlink(yolo_path)
-                # no unlink for local checkpoint
-            except Exception as e:
-                logger.warning(f"Failed to cleanup temp files: {e}")
             
             models_loaded = True
             log_memory_usage("model loading complete")
@@ -533,7 +531,11 @@ async def load_models_background():
         logger.error(f"Unexpected error during model loading: {e}")
         model_load_error = f"Unexpected error: {e}"
     finally:
-        # Always clean up memory
+        # Always clean up memory and clear task ref
+        try:
+            globals()['model_loading_task'] = None
+        except Exception:
+            pass
         gc.collect()
 
 async def ensure_models_loaded():
@@ -597,8 +599,10 @@ async def setup_app():
     app.include_router(model_management_router)
     app.include_router(payments_router)
     
-    # Do NOT load models at startup to keep memory low on small instances
-    logger.info("Startup complete. Models will load lazily on first request.")
+    # Start model loading in background so they're ready shortly after startup
+    logger.info("🚀 Starting model loading in background using cached weights when available...")
+    model_loading_task = asyncio.create_task(load_models_background())
+    logger.info("🎉 FastAPI startup complete! Models are loading in background.")
 
 @app.on_event("shutdown")
 async def shutdown_app():
@@ -688,7 +692,10 @@ async def predict(
 
     try:
         # First, use YOLO to detect fish with smaller inference size to reduce memory
-        results = yolo_model(image, imgsz=384, device='cpu')
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            executor, lambda: yolo_model(image, imgsz=384, device='cpu')
+        )
         
         # Check if any fish was detected
         if len(results[0].boxes) == 0:
