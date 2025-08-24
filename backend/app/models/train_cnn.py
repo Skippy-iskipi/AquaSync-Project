@@ -275,28 +275,26 @@ def prepare_large_scale_dataset(data_dir, min_images_per_class=5, val_split=0.15
     logger.info(f"Prepared dataset with {num_classes} classes")
     
     return temp_dir, num_classes
-
-
-# ============================
 # Advanced Model Architecture for Large Scale
 # ============================
 class LargeScaleEfficientNet(nn.Module):
     """Enhanced EfficientNet for large-scale classification"""
     
-    def __init__(self, num_classes, architecture='b2', dropout_rate=0.3, use_mixup=True):
+    def __init__(self, num_classes, architecture='b2', dropout_rate=0.3, use_mixup=True, use_pretrained=True):
         super(LargeScaleEfficientNet, self).__init__()
         
         self.use_mixup = use_mixup
         
         # Choose more powerful architecture for large datasets
+        # Control pretrained weights to avoid downloads during inference
         if architecture == 'b0':
-            self.backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
+            self.backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT if use_pretrained else None)
             features_dim = 1280
         elif architecture == 'b2':
-            self.backbone = efficientnet_b2(weights=EfficientNet_B2_Weights.DEFAULT)
+            self.backbone = efficientnet_b2(weights=EfficientNet_B2_Weights.DEFAULT if use_pretrained else None)
             features_dim = 1408
         elif architecture == 'b3':
-            self.backbone = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+            self.backbone = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT if use_pretrained else None)
             features_dim = 1536
         else:
             raise ValueError(f"Unsupported architecture: {architecture}")
@@ -373,35 +371,18 @@ class LargeScaleEfficientNet(nn.Module):
 
 
 
-def mixup_data(x, y, alpha=0.2):
-    """Mixup augmentation"""
-    if alpha > 0:
-        lam = np.random.beta(alpha, alpha)
-    else:
-        lam = 1
-
-    batch_size = x.size(0)
-    index = torch.randperm(batch_size).to(x.device)
-
-    mixed_x = lam * x + (1 - lam) * x[index, :]
-    y_a, y_b = y, y[index]
-    return mixed_x, y_a, y_b, lam
-
-
-def mixup_criterion(criterion, pred, y_a, y_b, lam):
-    """Mixup loss calculation"""
-    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
-
-
-# ============================
-# Enhanced Training Functions
-# ============================
-def create_large_scale_model(num_classes, architecture='b2', dropout_rate=0.3, device=None):
-    """Create model optimized for large-scale classification"""
+def create_large_scale_model(num_classes, architecture='b2', dropout_rate=0.3, device=None, use_pretrained=True):
+    """Create model optimized for large-scale classification
+    
+    use_pretrained: whether to initialize the EfficientNet backbone with torchvision pretrained weights.
+    Set to False during inference to avoid network downloads.
+    """
     model = LargeScaleEfficientNet(
         num_classes=num_classes,
         architecture=architecture,
-        dropout_rate=dropout_rate
+        dropout_rate=dropout_rate,
+        use_mixup=True,
+        use_pretrained=use_pretrained
     ).to(device)
     
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -413,224 +394,6 @@ def create_large_scale_model(num_classes, architecture='b2', dropout_rate=0.3, d
     return model
 
 
-def get_large_scale_transforms(image_size=260, use_strong_augmentation=True):
-    """Enhanced transforms for large-scale datasets"""
-    
-    if use_strong_augmentation:
-        train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(image_size, scale=(0.8, 1.0)),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomVerticalFlip(p=0.1),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
-            transforms.RandomGrayscale(p=0.1),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            transforms.RandomErasing(p=0.2, scale=(0.02, 0.15), value='random')
-        ])
-    else:
-        train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(image_size, scale=(0.9, 1.0)),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(8),
-            transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-
-    val_transform = transforms.Compose([
-        transforms.Resize(int(image_size * 1.14)),
-        transforms.CenterCrop(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    
-    return train_transform, val_transform
-
-
-def create_large_scale_dataloaders(data_dir, image_size=260, batch_size=16, min_samples_per_class=5):
-    """Create data loaders optimized for large-scale classification"""
-    
-    prepared_data_dir, num_classes = prepare_large_scale_dataset(
-        data_dir, min_images_per_class=min_samples_per_class
-    )
-    
-    train_tf, val_tf = get_large_scale_transforms(image_size, use_strong_augmentation=True)
-
-    train_dataset = LargeScaleImageFolder(
-        root=os.path.join(prepared_data_dir, 'train'),
-        transform=train_tf,
-        min_samples_per_class=min_samples_per_class
-    )
-    val_dataset = datasets.ImageFolder(
-        root=os.path.join(prepared_data_dir, 'val'),
-        transform=val_tf
-    )
-
-    logger.info(f"Training: {len(train_dataset)} images, {len(train_dataset.classes)} classes")
-    logger.info(f"Validation: {len(val_dataset)} images")
-
-    # Adaptive batch size based on number of classes and GPU memory
-    if torch.cuda.is_available():
-        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        
-        # Conservative batch sizing for large datasets
-        if num_classes > 80:
-            if gpu_memory_gb < 8:
-                batch_size = min(batch_size, 8)
-            elif gpu_memory_gb < 12:
-                batch_size = min(batch_size, 12)
-            else:
-                batch_size = min(batch_size, 16)
-        
-        logger.info(f"Using batch size: {batch_size} for {num_classes} classes")
-
-    # Balanced sampling for large datasets
-    if train_dataset.class_weights is not None:
-        # More conservative sampling to prevent overfitting
-        sample_weights = [train_dataset.class_weights[label].item() for _, label in train_dataset.samples]
-        sampler = torch.utils.data.WeightedRandomSampler(
-            weights=sample_weights,
-            num_samples=len(train_dataset),
-            replacement=True
-        )
-        shuffle = False
-    else:
-        sampler = None
-        shuffle = True
-
-    # Optimized loader settings
-    num_workers = min(6, os.cpu_count() or 2)
-    pin_memory = torch.cuda.is_available()
-
-    train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=shuffle, sampler=sampler,
-        num_workers=num_workers, pin_memory=pin_memory, drop_last=True
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=pin_memory
-    )
-    
-    return train_loader, val_loader, train_dataset, num_classes
-
-
-def train_epoch_large_scale(model, data_loader, criterion, optimizer, device, 
-                           use_mixup=False, use_amp=False, epoch=0):
-    """Enhanced training epoch for large-scale datasets"""
-    model.train()
-    running_loss = 0.0
-    correct = 0
-    total = 0
-    
-    scaler = GradScaler() if use_amp and HAS_AMP else None
-    
-    # Use mixup after initial epochs
-    use_mixup_epoch = use_mixup and epoch > 3
-    
-    for batch_idx, (inputs, labels) in enumerate(data_loader):
-        inputs = inputs.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True)
-
-        optimizer.zero_grad()
-        
-        if use_mixup_epoch and random.random() < 0.5:
-            # Apply mixup
-            inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, alpha=0.2)
-            
-            if scaler:
-                with autocast():
-                    outputs = model(inputs)
-                    loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                outputs = model(inputs)
-                loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
-                optimizer.step()
-            
-            # Approximate accuracy for mixup
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += (lam * predicted.eq(labels_a).sum().item() + 
-                       (1 - lam) * predicted.eq(labels_b).sum().item())
-        else:
-            # Standard training
-            if scaler:
-                with autocast():
-                    outputs = model(inputs)
-                    loss = criterion(outputs, labels)
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
-                optimizer.step()
-
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-
-        running_loss += loss.item()
-
-        # Memory cleanup
-        if batch_idx % 15 == 0:
-            clear_gpu_cache()
-
-    return running_loss / len(data_loader), 100. * correct / total
-
-
-def validate_epoch_large_scale(model, val_loader, criterion, device, num_classes):
-    """Enhanced validation for large-scale datasets"""
-    model.eval()
-    val_loss = 0.0
-    correct = 0
-    total = 0
-    
-    # Track per-class performance
-    class_correct = torch.zeros(num_classes)
-    class_total = torch.zeros(num_classes)
-    
-    with torch.no_grad():
-        for inputs, labels in val_loader:
-            inputs = inputs.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
-            
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            
-            val_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-            
-            # Per-class accuracy
-            for i in range(labels.size(0)):
-                label = labels[i].item()
-                class_total[label] += 1
-                if predicted[i] == label:
-                    class_correct[label] += 1
-
-    # Calculate metrics
-    overall_acc = 100. * correct / total
-    class_acc = (class_correct / (class_total + 1e-8) * 100)
-    
-    # Count classes with good performance
-    good_classes = (class_acc > 70).sum().item()
-    poor_classes = (class_acc < 30).sum().item()
-    
-    return val_loss / len(val_loader), overall_acc, class_acc, good_classes, poor_classes
-
-
-# ============================
-# Main Training Function for Large Scale
-# ============================
 def train_large_scale_cnn(species_name, data_dir, model_out_path, epochs=40, batch_size=16,
                          learning_rate=0.0005, image_size=260, architecture='b2',
                          dropout_rate=0.3, min_samples_per_class=5, use_curriculum=False):
@@ -663,7 +426,8 @@ def train_large_scale_cnn(species_name, data_dir, model_out_path, epochs=40, bat
             num_classes=num_classes,
             architecture=architecture,
             dropout_rate=dropout_rate,
-            device=device
+            device=device,
+            use_pretrained=True  # training benefits from pretrained weights
         )
         
         # Enhanced loss function for large datasets

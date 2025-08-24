@@ -423,7 +423,8 @@ def load_classifier_model_sync(model_path: str) -> Tuple[torch.nn.Module, List[s
             num_classes=num_classes,
             architecture=architecture,
             dropout_rate=0.3,
-            device=torch.device('cpu')
+            device=torch.device('cpu'),
+            use_pretrained=False  # avoid downloading torchvision weights during inference
         )
 
         try:
