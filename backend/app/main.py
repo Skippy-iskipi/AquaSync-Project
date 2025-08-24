@@ -52,8 +52,17 @@ model_loading_task = None
 models_loaded = False
 model_load_error = None
 
-# Thread pool for CPU-intensive tasks
-executor = ThreadPoolExecutor(max_workers=2)
+# Constrain threads to reduce memory footprint on small instances
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+try:
+    torch.set_num_threads(1)
+except Exception:
+    pass
+
+# Thread pool for CPU-intensive tasks (keep minimal)
+executor = ThreadPoolExecutor(max_workers=1)
 
 app = FastAPI(
     title="AquaSync API",
@@ -479,22 +488,29 @@ async def load_models_background():
         
         # Step 3: Save to temporary files and load models
         try:
-            # Create temporary files
+            # Create temporary file for YOLO weights
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pt") as yolo_temp:
                 yolo_temp.write(yolo_data)
                 yolo_path = yolo_temp.name
+            # Free the in-memory buffer ASAP
+            try:
+                del yolo_data
+            except NameError:
+                pass
             
-            # Load models in parallel
-            logger.info("Loading models...")
-            yolo_task = asyncio.get_event_loop().run_in_executor(
-                executor, load_yolo_model_sync, yolo_path
-            )
-            classifier_task = asyncio.get_event_loop().run_in_executor(
+            # Load models sequentially to reduce peak memory usage
+            logger.info("Loading classifier model (sequential)...")
+            classifier_loaded = await asyncio.get_event_loop().run_in_executor(
                 executor, load_classifier_model_sync, str(ckpt_path)
             )
-
-            yolo_model, classifier_loaded = await asyncio.gather(yolo_task, classifier_task)
             classifier_model, class_names = classifier_loaded
+
+            logger.info("Loading YOLO model (sequential)...")
+            yolo_loaded = await asyncio.get_event_loop().run_in_executor(
+                executor, load_yolo_model_sync, yolo_path
+            )
+            # assign after successful load
+            globals()['yolo_model'] = yolo_loaded
             idx_to_common_name = {i: name for i, name in enumerate(class_names)}
             
             # Cleanup temp files
@@ -581,11 +597,8 @@ async def setup_app():
     app.include_router(model_management_router)
     app.include_router(payments_router)
     
-    # Start model loading in background (non-blocking)
-    logger.info("🚀 Starting model loading in background...")
-    model_loading_task = asyncio.create_task(load_models_background())
-    
-    logger.info("🎉 FastAPI startup complete! Models loading in background...")
+    # Do NOT load models at startup to keep memory low on small instances
+    logger.info("Startup complete. Models will load lazily on first request.")
 
 @app.on_event("shutdown")
 async def shutdown_app():
@@ -674,8 +687,8 @@ async def predict(
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image.")
 
     try:
-        # First, use YOLO to detect fish
-        results = yolo_model(image)
+        # First, use YOLO to detect fish with smaller inference size to reduce memory
+        results = yolo_model(image, imgsz=384, device='cpu')
         
         # Check if any fish was detected
         if len(results[0].boxes) == 0:
@@ -699,11 +712,9 @@ async def predict(
         
         # Simplified test-time augmentation for better performance
         class_probs = None
+        # Disable TTA to reduce memory usage on small instances
         augmentations = [
-            # Original image
             lambda img: img,
-            # Horizontal flip (a common and effective augmentation)
-            lambda img: TF.hflip(img),
         ]
         
         logger.info(f"Performing test-time augmentation with {len(augmentations)} variants")
@@ -737,8 +748,15 @@ async def predict(
             confidence, pred_idx = torch.max(calibrated_probs, 0)
             class_idx = pred_idx.item()
             score = confidence.item()
-        
+
         logger.info(f"Prediction after test-time augmentation: class={class_idx}, raw confidence={score:.4f}, temperature={temperature}")
+        
+        # Release detection intermediates to reduce memory
+        try:
+            del results, boxes, best_box
+        except Exception:
+            pass
+        gc.collect()
         
         # Set a confidence threshold to filter out uncertain predictions
         CONFIDENCE_THRESHOLD = 0.3  # Minimum acceptable confidence
