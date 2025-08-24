@@ -35,6 +35,7 @@ from .models.train_cnn import create_large_scale_model
 from .models import FishSpecies
 from .routes.fish_images import router as fish_images_router
 from .routes.model_management import router as model_management_router
+from .routes.payments import router as payments_router
 from supabase import Client
 
 # Set up logging
@@ -577,6 +578,7 @@ async def setup_app():
     # Include routers
     app.include_router(fish_images_router)
     app.include_router(model_management_router)
+    app.include_router(payments_router)
     
     # Start model loading in background (non-blocking)
     logger.info("🚀 Starting model loading in background...")
@@ -1581,19 +1583,21 @@ async def paymongo_webhook(request: Request, db: Client = Depends(get_supabase_c
         payload = await request.json()
         logger.info(f"Webhook JSON payload: {payload}")
         event_type = payload.get("data", {}).get("attributes", {}).get("type")
-        payment_id = payload.get("data", {}).get("id")
-        
-        logger.info(f"Received PayMongo webhook: {event_type} for payment_id={payment_id}")
+        # PayMongo event id (not the link/payment id)
+        event_id = payload.get("data", {}).get("id")
+        # The resource (link/payment) id lives under data.attributes.data.id
+        resource_id = payload.get("data", {}).get("attributes", {}).get("data", {}).get("id")
+        logger.info(f"Received PayMongo webhook: event_type={event_type}, event_id={event_id}, resource_id={resource_id}")
         
         # Handle different payment scenarios
         if event_type in ["link.paid", "payment.paid"]:
-            await handle_successful_payment(payment_id, db, payload)
+            await handle_successful_payment(resource_id, db, payload)
         elif event_type in ["link.failed", "payment.failed"]:
-            await handle_failed_payment(payment_id, db, payload)
+            await handle_failed_payment(resource_id, db, payload)
         elif event_type == "link.expired":
-            await handle_expired_link(payment_id, db, payload)
+            await handle_expired_link(resource_id, db, payload)
         elif event_type == "payment.refunded":
-            await handle_refunded_payment(payment_id, db, payload)
+            await handle_refunded_payment(resource_id, db, payload)
         else:
             logger.info(f"Unhandled PayMongo event type: {event_type}")
         
@@ -1604,8 +1608,14 @@ async def paymongo_webhook(request: Request, db: Client = Depends(get_supabase_c
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Webhook processing failed: {str(e)}")
 
-async def handle_successful_payment(payment_id: str, db: Client, payload: dict):
-    """Handle successful payment events and update user tier_plan in profiles table."""
+async def handle_successful_payment(resource_id: str, db: Client, payload: dict):
+    """Handle successful payment events and update user tier_plan in profiles table.
+
+    Priority:
+    1) Use resource_id (link/payment id) to find the pending subscription row via paymongo_payment_id
+       and read user_id + tier_plan from there (most reliable).
+    2) Fallback to parsing the description string for user_id/tier_plan if lookup fails.
+    """
     try:
         if not payload:
             logger.error("No webhook payload provided for extracting user info.")
@@ -1614,43 +1624,64 @@ async def handle_successful_payment(payment_id: str, db: Client, payload: dict):
         payment_data = attributes.get("data", {}).get("attributes", {})
         description = payment_data.get("description", "")
         logger.info(f"Payment description: {description}")
-        # Improved regex: match any case, allow for pro/pro_plus
-        import re
-        match = re.search(r"(pro_plus|pro) subscription for user ([a-f0-9\\-]+)", description, re.IGNORECASE)
-        if not match:
-            logger.error(f"Could not extract user_id and tier_plan from payment description: {description}")
-            return
-        tier_plan = match.group(1).lower()
-        user_id = match.group(2)
-        logger.info(f"Extracted user_id={user_id}, tier_plan={tier_plan} from payment description.")
+
+        # First, try to find the subscription directly by resource_id (link/payment id)
+        user_id = None
+        tier_plan = None
+        if resource_id:
+            sub_resp = db.table('subscriptions').select('*').eq('paymongo_payment_id', resource_id).order('created_at', desc=True).limit(1).execute()
+            if sub_resp.data:
+                sub_row = sub_resp.data[0]
+                user_id = sub_row.get('user_id')
+                tier_plan = (sub_row.get('tier_plan') or '').lower()
+                logger.info(f"Matched subscription row by resource_id: user_id={user_id}, tier_plan={tier_plan}")
+
+        # If lookup failed, fall back to parsing the description
+        if not user_id or not tier_plan:
+            import re
+            match = re.search(r"(pro_plus|pro)\s+subscription\s+for\s+user\s+([a-f0-9\-]+)", description, re.IGNORECASE)
+            if match:
+                tier_plan = match.group(1).lower()
+                user_id = match.group(2)
+                logger.info(f"Extracted from description: user_id={user_id}, tier_plan={tier_plan}")
+            else:
+                logger.error("Unable to determine user_id/tier_plan from webhook. Skipping update.")
+                return
+
         now = datetime.now(timezone.utc)
         next_billing = now + timedelta(days=30)
+
         # Update user's tier plan
         update_profiles = db.table('profiles').update({
             'tier_plan': tier_plan,
             'updated_at': now.isoformat()
         }).eq('id', user_id).execute()
         logger.info(f"Updated profiles: {update_profiles}")
-        # Optionally, update subscriptions table for record-keeping
-        update_subs = db.table('subscriptions').update({
+
+        # Update the specific subscription row if we have the resource_id; otherwise, update latest pending for user
+        subs_update_query = db.table('subscriptions').update({
             'status': 'active',
             'last_payment_date': now.isoformat(),
             'next_billing_date': next_billing.isoformat(),
             'updated_at': now.isoformat()
-        }).eq('user_id', user_id).execute()
+        })
+        if resource_id:
+            update_subs = subs_update_query.eq('paymongo_payment_id', resource_id).execute()
+        else:
+            update_subs = subs_update_query.eq('user_id', user_id).eq('status', 'pending').execute()
         logger.info(f"Updated subscriptions: {update_subs}")
         logger.info(f"Subscription activated for user {user_id} with tier {tier_plan}")
     except Exception as e:
         logger.error(f"Error handling successful payment: {str(e)}")
         raise
 
-async def handle_failed_payment(payment_id: str, db: Client, payload: dict):
+async def handle_failed_payment(resource_id: str, db: Client, payload: dict):
     """Handle failed payment events"""
     try:
-        response = db.table('subscriptions').select('*').eq('paymongo_payment_id', payment_id).execute()
+        response = db.table('subscriptions').select('*').eq('paymongo_payment_id', resource_id).execute()
         
         if not response.data:
-            logger.warning(f"No subscription found for payment_id {payment_id}")
+            logger.warning(f"No subscription found for paymongo_payment_id {resource_id}")
             return
         
         subscription = response.data[0]
@@ -1661,7 +1692,7 @@ async def handle_failed_payment(payment_id: str, db: Client, payload: dict):
         db.table('subscriptions').update({
             'status': 'failed',
             'updated_at': now.isoformat()
-        }).eq('paymongo_payment_id', payment_id).execute()
+        }).eq('paymongo_payment_id', resource_id).execute()
         
         # Ensure user remains on free tier
         db.table('profiles').update({
@@ -1675,13 +1706,13 @@ async def handle_failed_payment(payment_id: str, db: Client, payload: dict):
         logger.error(f"Error handling failed payment: {str(e)}")
         raise
 
-async def handle_expired_link(payment_id: str, db: Client, payload: dict):
+async def handle_expired_link(resource_id: str, db: Client, payload: dict):
     """Handle expired link events"""
     try:
-        response = db.table('subscriptions').select('*').eq('paymongo_payment_id', payment_id).execute()
+        response = db.table('subscriptions').select('*').eq('paymongo_payment_id', resource_id).execute()
         
         if not response.data:
-            logger.warning(f"No subscription found for payment_id {payment_id}")
+            logger.warning(f"No subscription found for paymongo_payment_id {resource_id}")
             return
         
         subscription = response.data[0]
@@ -1693,7 +1724,7 @@ async def handle_expired_link(payment_id: str, db: Client, payload: dict):
             'status': 'expired',
             'end_date': now.isoformat(),
             'updated_at': now.isoformat()
-        }).eq('paymongo_payment_id', payment_id).execute()
+        }).eq('paymongo_payment_id', resource_id).execute()
         
         # Revert user to free tier
         db.table('profiles').update({
@@ -1707,13 +1738,13 @@ async def handle_expired_link(payment_id: str, db: Client, payload: dict):
         logger.error(f"Error handling expired link: {str(e)}")
         raise
 
-async def handle_refunded_payment(payment_id: str, db: Client, payload: dict):
+async def handle_refunded_payment(resource_id: str, db: Client, payload: dict):
     """Handle refunded payment events"""
     try:
-        response = db.table('subscriptions').select('*').eq('paymongo_payment_id', payment_id).execute()
+        response = db.table('subscriptions').select('*').eq('paymongo_payment_id', resource_id).execute()
         
         if not response.data:
-            logger.warning(f"No subscription found for payment_id {payment_id}")
+            logger.warning(f"No subscription found for paymongo_payment_id {resource_id}")
             return
         
         subscription = response.data[0]
@@ -1725,7 +1756,7 @@ async def handle_refunded_payment(payment_id: str, db: Client, payload: dict):
             'status': 'refunded',
             'end_date': now.isoformat(),
             'updated_at': now.isoformat()
-        }).eq('paymongo_payment_id', payment_id).execute()
+        }).eq('paymongo_payment_id', resource_id).execute()
         
         # Revert user to free tier
         db.table('profiles').update({
@@ -1957,6 +1988,89 @@ async def cancel_subscription(user_id: str, db: Client = Depends(get_supabase_cl
     except Exception as e:
         logger.error(f"Error cancelling subscription for user {user_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to cancel subscription: {str(e)}")
+
+@app.post("/subscription/reconcile/{link_id}")
+async def reconcile_subscription(link_id: str, db: Client = Depends(get_supabase_client)):
+    """Reconcile a subscription by checking the PayMongo link status and updating local tables.
+
+    This is useful when webhooks are delayed or not delivered. It expects that the
+    subscriptions table has a row with paymongo_payment_id == link_id.
+    """
+    try:
+        # Find the pending/latest subscription row for this link
+        sub_resp = db.table('subscriptions')\
+            .select('*')\
+            .eq('paymongo_payment_id', link_id)\
+            .order('created_at', desc=True)\
+            .limit(1)\
+            .execute()
+
+        if not sub_resp.data:
+            raise HTTPException(status_code=404, detail="No subscription found for this link_id")
+
+        sub_row = sub_resp.data[0]
+        user_id = sub_row['user_id']
+        tier_plan = (sub_row.get('tier_plan') or 'pro').lower()
+
+        # Query PayMongo for the link status
+        if not PAYMONGO_SECRET_KEY:
+            raise HTTPException(status_code=500, detail="PAYMONGO_SECRET_KEY is not configured on the server")
+
+        headers = {
+            "accept": "application/json",
+            "authorization": f"Basic {base64.b64encode((PAYMONGO_SECRET_KEY + ':').encode()).decode()}"
+        }
+
+        pm_url = f"https://api.paymongo.com/v1/links/{link_id}"
+        r = requests.get(pm_url, headers=headers, timeout=30)
+
+        try:
+            data = r.json()
+        except ValueError:
+            raise HTTPException(status_code=502, detail="Invalid response from PayMongo")
+
+        if r.status_code not in (200, 201):
+            detail = data.get('errors', [{}])[0].get('detail', 'Unknown error')
+            raise HTTPException(status_code=r.status_code, detail=f"PayMongo error: {detail}")
+
+        link_attrs = data.get('data', {}).get('attributes', {})
+        link_status = link_attrs.get('status')
+
+        if link_status == 'paid':
+            now = datetime.now(timezone.utc)
+            next_billing = now + timedelta(days=30)
+
+            # Activate subscription row
+            upd_sub = db.table('subscriptions').update({
+                'status': 'active',
+                'last_payment_date': now.isoformat(),
+                'next_billing_date': next_billing.isoformat(),
+                'updated_at': now.isoformat()
+            }).eq('paymongo_payment_id', link_id).execute()
+
+            # Update profile tier
+            upd_prof = db.table('profiles').update({
+                'tier_plan': tier_plan,
+                'updated_at': now.isoformat()
+            }).eq('id', user_id).execute()
+
+            return {
+                'reconciled': True,
+                'link_status': link_status,
+                'subscription_update': upd_sub,
+                'profile_update': upd_prof
+            }
+        else:
+            return {
+                'reconciled': False,
+                'link_status': link_status,
+                'message': 'Link is not paid yet'
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reconciling subscription for link {link_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reconcile subscription: {str(e)}")
 
 # --- Webhook Test Endpoint (for development) ---
 @app.post("/webhook/test")

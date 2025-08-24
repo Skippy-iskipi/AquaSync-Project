@@ -47,6 +47,12 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _selectedIndex = widget.initialTabIndex;
     _checkFirstTime();
+    // Ensure user's subscription plan is fetched on first build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Provider.of<UserPlanProvider>(context, listen: false).fetchPlan();
+      }
+    });
     // The LogBookProvider is now self-initializing.
     // This call is redundant and has been removed to prevent race conditions.
     /*

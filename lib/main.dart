@@ -133,6 +133,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
           });
           // Fetch user's plan when they sign in
           Provider.of<UserPlanProvider>(context, listen: false).fetchPlan();
+          // Subscribe to realtime plan changes
+          Provider.of<UserPlanProvider>(context, listen: false).subscribeToPlanChanges();
         }
       } else {
         if (mounted) {
@@ -140,6 +142,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
             _currentUser = null;
             _isLoadingUser = false;
           });
+          // Reset plan to free on sign-out to avoid stale plan leakage
+          Provider.of<UserPlanProvider>(context, listen: false).setPlan('free');
+          // Unsubscribe from realtime when signed out
+          Provider.of<UserPlanProvider>(context, listen: false).unsubscribeFromPlanChanges();
         }
       }
     });
@@ -161,6 +167,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
         });
         // Fetch user's plan when they sign in
         Provider.of<UserPlanProvider>(context, listen: false).fetchPlan();
+        // Subscribe to realtime plan changes
+        Provider.of<UserPlanProvider>(context, listen: false).subscribeToPlanChanges();
       }
     } else {
       if (mounted) {
@@ -168,6 +176,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
           _currentUser = null;
           _isLoadingUser = false;
         });
+        // Unsubscribe and reset plan on app start with no session
+        Provider.of<UserPlanProvider>(context, listen: false).unsubscribeFromPlanChanges();
+        Provider.of<UserPlanProvider>(context, listen: false).setPlan('free');
       }
     }
   }

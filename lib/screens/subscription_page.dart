@@ -58,7 +58,7 @@ class SubscriptionPage extends StatelessWidget {
 }
 
 class SubscriptionService {
-  static const String backendUrl = 'https://aquasync.onrender.com';
+  static const String backendUrl = 'http://aquasync.onrender.com';
 
   static Future<Map<String, dynamic>> createPaymentLink({
     required String userId,
