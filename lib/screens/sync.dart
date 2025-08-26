@@ -1,26 +1,131 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
-import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:http/http.dart' as http;
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lottie/lottie.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:dropdown_search/dropdown_search.dart';
+import 'package:provider/provider.dart';
 import '../models/fish_prediction.dart';
+import '../models/compatibility_result.dart';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import '../widgets/snap_tips_dialog.dart';
+import '../widgets/expandable_reason.dart';
 import '../services/openai_service.dart';
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
 import '../screens/subscription_page.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:dropdown_search/dropdown_search.dart';
-import 'package:provider/provider.dart';
-import '../models/compatibility_result.dart';
 import '../screens/logbook_provider.dart';
-import '../widgets/expandable_reason.dart';
+
+// Widget for displaying grouped recommendation fields in an ExpansionTile
+class _RecommendationExpansionGroup extends StatefulWidget {
+  final List<Map<String, dynamic>> fields;
+  final Map<String, dynamic> data;
+
+  const _RecommendationExpansionGroup({
+    required this.fields,
+    required this.data,
+  });
+
+  @override
+  State<_RecommendationExpansionGroup> createState() => _RecommendationExpansionGroupState();
+}
+
+class _RecommendationExpansionGroupState extends State<_RecommendationExpansionGroup> {
+  @override
+  Widget build(BuildContext context) {
+    final firstField = widget.fields.first;
+    final remainingCount = widget.fields.length - 1;
+    return ExpansionTile(
+      initiallyExpanded: false,
+      title: Row(
+        children: [
+          Icon(firstField['icon'] as IconData, size: 22, color: Color(0xFF006064)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              firstField['label'],
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF006064),
+                overflow: TextOverflow.ellipsis,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (remainingCount > 0)
+            Flexible(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8.0),
+                child: Text(
+                  '+$remainingCount more',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      children: widget.fields.map((field) {
+        final value = widget.data[field['key']] ?? 'N/A';
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(field['icon'] as IconData, color: Color(0xFF006064), size: 22),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          field['label'],
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF006064),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          value.toString(),
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[700],
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
 
 
 
@@ -43,6 +148,8 @@ class _SyncScreenState extends State<SyncScreen> {
   String? _selectedFish1;
   String? _selectedFish2;
   bool _isLoading = false;
+  // Confidence threshold for accepting predictions (50%)
+  static const double _confidenceThreshold = 0.7;
   // Cache for resolving fish image URLs so FutureBuilder doesn't refetch on rebuild
   final Map<String, Future<http.Response?>> _imageResolveCache = {};
   // Controllers and suggestions are no longer needed
@@ -355,13 +462,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                   final XFile? image = await picker.pickImage(source: ImageSource.gallery);
                                   if (image != null) {
                                     final result = await _getPredictions(image, isFirstFish);
-                                    if (!result) {
-                                      showCustomNotification(
-                                        context,
-                                        'No fish detected in the image. Please try again with a clearer image.',
-                                        isError: true,
-                                      );
-                                    } else {
+                                    if (result) {
                                       Navigator.of(context).pop();
                                     }
                                   }
@@ -583,6 +684,19 @@ class _SyncScreenState extends State<SyncScreen> {
       if (response.statusCode == 200) {
         var decodedResponse = json.decode(responseData);
         print('Decoded response: $decodedResponse');
+        // Handle potential low-confidence even on 200 responses
+        final numCc200 = (decodedResponse['classification_confidence'] ?? decodedResponse['detection_confidence'] ?? 0) as num;
+        final double confidence200 = numCc200.toDouble();
+        final bool lowConf200 = decodedResponse['low_confidence'] == true;
+        final bool hasFish200 = decodedResponse['has_fish'] == null ? true : (decodedResponse['has_fish'] == true);
+        if (!hasFish200 || lowConf200 || confidence200 < _confidenceThreshold) {
+          if (mounted) {
+            Navigator.pop(context); // Close the scanning dialog
+            _showSnapTipsDialog(!hasFish200 ? 'No fish detected' : 'Low confidence: ${(confidence200 * 100).toStringAsFixed(1)}%');
+            setState(() { _isLoading = false; });
+          }
+          return false;
+        }
         
         // Create temp prediction to get the fish names
         final commonName = decodedResponse['common_name'] ?? 'Unknown';
@@ -646,14 +760,25 @@ class _SyncScreenState extends State<SyncScreen> {
         }
         var decodedResponse = json.decode(responseData);
         
-        if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == false) {
+        // Check for confidence level and fish detection
+        final numCc = (decodedResponse['classification_confidence'] ?? decodedResponse['detection_confidence'] ?? 0) as num;
+        final double confidence = numCc.toDouble();
+        final bool hasFish = decodedResponse['has_fish'] == null ? true : (decodedResponse['has_fish'] == true);
+        final bool lowConf = decodedResponse['low_confidence'] == true;
+
+        // Show dialog for no fish or low confidence
+        if (!hasFish || lowConf || confidence < _confidenceThreshold) {
           if (mounted) {
-            showCustomNotification(
-              context,
-              'No fish detected in the image. Please try again with a clearer image.',
-              isError: true,
-            );
+            _showSnapTipsDialog(!hasFish ? 'No fish detected' : 'Low confidence: ${(confidence * 100).toStringAsFixed(1)}%');
           }
+          setState(() {
+            _isLoading = false;
+          });
+          return false;
+        }
+
+        if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == false) {
+          // Snap Tips already shown above; just stop here without additional notifications
           return false;
         } else {
           if (mounted) {
@@ -695,6 +820,15 @@ class _SyncScreenState extends State<SyncScreen> {
         });
       }
     }
+  }
+
+  // Show snap tips dialog for no fish or low confidence
+  void _showSnapTipsDialog(String reason) {
+    showDialog(
+      context: context,
+      useRootNavigator: true,
+      builder: (context) => SnapTipsDialog(message: reason),
+    );
   }
 
   void _showPredictionResults(XFile imageFile, List<FishPrediction> predictions, bool isFirstFish) {
@@ -810,9 +944,96 @@ class _SyncScreenState extends State<SyncScreen> {
                           ),
                         ),
                         const SizedBox(height: 20),
-                        _buildDetailRow('Diet Type', highestPrediction.diet),
-                        _buildDetailRow('Preferred Food', highestPrediction.preferredFood),
-                        _buildDetailRow('Feeding Frequency', highestPrediction.feedingFrequency),
+                        // Diet recommendation and care details via OpenAI
+                        FutureBuilder<Map<String, dynamic>>(
+                          future: OpenAIService.generateCareRecommendations(
+                            highestPrediction.commonName,
+                            highestPrediction.scientificName,
+                          ),
+                          builder: (context, snapshot) {
+                            // Fallback to baseline info from prediction while loading or on error
+                            final fallbackData = {
+                              'diet_type': highestPrediction.diet,
+                              'preferred_foods': highestPrediction.preferredFood,
+                              'feeding_frequency': highestPrediction.feedingFrequency,
+                              'portion_size': 'N/A',
+                              'fasting_schedule': 'N/A',
+                              'overfeeding_risks': 'N/A',
+                              'behavioral_notes': 'N/A',
+                              'tankmate_feeding_conflict': 'N/A',
+                              'oxygen_needs': 'N/A',
+                              'filtration_needs': 'N/A',
+                            };
+
+                            if (snapshot.connectionState == ConnectionState.waiting) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: const [
+                                  SizedBox(height: 8),
+                                  Center(child: CircularProgressIndicator(color: Color(0xFF00ACC1))),
+                                  SizedBox(height: 12),
+                                  Text(
+                                    'Generating care recommendations...',
+                                    style: TextStyle(color: Colors.black54),
+                                  ),
+                                ],
+                              );
+                            }
+
+                            Map<String, dynamic> careData = fallbackData;
+                            bool hasError = false;
+                            if (snapshot.hasData && snapshot.data != null) {
+                              final data = snapshot.data!;
+                              if (data['error'] == null) {
+                                careData = {
+                                  ...fallbackData,
+                                  ...data,
+                                };
+                              } else {
+                                hasError = true;
+                              }
+                            } else if (snapshot.hasError) {
+                              hasError = true;
+                            }
+
+                            final fields = [
+                              {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
+                              {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
+                              {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
+                              {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
+                              {'label': 'Fasting Schedule', 'key': 'fasting_schedule', 'icon': Icons.calendar_today},
+                              {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
+                              {'label': 'Behavioral Notes', 'key': 'behavioral_notes', 'icon': Icons.psychology},
+                              {'label': 'Tankmate Feeding Conflict', 'key': 'tankmate_feeding_conflict', 'icon': Icons.warning},
+                              {'label': 'Oxygen Needs', 'key': 'oxygen_needs', 'icon': Icons.air},
+                              {'label': 'Filtration Needs', 'key': 'filtration_needs', 'icon': Icons.water_damage},
+                            ];
+
+                            final List<List<Map<String, dynamic>>> fieldGroups = [
+                              fields.sublist(0, 2), // Diet basics
+                              fields.sublist(2, 5), // Feeding logistics
+                              fields.sublist(5, 8), // Risks and behavior
+                              fields.sublist(8, 10), // System needs
+                            ];
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (hasError)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8.0),
+                                    child: Text(
+                                      'Using baseline info. AI recommendations unavailable.',
+                                      style: TextStyle(color: Colors.red[600], fontSize: 13),
+                                    ),
+                                  ),
+                                ...fieldGroups
+                                    .map((group) => _RecommendationExpansionGroup(fields: group, data: careData))
+                                    .toList(),
+                              ],
+                            );
+                          },
+                        ),
                         const SizedBox(height: 40),
                         
                         Row(
@@ -892,24 +1113,29 @@ class _SyncScreenState extends State<SyncScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF006064),
-            ),
-          ),
-          const Spacer(),
-          SizedBox(
-            width: MediaQuery.of(context).size.width * 0.4,
+          Expanded(
             child: Text(
-              value,
+              label,
               style: const TextStyle(
                 fontSize: 18,
-                color: Colors.black87,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF006064),
               ),
-              textAlign: TextAlign.left,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 18,
+                  color: Colors.black87,
+                ),
+                textAlign: TextAlign.right,
+                softWrap: true,
+              ),
             ),
           ),
         ],
@@ -2170,22 +2396,61 @@ class _SyncScreenState extends State<SyncScreen> {
   Future<void> _pickImageForIdentification(bool isFirstFish) async {
     final ImagePicker picker = ImagePicker();
     try {
-      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85, // Slightly reduced quality for better reliability
+        maxWidth: 1200,  // Reasonable max dimensions to avoid huge files
+        maxHeight: 1200,
+      );
+      
       if (image != null) {
-        final result = await _getPredictions(image, isFirstFish);
-        if (!result && mounted) {
+        // Verify the image exists and is accessible
+        try {
+          if (!kIsWeb) {
+            final file = io.File(image.path);
+            if (!await file.exists()) {
+              throw Exception('Selected image file does not exist');
+            }
+          }
+          final result = await _getPredictions(image, isFirstFish);
+          if (!result && mounted) {
+            showCustomNotification(
+              context,
+              'No fish detected in the image. Please try again with a clearer image.',
+              isError: true,
+            );
+          }
+        } catch (fileError) {
+          print('File access error: $fileError');
           showCustomNotification(
             context,
-            'No fish detected in the image. Please try again with a clearer image.',
+            'Cannot access the selected image. Please try again or select a different image.',
             isError: true,
           );
         }
+      }
+    } on PlatformException catch (e) {
+      print('Platform-specific image pick error: $e');
+      
+      // Show specific error messages based on error code
+      if (e.code == 'no_valid_image_uri' || e.code == 'photo_access_denied') {
+        showCustomNotification(
+          context,
+          'Cannot access the image. Please check app permissions in settings and try again.',
+          isError: true,
+        );
+      } else {
+        showCustomNotification(
+          context,
+          'Failed to pick image: ${e.message}',
+          isError: true,
+        );
       }
     } catch (e) {
       print('Gallery image error: $e');
       showCustomNotification(
         context,
-        'Error processing image: $e',
+        'Failed to select image. Please try again.',
         isError: true,
       );
     }
