@@ -3,6 +3,7 @@ import 'package:aquasync/screens/auth_screen.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:aquasync/config/api_config.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class SubscriptionPage extends StatelessWidget {
@@ -58,29 +59,47 @@ class SubscriptionPage extends StatelessWidget {
 }
 
 class SubscriptionService {
-  static const String backendUrl = 'http://aquasync.onrender.com';
+  // Use the centralized API config so we can switch between Render and local easily
+  static String get backendUrl => ApiConfig.baseUrl;
 
   static Future<Map<String, dynamic>> createPaymentLink({
     required String userId,
     required String tierPlan,
   }) async {
     try {
-      final uri = Uri.parse('$backendUrl/create-payment-link');
-      final response = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
+      final response = await ApiConfig.makeRequestWithFailover(
+        endpoint: '/create-payment-link',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
         body: json.encode({
           'user_id': userId,
           'tier_plan': tierPlan,
         }),
       );
 
-      if (response.statusCode == 200) {
+      if (response == null) {
+        throw Exception('Unable to reach server. Please check your connection and try again.');
+      }
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         final responseData = json.decode(response.body);
-        return responseData;
+        return responseData is Map<String, dynamic>
+            ? responseData
+            : {'result': responseData};
       } else {
-        final errorBody = json.decode(response.body);
-        throw Exception(errorBody['detail'] ?? 'Failed to create payment link');
+        // Try parse error JSON, else show status text
+        try {
+          final errorBody = json.decode(response.body);
+          final detail = (errorBody is Map && errorBody['detail'] != null)
+              ? errorBody['detail']
+              : response.body;
+          throw Exception('Failed to create payment link: $detail');
+        } catch (_) {
+          throw Exception('Failed to create payment link (HTTP ${response.statusCode}).');
+        }
       }
     } catch (e) {
       if (e is FormatException) {

@@ -22,6 +22,133 @@ import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/subscription_page.dart';
+import 'package:lottie/lottie.dart';
+
+// Widget for displaying grouped recommendation fields in an ExpansionTile
+class _RecommendationExpansionGroup extends StatefulWidget {
+  final List<Map<String, dynamic>> fields;
+  final Map<String, dynamic> data;
+
+  const _RecommendationExpansionGroup({
+    required this.fields,
+    required this.data,
+  });
+
+  @override
+  State<_RecommendationExpansionGroup> createState() => _RecommendationExpansionGroupState();
+}
+
+class _RecommendationExpansionGroupState extends State<_RecommendationExpansionGroup> {
+  @override
+  Widget build(BuildContext context) {
+    final firstField = widget.fields.first;
+    final remainingCount = widget.fields.length - 1;
+    return ExpansionTile(
+      initiallyExpanded: false,
+      title: Row(
+        children: [
+          Icon(firstField['icon'] as IconData, size: 22, color: Color(0xFF006064)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              firstField['label'],
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF006064),
+                overflow: TextOverflow.ellipsis,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (remainingCount > 0)
+            Flexible(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8.0),
+                child: Text(
+                  '+$remainingCount more',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      children: widget.fields.map((field) {
+        final value = widget.data[field['key']] ?? 'N/A';
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(field['icon'] as IconData, color: Color(0xFF006064), size: 22),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          field['label'],
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16, color: Color(0xFF006064)),
+                        ),
+                        const SizedBox(height: 4),
+                        value is List
+                            ? LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final maxChipWidth = constraints.maxWidth * 0.7;
+                                  return Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: value.map<Widget>((v) {
+                                      final text = v.toString();
+                                      return ConstrainedBox(
+                                        constraints: BoxConstraints(maxWidth: maxChipWidth),
+                                        child: Chip(
+                                          label: Text(
+                                            text,
+                                            overflow: TextOverflow.ellipsis,
+                                            softWrap: false,
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  );
+                                },
+                              )
+                            : Text(
+                                value.toString(),
+                                style: const TextStyle(fontSize: 15),
+                                softWrap: true,
+                                maxLines: 6,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+      onExpansionChanged: (expanded) {
+        if (mounted) {
+          setState(() {});
+        }
+      },
+    );
+  }
+}
 
 class CaptureScreen extends StatefulWidget {
   const CaptureScreen({super.key});
@@ -37,9 +164,34 @@ class CaptureScreenState extends State<CaptureScreen> {
   bool _isLoading = false;
   bool _isCameraAvailable = false;
 
+  // Retry control for auto-capture on low confidence / no fish
+  int _retryCount = 0;
+  static const int _maxRetries = 2;
+
   // Plan-based state
   String _userPlan = 'free';
   int _savedCapturesCount = 0;
+
+  // Cache for AI-generated results to avoid re-calling APIs
+  static final Map<String, String> _descriptionCache = {};
+  static final Map<String, Map<String, dynamic>> _careRecommendationsCache = {};
+  static final Map<String, String> _imagePathCache = {};
+
+  // Static methods to access cached data from other screens
+  static String? getCachedDescription(String commonName, String scientificName) {
+    final cacheKey = '$commonName-$scientificName';
+    return _descriptionCache[cacheKey];
+  }
+
+  static Map<String, dynamic>? getCachedCareRecommendations(String commonName, String scientificName) {
+    final cacheKey = '$commonName-$scientificName';
+    return _careRecommendationsCache[cacheKey];
+  }
+
+  static String? getCachedImagePath(String commonName, String scientificName) {
+    final cacheKey = '$commonName-$scientificName';
+    return _imagePathCache[cacheKey];
+  }
 
   String get apiUrl => ApiConfig.predictEndpoint;
 
@@ -141,6 +293,27 @@ class CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
+  // Show snap tips dialog for no fish or low confidence
+  void _showSnapTipsDialog(bool fromCamera, String reason) {
+    showDialog(
+      context: context,
+      useRootNavigator: true,
+      builder: (context) => SnapTipsDialog(message: reason),
+    ).then((_) {
+      // After dialog closes, offer retry if from camera and retries available
+      if (fromCamera && _retryCount < _maxRetries) {
+        _retryCount++;
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _captureImage(isRetry: true);
+            });
+          }
+        });
+      }
+    });
+  }
+
   Future<void> _initializeCamera() async {
     try {
       final cameras = await availableCameras();
@@ -207,7 +380,7 @@ class CaptureScreenState extends State<CaptureScreen> {
     return s;
   }
 
-  Future<void> _analyzeFishImage(XFile imageFile, String savedImagePath) async {
+  Future<void> _analyzeFishImage(XFile imageFile, String savedImagePath, {required bool fromCamera}) async {
     setState(() {
       _isLoading = true;
     });
@@ -218,6 +391,7 @@ class CaptureScreenState extends State<CaptureScreen> {
         showDialog(
           context: context,
           barrierDismissible: false,
+          useRootNavigator: true,
           builder: (context) => Dialog(
             backgroundColor: Colors.transparent,
             elevation: 0,
@@ -316,189 +490,183 @@ class CaptureScreenState extends State<CaptureScreen> {
       // Add a minimum delay of 3 seconds for the scanning animation
       await Future.delayed(const Duration(seconds: 3));
 
-      final uri = Uri.parse(ApiConfig.predictEndpoint);
+      // Try all configured servers with failover for the multipart request
+      http.Response? lastResponse;
+      Exception? lastError;
+      for (int attempt = 0; attempt < ApiConfig.serverUrls.length; attempt++) {
+        final uri = Uri.parse(ApiConfig.predictEndpoint);
+        print('Attempt ${attempt + 1} to $uri');
 
-      
-      var request = http.MultipartRequest('POST', uri);
-      
-      // Add the image file to the request
-      if (kIsWeb) {
-        final byteData = await imageFile.readAsBytes();
-        request.files.add(http.MultipartFile.fromBytes(
-          'file',
-          byteData,
-          filename: 'image.jpg',
-        ));
-      } else {
-        request.files.add(await http.MultipartFile.fromPath(
-          'file',
-          imageFile.path,
-          filename: 'image.jpg',
-        ));
+        final client = http.Client();
+        try {
+          final request = http.MultipartRequest('POST', uri);
+          request.headers['Accept'] = 'application/json';
+          if (!kIsWeb) {
+            request.files.add(await http.MultipartFile.fromPath(
+              'file', imageFile.path,
+              filename: path.basename(imageFile.path),
+            ));
+          } else {
+            // Web platform: adjust if web capture uses a blob/file picker
+            request.files.add(await http.MultipartFile.fromPath(
+              'file', imageFile.path,
+              filename: path.basename(imageFile.path),
+            ));
+          }
+
+          print('Sending request to ${uri.toString()}...');
+          final streamedResponse = await client.send(request).timeout(ApiConfig.timeout);
+          print('Response status code: ${streamedResponse.statusCode}');
+          final response = await http.Response.fromStream(streamedResponse);
+          print('Response body: ${response.body}');
+
+          // Success
+          if (response.statusCode == 200) {
+            var decodedResponse = json.decode(response.body);
+            print('Decoded response: $decodedResponse');
+
+            final numCc = (decodedResponse['classification_confidence'] ?? 0) as num;
+            final double confidence = numCc.toDouble();
+            final bool hasFish = decodedResponse['has_fish'] == null ? true : (decodedResponse['has_fish'] == true);
+
+            // Show dialog for no fish or low confidence
+            if ((!hasFish || confidence < 0.5)) {
+              if (mounted) {
+                _safePop(); // Close scanning dialog first
+                await Future.delayed(const Duration(milliseconds: 200));
+                if (mounted) {
+                  _showSnapTipsDialog(fromCamera, !hasFish ? 'No fish detected' : 'Low confidence: ${(confidence * 100).toStringAsFixed(1)}%');
+                }
+              }
+              return; // Stop further processing for this attempt
+            }
+
+            FishPrediction prediction = FishPrediction.fromJson(decodedResponse)
+                .copyWith(
+                  imagePath: savedImagePath,
+                  probability: '${((decodedResponse['classification_confidence'] ?? 0) * 100).toStringAsFixed(2)}%',
+                  minimumTankSize: decodedResponse['minimum_tank_size_l'] != null
+                      ? '${decodedResponse['minimum_tank_size_l']} L'
+                      : (decodedResponse['minimum_tank_size']?.toString() ?? ''),
+                );
+
+            print('Created prediction object: ${prediction.toJson()}');
+
+            // Reset retry count on success
+            _retryCount = 0;
+
+            if (mounted) {
+              _safePop();
+              // Small delay to ensure scanning dialog closes before showing description dialog
+              await Future.delayed(const Duration(milliseconds: 200));
+              if (mounted) {
+                _loadDescriptionAndShowResults(imageFile, prediction, prediction.commonName, prediction.scientificName);
+              }
+            }
+            return; // Done
+          }
+
+          // Handle 404 special case (fish detected but not in DB)
+          if (response.statusCode == 404) {
+            var decodedResponse = json.decode(response.body);
+            if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == true &&
+                decodedResponse.containsKey('predicted_name')) {
+              if (mounted) {
+                _safePop();
+                showCustomNotification(
+                  context,
+                  'Fish detected but not found in our database: ${decodedResponse['predicted_name']}.',
+                  isError: true,
+                );
+              }
+            } else if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == false) {
+              if (mounted) {
+                _safePop(); // Close scanning dialog first
+                await Future.delayed(const Duration(milliseconds: 200));
+                if (mounted) {
+                  String message = 'No fish detected';
+                  if (decodedResponse.containsKey('detail')) {
+                    message = decodedResponse['detail'];
+                  }
+                  _showSnapTipsDialog(fromCamera, message);
+                }
+              }
+            } else {
+              throw Exception('API returned error: ${decodedResponse['detail']}');
+            }
+          } else if (response.statusCode == 400) {
+            // Handle 400 status code with has_fish: false
+            try {
+              var decodedResponse = json.decode(response.body);
+              if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == false) {
+                if (mounted) {
+                  _safePop(); // Close scanning dialog first
+                  await Future.delayed(const Duration(milliseconds: 200));
+                  if (mounted) {
+                    String message = 'No fish detected';
+                    if (decodedResponse.containsKey('detail')) {
+                      message = decodedResponse['detail'];
+                    }
+                    _showSnapTipsDialog(fromCamera, message);
+                  }
+                }
+                return; // Stop processing for this attempt
+              }
+            } catch (parseError) {
+              // If we can't parse the response, fall through to general error
+            }
+            throw Exception('Failed to get predictions. Status code: ${response.statusCode}, Body: ${response.body}');
+          } else if (response.statusCode != 200) {
+            // Non-404 terminal HTTP error
+            throw Exception('Failed to get predictions. Status code: ${response.statusCode}, Body: ${response.body}');
+          }
+        } catch (e) {
+          print('Request error: $e');
+          lastError = Exception(e.toString());
+          if (!ApiConfig.tryNextServer()) {
+            break;
+          }
+        } finally {
+          client.close();
+        }
       }
 
-      print('Sending request...');
-      var streamedResponse = await request.send();
-      print('Response status code: ${streamedResponse.statusCode}');
-      
-      var response = await http.Response.fromStream(streamedResponse);
-      print('Response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        var decodedResponse = json.decode(response.body);
-        print('Decoded response: $decodedResponse');
-        
-        // Check if the confidence is low (less than 60%)
-        final confidenceLevel = decodedResponse['classification_confidence'] ?? 0;
-        final bool isLowConfidence = confidenceLevel < 0.60;
-        
-        if (isLowConfidence && !kIsWeb) {
-          print('Low confidence detection (${(confidenceLevel * 100).toStringAsFixed(2)}%), trying OpenAI Vision API');
-          
-          // Show a different loading dialog for AI analysis
-          if (mounted) {
-            _safePop(); // Close the previous loading dialog if still present
-            showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (context) => Dialog(
-                backgroundColor: Colors.transparent,
-                elevation: 0,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(color: Colors.teal),
-                    const SizedBox(height: 20),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        "Using AI for detailed analysis...",
-                        style: TextStyle(color: Colors.teal),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-          
-          // Use OpenAI Vision API for better identification
-          final aiResult = await OpenAIService.analyzeUnidentifiedFish(File(imageFile.path));
-          
-          if (mounted) {
-            _safePop(); // Close the AI loading dialog if still present
-          }
-          
-          // Create an AI-assisted prediction
-          FishPrediction aiPrediction = FishPrediction(
-            commonName: aiResult['common_name'] ?? 'Unidentified Fish',
-            scientificName: aiResult['scientific_name'] ?? 'Unknown',
-            waterType: aiResult['water_type'] ?? 'Unknown',
-            probability: '${aiResult['confidence_level'] ?? 'Low'} (AI-assisted)',
-            imagePath: savedImagePath,
-            maxSize: 'Unknown (AI estimate)',
-            temperament: 'Unknown (AI estimate)',
-            careLevel: 'Unknown (AI estimate)',
-            lifespan: 'Unknown (AI estimate)',
-            diet: 'Unknown (AI estimate)',
-            preferredFood: 'Unknown (AI estimate)',
-            feedingFrequency: 'Unknown (AI estimate)',
-            description: aiResult['care_notes'] ?? 'No AI-generated description available.',
-            temperatureRange: _cleanTempRange(aiResult['temperature_range'] ?? 'Unknown (AI estimate)'),
-            phRange: aiResult['pH_range'] ?? 'Unknown (AI estimate)',
-            socialBehavior: aiResult['social_behavior'] ?? 'Unknown (AI estimate)',
-            minimumTankSize: aiResult['tank_size'] ?? 'Unknown (AI estimate)'
-          );
-          
-          // Add distinctive features to the description
-          if (aiResult.containsKey('distinctive_features') && 
-              aiResult['distinctive_features'] != null &&
-              aiResult['distinctive_features'].toString().isNotEmpty) {
-            aiPrediction = aiPrediction.copyWith(
-              description: 'Distinctive features: ${aiResult['distinctive_features']}\n\n${aiPrediction.description}'
-            );
-          }
-          
-          if (mounted) {
-            _showAiAssistedResults(imageFile, aiPrediction);
-          }
-          
-        } else {
-          // Proceed with regular prediction
-          // Use model's robust parser to handle all key variants and normalization
-          FishPrediction prediction = FishPrediction.fromJson(decodedResponse)
-              .copyWith(
-                // Ensure we set runtime fields for UI
-                imagePath: savedImagePath,
-                probability: '${((decodedResponse['classification_confidence'] ?? 0) * 100).toStringAsFixed(2)}%',
-                // Normalize minimum tank size if provided in liters
-                minimumTankSize: decodedResponse['minimum_tank_size_l'] != null
-                    ? '${decodedResponse['minimum_tank_size_l']} L'
-                    : (decodedResponse['minimum_tank_size']?.toString() ?? ''),
-              );
-
-          print('Created prediction object: ${prediction.toJson()}');
-
-          if (mounted) {
-            _safePop(); // Close the scanning dialog if still present
-            _loadDescriptionAndShowResults(imageFile, prediction, prediction.commonName, prediction.scientificName);
-          }
-        }
-      } else if (response.statusCode == 404) {
-        // Check if this is a "fish not found in database" error
-        var decodedResponse = json.decode(response.body);
-        
+      // If we reached here, either we have a final non-200 response or an error
+      if (lastResponse != null && lastResponse.statusCode == 404) {
+        var decodedResponse = json.decode(lastResponse.body);
         if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == true &&
             decodedResponse.containsKey('predicted_name')) {
-          // Fish was detected but not found in the database — no AI fallback. Just inform the user.
           if (mounted) {
-            _safePop(); // Close the scanning dialog if still present
+            _safePop();
             showCustomNotification(
               context,
               'Fish detected but not found in our database: ${decodedResponse['predicted_name']}.',
               isError: true,
             );
           }
-        } else {
-          // Handle other 404 errors
+        } else if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == false) {
           if (mounted) {
-            _safePop();
-            showCustomNotification(
-              context,
-              'Error: ${decodedResponse['detail']}',
-              isError: true,
-            );
-          }
-        }
-      } else if (response.statusCode == 400) {
-        if (mounted) {
-          _safePop(); // Close the scanning dialog if still present
-        }
-        var decodedResponse = json.decode(response.body);
-        
-        // Check if the error is due to no fish being detected
-        if (decodedResponse.containsKey('has_fish') && decodedResponse['has_fish'] == false) {
-          if (mounted) {
-            showCustomNotification(
-              context,
-              'No fish detected in the image. Please try again with a clearer image.',
-              isError: true,
-            );
+            _safePop(); // Close scanning dialog first
+            await Future.delayed(const Duration(milliseconds: 200));
+            if (mounted) {
+              _showSnapTipsDialog(fromCamera, 'No fish detected');
+            }
           }
         } else {
           throw Exception('API returned error: ${decodedResponse['detail']}');
         }
+      } else if (lastResponse != null) {
+        // Non-404 terminal HTTP error
+        throw Exception('Failed to get predictions. Status code: ${lastResponse.statusCode}, Body: ${lastResponse.body}');
+      } else if (lastError != null) {
+        // Network or timeout error after exhausting servers
+        throw Exception('Failed to get predictions due to network error: ${lastError.toString()}');
       } else {
-        print('Error response: ${response.body}');
-        throw Exception('Failed to get predictions. Status code: ${response.statusCode}, Body: ${response.body}');
+        throw Exception('Failed to get predictions due to unknown error.');
       }
     } catch (e, stackTrace) {
       if (mounted) {
-        _safePop(); // Close the scanning dialog if still present
+        _safePop();
       }
       print('Error getting predictions: $e');
       print('Stack trace: $stackTrace');
@@ -533,6 +701,8 @@ class CaptureScreenState extends State<CaptureScreen> {
           showCustomNotification(context, 'Fish saved to collection');
           await Future.delayed(const Duration(milliseconds: 1500));
           if (mounted) {
+            // Ensure any transient dialogs are closed
+            _safePop();
             Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
               MaterialPageRoute(
                 builder: (context) => const HomePage(initialTabIndex: 3),
@@ -545,6 +715,15 @@ class CaptureScreenState extends State<CaptureScreen> {
       } else {
         if (mounted) {
           showCustomNotification(context, 'Fish already exists in collection');
+          await Future.delayed(const Duration(milliseconds: 1500));
+          if (mounted) {
+            Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (context) => const HomePage(initialTabIndex: 3),
+              ),
+              (route) => false,
+            );
+          }
         }
       }
     } catch (e) {
@@ -559,7 +738,7 @@ class CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
-  void _showPredictionResults(XFile imageFile, List<FishPrediction> predictions) {
+  void _showPredictionResults(XFile imageFile, List<FishPrediction> predictions, [Map<String, dynamic>? careData]) {
     final highestPrediction = predictions.reduce((curr, next) {
       double currProb = double.parse(curr.probability.replaceAll('%', ''));
       double nextProb = double.parse(next.probability.replaceAll('%', ''));
@@ -571,17 +750,9 @@ class CaptureScreenState extends State<CaptureScreen> {
         builder: (BuildContext context) {
           return WillPopScope(
             onWillPop: () async {
-              final nav = Navigator.of(context);
-              if (nav.canPop()) {
-                nav.pop();
-                return false;
-              } else {
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 0)),
-                );
-                return false;
-              }
+              // Simply pop back to the existing capture screen
+              Navigator.of(context).pop();
+              return false;
             },
             child: Scaffold(
               backgroundColor: Colors.white,
@@ -591,19 +762,11 @@ class CaptureScreenState extends State<CaptureScreen> {
                 leading: IconButton(
                   icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
                   onPressed: () {
-                    final nav = Navigator.of(context);
-                    if (nav.canPop()) {
-                      nav.pop();
-                    } else {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 0)),
-                      );
-                    }
+                    Navigator.of(context).pop();
                   },
                 ),
                 title: const Text(
-                  'Prediction Result',
+                  'Fish Identification Results',
                   style: TextStyle(
                     color: Color(0xFF006064),
                     fontSize: 24,
@@ -629,7 +792,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                             ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -696,9 +859,46 @@ class CaptureScreenState extends State<CaptureScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          _buildDetailRow('Diet Type', highestPrediction.diet),
-                          _buildDetailRow('Preferred Food', highestPrediction.preferredFood),
-                          _buildDetailRow('Feeding Frequency', highestPrediction.feedingFrequency),
+                          // Diet recommendation with expandable groups like fish_list_screen
+                          if (careData?.containsKey('error') == true)
+                            Text(careData!['error'], style: const TextStyle(color: Colors.red)),
+                          if (careData?.containsKey('error') != true) ...[
+                            Builder(
+                              builder: (context) {
+                                final dietData = careData ?? {
+                                  'diet_type': highestPrediction.diet,
+                                  'preferred_foods': highestPrediction.preferredFood,
+                                  'feeding_frequency': highestPrediction.feedingFrequency,
+                                  'portion_size': 'N/A',
+                                  'fasting_schedule': 'N/A',
+                                  'overfeeding_risks': 'N/A',
+                                  'behavioral_notes': 'N/A',
+                                  'tankmate_feeding_conflict': 'N/A',
+                                };
+                              final fields = [
+                                {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
+                                {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
+                                {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
+                                {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
+                                {'label': 'Fasting Schedule', 'key': 'fasting_schedule', 'icon': Icons.calendar_today},
+                                {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
+                                {'label': 'Behavioral Notes', 'key': 'behavioral_notes', 'icon': Icons.psychology},
+                                {'label': 'Tankmate Feeding Conflict', 'key': 'tankmate_feeding_conflict', 'icon': Icons.warning},
+                              ];
+                              final List<List<Map<String, dynamic>>> fieldGroups = [
+                                fields.sublist(0, 2),
+                                fields.sublist(2, 5),
+                                fields.sublist(5, 8),
+                              ];
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  ...fieldGroups.map((group) => _RecommendationExpansionGroup(fields: group, data: dietData)).toList(),
+                                ],
+                              );
+                            },
+                          ),
+                          ],
                           const SizedBox(height: 40),
                           Row(
                             children: [
@@ -793,32 +993,76 @@ class CaptureScreenState extends State<CaptureScreen> {
     );
   }
 
-  // Method to load the description and then show results
+  // Method to load the description and care recommendations, then show results
   Future<void> _loadDescriptionAndShowResults(XFile imageFile, FishPrediction prediction, String commonName, String scientificName) async {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Dialog(
+      useRootNavigator: true,
+      builder: (context) => Dialog(
         backgroundColor: Colors.transparent,
         elevation: 0,
         child: Center(
-          child: CircularProgressIndicator(
-            color: Colors.teal,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 150,
+                height: 150,
+                child: Lottie.asset(
+                  'lib/lottie/BowlAnimation.json',
+                  fit: BoxFit.contain,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Generating Prediction Result',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
     
     try {
-      print('Attempting to generate description for $commonName ($scientificName)');
+      print('Attempting to generate description and care recommendations for $commonName ($scientificName)');
       
-      // Generate description using OpenAI
-      final description = await OpenAIService.generateFishDescription(
-        commonName, 
-        scientificName
-      );
+      // Create cache key
+      final cacheKey = '$commonName-$scientificName';
       
-      // Update the prediction with the description
+      // Check cache first
+      String description;
+      Map<String, dynamic> careRecommendations;
+      
+      if (_descriptionCache.containsKey(cacheKey) && _careRecommendationsCache.containsKey(cacheKey)) {
+        print('Using cached results for $commonName');
+        description = _descriptionCache[cacheKey]!;
+        careRecommendations = _careRecommendationsCache[cacheKey]!;
+      } else {
+        print('Generating new results for $commonName');
+        // Generate both description and care recommendations in parallel
+        final results = await Future.wait([
+          OpenAIService.generateFishDescription(commonName, scientificName),
+          OpenAIService.generateCareRecommendations(commonName, scientificName),
+        ]);
+        
+        description = results[0] as String;
+        careRecommendations = results[1] as Map<String, dynamic>;
+        
+        // Cache the results
+        _descriptionCache[cacheKey] = description;
+        _careRecommendationsCache[cacheKey] = careRecommendations;
+      }
+      
+      // Cache the image path for this fish
+      _imagePathCache[cacheKey] = imageFile.path;
+      
+      // Update the prediction with the description and care recommendations
       final updatedPrediction = FishPrediction(
         commonName: prediction.commonName,
         scientificName: prediction.scientificName,
@@ -841,14 +1085,14 @@ class CaptureScreenState extends State<CaptureScreen> {
       
       if (mounted) {
         _safePop(); // Close the loading dialog if still present
-        _showPredictionResults(imageFile, [updatedPrediction]);
+        _showPredictionResults(imageFile, [updatedPrediction], careRecommendations);
       }
     } catch (e) {
-      print('Error loading description: $e');
+      print('Error loading description and care recommendations: $e');
       if (mounted) {
         _safePop(); // Close the loading dialog if still present
-        // Still show results but with an error message
-        prediction = FishPrediction(
+        // Still show results but with error messages
+        final fallbackPrediction = FishPrediction(
           commonName: prediction.commonName,
           scientificName: prediction.scientificName,
           waterType: prediction.waterType,
@@ -862,8 +1106,13 @@ class CaptureScreenState extends State<CaptureScreen> {
           preferredFood: prediction.preferredFood,
           feedingFrequency: prediction.feedingFrequency,
           description: 'Failed to generate description. Try again later.',
+          temperatureRange: prediction.temperatureRange, 
+          phRange: prediction.phRange,
+          socialBehavior: prediction.socialBehavior,
+          minimumTankSize: prediction.minimumTankSize
         );
-        _showPredictionResults(imageFile, [prediction]);
+        final errorCareData = {'error': 'Failed to load diet/care recommendations.'};
+        _showPredictionResults(imageFile, [fallbackPrediction], errorCareData);
       }
     }
   }
@@ -888,15 +1137,14 @@ class CaptureScreenState extends State<CaptureScreen> {
                   ),
                 ),
                 const Spacer(),
-                SizedBox(
-                  width: MediaQuery.of(context).size.width * 0.4,
+                Expanded(
                   child: Text(
                     value,
                     style: const TextStyle(
                       fontSize: 18,
                       color: Colors.black87,
                     ),
-                    textAlign: TextAlign.left,
+                    textAlign: TextAlign.right,
                   ),
                 ),
               ],
@@ -922,15 +1170,14 @@ class CaptureScreenState extends State<CaptureScreen> {
             ),
           ),
           const Spacer(),
-          SizedBox(
-            width: MediaQuery.of(context).size.width * 0.4,
+          Expanded(
             child: Text(
               value,
               style: const TextStyle(
                 fontSize: 18,
                 color: Colors.black87,
               ),
-              textAlign: TextAlign.left,
+              textAlign: TextAlign.right,
             ),
           ),
         ],
@@ -938,7 +1185,7 @@ class CaptureScreenState extends State<CaptureScreen> {
     );
   }
 
-  Future<void> _captureImage() async {
+  Future<void> _captureImage({bool isRetry = false}) async {
     if (_controller == null || !_isCameraAvailable) {
       showCustomNotification(
         context,
@@ -951,7 +1198,10 @@ class CaptureScreenState extends State<CaptureScreen> {
     try {
       await _initializeControllerFuture;
       final image = await _controller!.takePicture();
-      await _analyzeFishImage(image, await _saveImageToStorage(image));
+      if (!isRetry) {
+        _retryCount = 0; // reset for a fresh capture
+      }
+      await _analyzeFishImage(image, await _saveImageToStorage(image), fromCamera: true);
     } catch (e) {
       print('Image capture error: $e');
       showCustomNotification(
@@ -980,7 +1230,7 @@ class CaptureScreenState extends State<CaptureScreen> {
               throw Exception('Selected image file does not exist');
             }
           }
-          await _analyzeFishImage(image, await _saveImageToStorage(image));
+          await _analyzeFishImage(image, await _saveImageToStorage(image), fromCamera: false);
         } catch (fileError) {
           print('File access error: $fileError');
           showCustomNotification(
@@ -1325,45 +1575,6 @@ class CaptureScreenState extends State<CaptureScreen> {
                               fontSize: 20,
                               fontStyle: FontStyle.italic,
                               color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          
-                          // AI Analysis notice
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.amber.shade200),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.info_outline, color: Colors.amber),
-                                    const SizedBox(width: 8),
-                                    const Text(
-                                      'AI-Assisted Identification',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                        color: Colors.black87,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'This identification was provided by AI and may not be as accurate as our standard database. The information provided is our best estimate.',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                              ],
                             ),
                           ),
                           const SizedBox(height: 20),

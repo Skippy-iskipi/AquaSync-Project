@@ -10,6 +10,8 @@ import 'dart:convert';
 import '../config/api_config.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_plan_provider.dart';
+import '../services/openai_service.dart';
+import 'capture.dart';
 
 class LogBookProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -537,5 +539,25 @@ class LogBookProvider with ChangeNotifier {
   // Get the count of compatibility checks made by the user
   int getCompatibilityChecksCount() {
     return _savedCompatibilityResults.length;
+  }
+
+  // Generate care recommendations for fish - uses cache first, then API
+  Future<Map<String, dynamic>> generateCareRecommendations(String commonName, String scientificName) async {
+    // First try to get from cache
+    final cachedRecommendations = CaptureScreenState.getCachedCareRecommendations(commonName, scientificName);
+    if (cachedRecommendations != null) {
+      print('Using cached care recommendations for $commonName');
+      return cachedRecommendations;
+    }
+
+    // If not in cache, call OpenAI API
+    print('Generating new care recommendations for $commonName');
+    try {
+      final recommendations = await OpenAIService.generateCareRecommendations(commonName, scientificName);
+      return recommendations;
+    } catch (e) {
+      print('Error generating care recommendations: $e');
+      return {'error': 'Failed to generate care recommendations'};
+    }
   }
 }

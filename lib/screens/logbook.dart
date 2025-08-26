@@ -20,6 +20,8 @@ import 'dart:convert';
 import '../config/api_config.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'dart:typed_data';
+import '../services/openai_service.dart';
+import 'capture.dart';
 
 
 
@@ -96,7 +98,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     // Otherwise, fetch via backend JSON and then render the direct URL
     return FutureBuilder<http.Response?>(
       future: ApiConfig.makeRequestWithFailover(
-        endpoint: '/fish-image/$encoded',
+        endpoint: '/fish-image/${encoded.replaceAll(' ', '')}',
         method: 'GET',
       ),
       builder: (context, snapshot) {
@@ -367,7 +369,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                         const SizedBox(height: 40),
                         
                         const Text(
-                          'Diet Information',
+                          'Diet Recommendation',
                           style: TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
@@ -375,9 +377,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                           ),
                         ),
                         const SizedBox(height: 20),
-                        _buildDetailRow('Diet Type', prediction.diet),
-                        _buildDetailRow('Preferred Food', prediction.preferredFood),
-                        _buildDetailRow('Feeding Frequency', prediction.feedingFrequency),
+                        // Diet recommendation with expandable groups like capture.dart
+                        _buildDietRecommendationSection(prediction),
                       ],
                     ),
                   ),
@@ -418,6 +419,176 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  Widget _buildDietRecommendationSection(FishPrediction prediction) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _getCareRecommendations(prediction.commonName, prediction.scientificName),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF006064)),
+            ),
+          );
+        }
+
+        final careData = snapshot.hasData && !snapshot.data!.containsKey('error') 
+            ? snapshot.data! 
+            : {
+                'diet_type': prediction.diet,
+                'preferred_foods': prediction.preferredFood,
+                'feeding_frequency': prediction.feedingFrequency,
+                'portion_size': 'N/A',
+                'fasting_schedule': 'N/A',
+                'overfeeding_risks': 'N/A',
+                'behavioral_notes': 'N/A',
+                'tankmate_feeding_conflict': 'N/A',
+              };
+
+        if (snapshot.hasError || (snapshot.hasData && snapshot.data!.containsKey('error'))) {
+          // Show error but still display basic diet info
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (snapshot.data!.containsKey('error'))
+                Text(snapshot.data!['error'], style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 10),
+              _buildDietRecommendationGroups(careData),
+            ],
+          );
+        }
+
+        return _buildDietRecommendationGroups(careData);
+      },
+    );
+  }
+
+  Widget _buildDietRecommendationGroups(Map<String, dynamic> dietData) {
+    final fields = [
+      {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
+      {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
+      {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
+      {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
+      {'label': 'Fasting Schedule', 'key': 'fasting_schedule', 'icon': Icons.calendar_today},
+      {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
+      {'label': 'Behavioral Notes', 'key': 'behavioral_notes', 'icon': Icons.psychology},
+      {'label': 'Tankmate Feeding Conflict', 'key': 'tankmate_feeding_conflict', 'icon': Icons.warning},
+    ];
+    
+    final List<List<Map<String, dynamic>>> fieldGroups = [
+      fields.sublist(0, 2),
+      fields.sublist(2, 5),
+      fields.sublist(5, 8),
+    ];
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...fieldGroups.map((group) => _buildRecommendationExpansionGroup(group, dietData)).toList(),
+      ],
+    );
+  }
+
+  Widget _buildRecommendationExpansionGroup(List<Map<String, dynamic>> fields, Map<String, dynamic> data) {
+    final firstField = fields.first;
+    final remainingCount = fields.length - 1;
+    
+    return ExpansionTile(
+      initiallyExpanded: false,
+      title: Row(
+        children: [
+          Icon(firstField['icon'] as IconData, size: 22, color: const Color(0xFF006064)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              firstField['label'],
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF006064),
+                overflow: TextOverflow.ellipsis,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (remainingCount > 0)
+            Flexible(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8.0),
+                child: Text(
+                  '+$remainingCount more',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      children: fields.map((field) {
+        final value = data[field['key']] ?? 'N/A';
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Card(
+            elevation: 1,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(field['icon'] as IconData, color: const Color(0xFF006064), size: 22),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          field['label'],
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF006064),
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        value is List
+                            ? Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: value.map<Widget>((v) => Chip(
+                                  label: Text(
+                                    v.toString(),
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  backgroundColor: const Color(0xFF006064).withOpacity(0.1),
+                                  labelStyle: const TextStyle(color: Color(0xFF006064)),
+                                )).toList(),
+                              )
+                            : Text(
+                                value.toString(),
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Future<Map<String, dynamic>> _getCareRecommendations(String commonName, String scientificName) async {
+    final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+    return await logBookProvider.generateCareRecommendations(commonName, scientificName);
   }
 
   void _showCalculationDetails(dynamic calculation) {
@@ -470,7 +641,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
         
         if (fishDetails != null) {
           // Add image URL to fish details
-          final encodedName = Uri.encodeComponent(fishName.trim().replaceAll(' ', '_'));
+          final encodedName = Uri.encodeComponent(fishName.trim().replaceAll(' ', ''));
           fishDetails['ImageURL'] = '${ApiConfig.baseUrl}/fish-image/$encodedName';
           
           // Ensure all required fields are present with default values if missing or empty
@@ -1599,7 +1770,7 @@ String _cleanNeedsDescription(String input) {
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const HomePage(initialTabIndex: 3),
+                    builder: (context) => const HomePage(initialTabIndex: 1),
                   ),
                 );
               },
@@ -1678,7 +1849,7 @@ String _cleanNeedsDescription(String input) {
                           borderRadius: BorderRadius.circular(8),
                           child: FutureBuilder<http.Response?>(
                             future: ApiConfig.makeRequestWithFailover(
-                              endpoint: '/fish-image/${Uri.encodeComponent(result.fish1Name)}',
+                              endpoint: '/fish-image/${Uri.encodeComponent(result.fish1Name.replaceAll(' ', ''))}',
                               method: 'GET',
                             ),
                             builder: (context, snapshot) {
@@ -1737,7 +1908,7 @@ String _cleanNeedsDescription(String input) {
                           borderRadius: BorderRadius.circular(8),
                           child: FutureBuilder<http.Response?>(
                             future: ApiConfig.makeRequestWithFailover(
-                              endpoint: '/fish-image/${Uri.encodeComponent(result.fish2Name)}',
+                              endpoint: '/fish-image/${Uri.encodeComponent(result.fish2Name.replaceAll(' ', ''))}',
                               method: 'GET',
                             ),
                             builder: (context, snapshot) {

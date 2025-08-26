@@ -134,7 +134,7 @@ class FishPrediction {
         ?? json['temperatureRange'];
 
     return FishPrediction(
-      id: json['id'],
+      id: json['id']?.toString(),
       commonName: json['common_name'] ?? json['commonName'] ?? '',
       scientificName: json['scientific_name'] ?? json['scientificName'] ?? '',
       waterType: json['water_type'] ?? json['waterType'] ?? '',

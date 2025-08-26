@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 class SnapTipsDialog extends StatefulWidget {
-  const SnapTipsDialog({super.key});
+  final String? message;
+  
+  const SnapTipsDialog({super.key, this.message});
 
   @override
   State<SnapTipsDialog> createState() => _SnapTipsDialogState();
@@ -68,6 +70,39 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        // Error message if provided
+                        if (widget.message != null) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.red.withOpacity(0.5)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.warning_amber_rounded,
+                                  color: Colors.red[300],
+                                  size: 24,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    widget.message!,
+                                    style: TextStyle(
+                                      color: Colors.red[100],
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
                         // Title only, no close icon
                         const Text(
                           'Photo Guidelines',

@@ -225,12 +225,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _OnboardingPageData(
       imageAsset: 'lib/icons/Identify_Fishes.png',
       headline: 'Identify fishes',
-      description: 'Unlimited Identification',
+      description: 'Accurate Fish Identification',
     ),
     _OnboardingPageData(
       imageAsset: 'lib/icons/Document_Fishes.png',
       headline: 'Document fishes',
-      description: 'Save Fish Compatibility',
+      description: 'Save Captured Fish, Calculation Results, and Compatibility Results',
     ),
     _OnboardingPageData(
       imageAsset: 'lib/icons/More_Recommendation.png',

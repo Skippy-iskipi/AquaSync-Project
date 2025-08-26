@@ -1815,7 +1815,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
             child: AbsorbPointer(
               absorbing: true,
               child: Container(
-                color: Colors.black.withOpacity(0.35),
+                color: Colors.transparent,
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,

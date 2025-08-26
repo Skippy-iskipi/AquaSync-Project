@@ -53,11 +53,12 @@ class FishSpecies {
   }
 
   factory FishSpecies.fromJson(Map<String, dynamic> json) {
-    // Prefer new key but support legacy variants and normalize
+    // Prefer new key but support legacy variants and normalize (same as fish_prediction.dart)
     final tempRaw = json['temperature_range']
         ?? json['temperature_range_c']
         ?? json['temperature_range_(°c)']
-        ?? json['temperature_range_(Â°c)'];
+        ?? json['temperature_range_(Â°c)']
+        ?? json['temperatureRange'];
     return FishSpecies(
       commonName: json['common_name'] ?? '',
       scientificName: json['scientific_name'] ?? '',

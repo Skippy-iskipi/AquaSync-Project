@@ -7,6 +7,7 @@ import '../models/water_calculation.dart';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import 'dart:async';
+import 'package:lottie/lottie.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../services/openai_service.dart';
 import '../widgets/expandable_reason.dart';
@@ -42,6 +43,7 @@ class _WaterCalculatorState extends State<WaterCalculator> {
   Map<String, dynamic>? _calculationResult;
   Map<String, String>? _careRecommendationsMap; // Per-fish recommendations
   bool _isGeneratingRecommendations = false;
+  bool _isCalculating = false;
 
   // Import the ExpandableReason widget
   bool _isReasonExpanded = false;
@@ -320,7 +322,10 @@ Future<void> _generateAllRecommendations() async {
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _isCalculating = true;
+    });
     try {
       // Check compatibility for total count >= 2 using expanded list by quantity
       final totalCount = _fishSelections.values.fold<int>(0, (sum, v) => sum + v);
@@ -414,6 +419,7 @@ Future<void> _generateAllRecommendations() async {
       final responseData = json.decode(waterResponse.body);
       setState(() {
         _calculationResult = responseData;
+        _isCalculating = false;
       });
 
       // After calculation, generate care recommendations for all fish
@@ -428,6 +434,7 @@ Future<void> _generateAllRecommendations() async {
       );
       setState(() {
         _calculationResult = null;
+        _isCalculating = false;
       });
     } finally {
       setState(() => _isLoading = false);
@@ -1009,7 +1016,54 @@ Future<void> _generateAllRecommendations() async {
       _calculationResult = null;
       _careRecommendationsMap = null;
       _isLoading = false;
+      _isCalculating = false;
     });
+  }
+
+  Widget _buildBowlLoadingAnimation() {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      color: Colors.white,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Lottie Animation
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: Lottie.asset(
+              'lib/lottie/BowlAnimation.json',
+              fit: BoxFit.contain,
+              repeat: true,
+            ),
+          ),
+          const SizedBox(height: 30),
+          const Text(
+            'Calculating Water Requirements...',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF006064),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Analyzing fish compatibility and tank requirements',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 30),
+          const LinearProgressIndicator(
+            backgroundColor: Color(0xFFE0F2F1),
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildIncompatibilityResults(List<Map<String, dynamic>> incompatiblePairs) {
@@ -1202,7 +1256,9 @@ Future<void> _generateAllRecommendations() async {
   Widget _buildContent() {
     return Stack(
       children: [
-        if (_isLoading)
+        if (_isCalculating)
+          _buildBowlLoadingAnimation()
+        else if (_isLoading)
           const Center(child: CircularProgressIndicator(color: Color(0xFF00BCD4)))
         else
           Container(

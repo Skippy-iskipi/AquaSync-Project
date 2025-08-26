@@ -1854,6 +1854,9 @@ async def create_payment_link(
                 "description": description,
                 "remarks": remarks,
                 "currency": "PHP",
+                "metadata": {
+                    "user_id": user_id
+                },
                 "checkout_options": {
                     "redirect_url": "https://aquasync.app/payment/return"
                 }

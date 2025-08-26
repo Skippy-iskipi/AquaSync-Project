@@ -71,7 +71,7 @@ class _FishImagesGridState extends State<FishImagesGrid> {
         final futures = <Future>[
           for (int i = 0; i < desiredCount; i++)
             ApiConfig.makeRequestWithFailover(
-              endpoint: '/fish-image/${Uri.encodeComponent(widget.fishName)}?i=$i&t=$nowTs',
+              endpoint: '/fish-image/${Uri.encodeComponent(widget.fishName.replaceAll(' ', ''))}?i=$i&t=$nowTs',
               method: 'GET',
             )
         ];
@@ -81,15 +81,27 @@ class _FishImagesGridState extends State<FishImagesGrid> {
         for (final resp in results) {
           if (resp != null && resp.statusCode >= 200 && resp.statusCode < 300) {
             try {
+              print('Fish Images Grid - Response Body: ${resp.body}');
               final data = json.decode(resp.body);
-              final url = (data['url'] ?? '').toString();
-              if (url.isNotEmpty && !seen.contains(url)) {
-                urls.add(url);
-                seen.add(url);
+              print('Fish Images Grid - Parsed Data: $data');
+              print('Fish Images Grid - Data Type: ${data.runtimeType}');
+              
+              if (data is Map && data['url'] != null) {
+                final url = data['url'].toString();
+                print('Fish Images Grid - Found URL: $url');
+                if (url.isNotEmpty && !seen.contains(url)) {
+                  urls.add(url);
+                  seen.add(url);
+                  print('Fish Images Grid - Added URL to list');
+                }
+              } else {
+                print('Fish Images Grid - Unexpected data structure: $data');
               }
-            } catch (_) {
-              // ignore parse errors per item
+            } catch (e) {
+              print('Error parsing image response: $e');
             }
+          } else {
+            print('Fish Images Grid - Bad response: ${resp?.statusCode}, Body: ${resp?.body}');
           }
         }
         return urls;

@@ -1018,6 +1018,7 @@ class _SyncScreenState extends State<SyncScreen> {
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF00ACC1),
+                foregroundColor: Colors.white,
               ),
               child: const Text('Upgrade to Pro'),
             ),
@@ -1456,7 +1457,7 @@ class _SyncScreenState extends State<SyncScreen> {
     // Resolve via backend: fetch JSON to get the real image URL
     final cacheKey = imagePathOrName;
     _imageResolveCache[cacheKey] ??= ApiConfig.makeRequestWithFailover(
-      endpoint: '/fish-image/${Uri.encodeComponent(imagePathOrName)}',
+      endpoint: '/fish-image/${Uri.encodeComponent(imagePathOrName.replaceAll(' ', ''))}',
       method: 'GET',
     );
     return FutureBuilder<http.Response?>(

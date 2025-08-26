@@ -4,10 +4,11 @@ void showCustomNotification(BuildContext context, String message, {bool isError 
   showDialog(
     context: context,
     barrierDismissible: true,
-    builder: (BuildContext context) {
-      // Auto-dismiss after 2 seconds
+    useRootNavigator: true,
+    builder: (BuildContext dialogContext) {
+      // Auto-dismiss after 2 seconds using safe maybePop on root navigator
       Future.delayed(const Duration(seconds: 2), () {
-        Navigator.of(context).pop();
+        Navigator.of(context, rootNavigator: true).maybePop();
       });
 
       return Dialog(

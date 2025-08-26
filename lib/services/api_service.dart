@@ -24,7 +24,7 @@ class ApiService {
     try {
       // Extract just the endpoint part from the URL
       String normalizedName = fishName.trim().replaceAll(' ', '_');
-      String encodedName = Uri.encodeComponent(normalizedName);
+      String encodedName = Uri.encodeComponent(normalizedName.replaceAll(' ', ''));
       
       final response = await ApiConfig.makeRequestWithFailover(
         endpoint: '/fish-image/$encodedName',

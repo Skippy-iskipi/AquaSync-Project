@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:async';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
+import 'package:lottie/lottie.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../services/openai_service.dart';
 import '../widgets/expandable_reason.dart';
@@ -1188,6 +1189,52 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
     );
   }
 
+  Widget _buildBowlLoadingAnimation() {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      color: Colors.white,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Lottie Animation
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: Lottie.asset(
+              'lib/lottie/BowlAnimation.json',
+              fit: BoxFit.contain,
+              repeat: true,
+            ),
+          ),
+          const SizedBox(height: 30),
+          const Text(
+            'Calculating Tank Dimensions...',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF006064),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Determining optimal tank size for your fish',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 30),
+          const LinearProgressIndicator(
+            backgroundColor: Color(0xFFE0F2F1),
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1197,7 +1244,7 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
         child: Stack(
           children: [
             if (_isCalculating)
-              const Center(child: CircularProgressIndicator(color: Color(0xFF00BCD4)))
+              _buildBowlLoadingAnimation()
             else
               Container(
                 color: Colors.white,

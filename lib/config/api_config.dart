@@ -7,9 +7,9 @@ class ApiConfig {
   static String get supabaseAnonKey => dotenv.env['SUPABASE_ANON_KEY'] ?? '';
   // List of available server URLs to try in order
   static const List<String> serverUrls = [
-    'https://aquasync.onrender.com',
-    'http://192.168.76.100:8000',
-    // Removed local IP addresses that are unreachable
+    //'https://aquasync.onrender.com',
+    'http://192.168.7.114:8000',
+    'http://172.20.10.2:8000',
   ];
   
   // Current active server URL index (starts with the first one)
@@ -55,6 +55,7 @@ class ApiConfig {
 
     // Return the full URL to database-powered endpoint
     print('Getting image for fish: $fishName -> $encodedName');
+    print('Full image URL: $baseUrl/fish-image/$encodedName');
     return '$baseUrl/fish-image/$encodedName';
   }
 

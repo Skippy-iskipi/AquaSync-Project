@@ -309,7 +309,12 @@ class _FishListScreenState extends State<FishListScreen> {
       ).timeout(ApiConfig.timeout);
       
       print('Response status code: ${response.statusCode}');
-      print('Response body: ${response.body}');
+      // Print first fish item to see available fields
+      final List<dynamic> data = json.decode(response.body);
+      if (data.isNotEmpty) {
+        print('First fish item fields: ${(data.first as Map<String, dynamic>).keys.toList()}');
+        print('First fish temperature_range: ${(data.first as Map<String, dynamic>)['temperature_range']}');
+      }
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
@@ -689,22 +694,10 @@ class _FishListScreenState extends State<FishListScreen> {
                           ),
                         ),
                         const SizedBox(height: 20),
-                        Builder(
-                          builder: (context) {
-                            final String tempRaw = (fish['temperature_range'] ??
-                                    fish['temperature_range_(Â°c)'] ??
-                                    fish['temperature_range_c'] ??
-                                    'Unknown')
-                                .toString()
-                                .trim();
-                            final String tempDisplay = (tempRaw.isEmpty || tempRaw == 'Unknown')
-                                ? 'Unknown'
-                                : (tempRaw.contains('°') || tempRaw.toLowerCase().contains('c')
-                                    ? tempRaw
-                                    : '$tempRaw °C');
-                            return _buildDetailRow('Temperature Range', tempDisplay);
-                          },
-                        ),
+                        _buildDetailRow('Temperature Range', 
+                          fish['temperature_range'] != null && fish['temperature_range'].toString().isNotEmpty 
+                            ? fish['temperature_range'].toString() 
+                            : 'Unknown'),
                         _buildDetailRow('pH Range', fish['ph_range'] ?? 'Unknown'),
                         _buildDetailRow('Minimum Tank Size',
                           fish['minimum_tank_size_(l)'] != null
@@ -956,10 +949,11 @@ String _sanitizeFishName(String name) {
 Future<String?> _fetchFishImageWithFallback(String fishName) async {
   final variations = [
     fishName, // Original name
-    _sanitizeFishName(fishName), // Sanitized name
-    fishName.toLowerCase(), // Lowercase
+    fishName.toLowerCase(), // All lowercase
+    fishName.toUpperCase(), // All uppercase
     fishName.replaceAll(' ', '_'), // Underscore instead of spaces
     fishName.replaceAll(' ', '-'), // Dash instead of spaces
+    fishName.replaceAll(' ', ''), // Remove spaces entirely (e.g., "Gold fish" -> "Goldfish")
   ];
 
   for (final variation in variations) {
@@ -968,6 +962,11 @@ Future<String?> _fetchFishImageWithFallback(String fishName) async {
         Uri.parse(ApiConfig.getFishImageUrl(variation)),
         headers: {'Connection': 'keep-alive'},
       ).timeout(const Duration(seconds: 10));
+      
+      print('Image fetch for $variation: Status ${response.statusCode}');
+      if (response.statusCode != 200) {
+        print('Error response body: ${response.body}');
+      }
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> jsonData = json.decode(response.body);
@@ -1468,22 +1467,35 @@ class _FishImagesGridState extends State<_FishImagesGrid> {
     for (var i = 0; i < maxBatches && urls.length < widget.maxImages; i++) {
       try {
         final response = await http.get(
-          Uri.parse('${ApiConfig.baseUrl}/fish-image/${Uri.encodeComponent(widget.fishName)}?batch=$i'),
+          Uri.parse('${ApiConfig.baseUrl}/fish-image/${Uri.encodeComponent(widget.fishName.replaceAll(' ', ''))}?batch=$i'),
           headers: {'Content-Type': 'application/json'},
         );
 
         if (response.statusCode == 200) {
+          print('Goldfish API Response Body: ${response.body}');
           final data = json.decode(response.body);
+          print('Goldfish Parsed Data: $data');
+          print('Goldfish Data Type: ${data.runtimeType}');
+          
           if (data is List) {
+            print('Processing list with ${data.length} items');
             for (var item in data) {
+              print('List item: $item');
               if (item is Map && item['url'] != null) {
                 urls.add(item['url'].toString());
+                print('Added URL: ${item['url']}');
                 if (urls.length >= widget.maxImages) break;
               }
             }
           } else if (data is Map && data['url'] != null) {
+            print('Processing single map item: $data');
             urls.add(data['url'].toString());
+            print('Added single URL: ${data['url']}');
+          } else {
+            print('Unexpected data structure for Goldfish: $data');
           }
+        } else {
+          print('Goldfish API Error: Status ${response.statusCode}, Body: ${response.body}');
         }
       } catch (e) {
         print('Error fetching image batch $i: $e');
