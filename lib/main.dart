@@ -107,15 +107,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         
         if (user != null && user.emailConfirmedAt != null) {
           print('Email confirmation detected'); // Debug log
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Email confirmed successfully! Welcome to AquaSync!'),
-                backgroundColor: Colors.green,
-                duration: Duration(seconds: 3),
-              ),
-            );
-          }
+          // Notification removed as requested
         }
       }
       
@@ -197,15 +189,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
         },
       );
     }
-    if (_currentUser != null) {
-      if (_currentUser!.emailConfirmedAt != null) {
-        return const HomePage();
-      } else {
-        return const EmailNotConfirmedScreen();
-      }
-    } else {
-      return const AuthScreen();
-    }
+    // After onboarding, go directly to HomePage regardless of auth status
+    // Authentication will be required only when trying to save or use premium features
+    return const HomePage();
   }
 }
 

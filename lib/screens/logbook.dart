@@ -6,7 +6,7 @@ import 'logbook_provider.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/fish_prediction.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+
 import 'package:intl/intl.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_calculation.dart';
@@ -20,8 +20,9 @@ import 'dart:convert';
 import '../config/api_config.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'dart:typed_data';
-import '../services/openai_service.dart';
-import 'capture.dart';
+
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+
 
 
 
@@ -55,126 +56,122 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 
-  // Resolve a fish image from a fish name (or API URL) and render with cache
+  // Resolve a fish image from a fish name using the same approach as fish_list_screen.dart
   Widget _buildResolvedFishImage(String fishName, {double height = 200}) {
-    final encoded = Uri.encodeComponent(fishName);
-
-    // If we have a cached direct URL, render immediately with CachedNetworkImage
-    if (_fishImageUrlCache.containsKey(fishName)) {
-      final directUrl = _fishImageUrlCache[fishName]!;
-      return CachedNetworkImage(
-        imageUrl: directUrl,
+    final name = fishName.trim();
+    if (name.isEmpty) {
+      return Container(
         height: height,
         width: double.infinity,
-        fit: BoxFit.cover,
-        placeholder: (context, url) => Container(
+        color: Colors.grey[200],
+        child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 40),
+      );
+    }
+
+    // Use the same caching approach as fish_list_screen.dart
+    final cachedUrl = _fishImageUrlCache[name];
+    if (cachedUrl != null && cachedUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          cachedUrl,
           height: height,
-          color: Colors.grey[200],
-          child: const Center(child: CircularProgressIndicator()),
-        ),
-        errorWidget: (context, url, error) => Container(
-          height: height,
-          color: Colors.grey[200],
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error, size: 40, color: Colors.grey),
-              const SizedBox(height: 8),
-              Text(
-                fishName,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
+          width: double.infinity,
+          fit: BoxFit.cover,
+          cacheWidth: (height * MediaQuery.of(context).devicePixelRatio).round(),
+          cacheHeight: (height * MediaQuery.of(context).devicePixelRatio).round(),
+          filterQuality: FilterQuality.low,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Container(
+              height: height,
+              color: Colors.grey[200],
+              child: const Center(child: CircularProgressIndicator()),
+            );
+          },
+          errorBuilder: (context, error, stackTrace) => Container(
+            height: height,
+            color: Colors.grey[200],
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.image_not_supported_outlined, size: 40, color: Colors.grey),
+                const SizedBox(height: 8),
+                Text(
+                  fishName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-                textAlign: TextAlign.center,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
     }
 
-    // Otherwise, fetch via backend JSON and then render the direct URL
-    return FutureBuilder<http.Response?>(
-      future: ApiConfig.makeRequestWithFailover(
-        endpoint: '/fish-image/${encoded.replaceAll(' ', '')}',
-        method: 'GET',
-      ),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+    // Use the same direct URL approach as fish_list_screen.dart
+    final String imageUrl = ApiConfig.getFishImageUrl(name);
+    
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.network(
+        imageUrl,
+        height: height,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        cacheWidth: (height * MediaQuery.of(context).devicePixelRatio).round(),
+        cacheHeight: (height * MediaQuery.of(context).devicePixelRatio).round(),
+        filterQuality: FilterQuality.low,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
           return Container(
             height: height,
-            width: double.infinity,
             color: Colors.grey[200],
             child: const Center(child: CircularProgressIndicator()),
           );
-        }
-        final resp = snapshot.data;
-        if (resp != null && resp.statusCode == 200) {
-          try {
-            final Map<String, dynamic> jsonData = json.decode(resp.body);
-            final String directUrl = (jsonData['url'] ?? '').toString();
-            if (directUrl.isNotEmpty) {
-              // Save to in-memory cache
-              _fishImageUrlCache[fishName] = directUrl;
-              return CachedNetworkImage(
-                imageUrl: directUrl,
-                height: height,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => Container(
-                  height: height,
-                  color: Colors.grey[200],
-                  child: const Center(child: CircularProgressIndicator()),
-                ),
-                errorWidget: (context, url, error) => Container(
-                  height: height,
-                  color: Colors.grey[200],
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.error, size: 40, color: Colors.grey),
-                      const SizedBox(height: 8),
-                      Text(
-                        fishName,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+        },
+        errorBuilder: (context, error, stackTrace) {
+          // Cache the URL even if it fails, to avoid repeated failed requests
+          _fishImageUrlCache[name] = imageUrl;
+          return Container(
+            height: height,
+            color: Colors.grey[200],
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.image_not_supported_outlined, size: 40, color: Colors.grey),
+                const SizedBox(height: 8),
+                Text(
+                  fishName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
                   ),
+                  textAlign: TextAlign.center,
                 ),
-              );
-            }
-          } catch (e) {
-            // fallthrough to error widget below
-          }
-        }
-        return Container(
-          height: height,
-          color: Colors.grey[200],
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error, size: 40, color: Colors.grey),
-              const SizedBox(height: 8),
-              Text(
-                fishName,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        );
-      },
+              ],
+            ),
+          );
+        },
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded) return child;
+          return AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: frame != null
+                ? child
+                : Container(
+                    height: height,
+                    color: Colors.grey[200],
+                    child: const Center(child: CircularProgressIndicator()),
+                  ),
+          );
+        },
+      ),
     );
   }
 
@@ -640,9 +637,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
         );
         
         if (fishDetails != null) {
-          // Add image URL to fish details
-          final encodedName = Uri.encodeComponent(fishName.trim().replaceAll(' ', ''));
-          fishDetails['ImageURL'] = '${ApiConfig.baseUrl}/fish-image/$encodedName';
+          // Add image URL to fish details using the same approach as fish_list_screen.dart
+          fishDetails['ImageURL'] = ApiConfig.getFishImageUrl(fishName);
           
           // Ensure all required fields are present with default values if missing or empty
           final fieldsToCheck = [
@@ -664,6 +660,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
           
           // Cache the fish details
           final jsonString = json.encode(fishDetails);
+          final encodedName = Uri.encodeComponent(fishName.trim().replaceAll(' ', ''));
           DefaultCacheManager().putFile(
             '${ApiConfig.baseUrl}/fish-details/$encodedName',
             Uint8List.fromList(utf8.encode(jsonString)),
@@ -781,64 +778,6 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 12),
-                          StatefulBuilder(
-                            builder: (context, setLocalState) {
-                              bool showOxygen = _showOxygenNeeds[index] ?? false;
-                              bool showFiltration = _showFiltrationNeeds[index] ?? false;
-
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text('Oxygen Needs', style: TextStyle(fontWeight: FontWeight.w500)),
-                                    trailing: Icon(showOxygen ? Icons.expand_less : Icons.expand_more),
-                                    onTap: () {
-                                      setLocalState(() {
-                                        showOxygen = !showOxygen;
-                                        _showOxygenNeeds[index] = showOxygen;
-                                      });
-                                    },
-                                  ),
-                                  if (showOxygen && oxygen != null && oxygen.isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(left: 12.0, bottom: 8),
-                                      child: Text(
-                                        _cleanNeedsDescription(oxygen).isNotEmpty
-                                            ? _cleanNeedsDescription(oxygen)
-                                            : 'No additional description.',
-                                        style: TextStyle(fontSize: 14, color: Colors.black87),
-                                      ),
-                                    ),
-
-                                  ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text('Filtration Needs', style: TextStyle(fontWeight: FontWeight.w500)),
-                                    trailing: Icon(showFiltration ? Icons.expand_less : Icons.expand_more),
-                                    onTap: () {
-                                      setLocalState(() {
-                                        showFiltration = !showFiltration;
-                                        _showFiltrationNeeds[index] = showFiltration;
-                                      });
-                                    },
-                                  ),
-                                  if (showFiltration && filtration != null && filtration.isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(left: 12.0, bottom: 8),
-                                      child: Text(
-                                        _cleanNeedsDescription(filtration).isNotEmpty
-                                            ? _cleanNeedsDescription(filtration)
-                                            : 'No additional description.',
-                                        style: TextStyle(fontSize: 14, color: Colors.black87),
-                                      ),
-                                    ),
-                                ],
-                              );
-                            },
-                          )
-
-
                         ],
                       ),
                     ),
@@ -847,75 +786,485 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               );
             },
           ),
+          const SizedBox(height: 20),
           // Tank Volume Card
-          SizedBox(
+          Container(
             width: double.infinity,
-            child: Card(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  const Color(0xFF006064),
+                  const Color(0xFF00ACC1),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.2),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Stack(
+              children: [
+                // Background wave pattern
+                Positioned(
+                  right: -20,
+                  bottom: -20,
+                  child: Icon(
+                    Icons.water,
+                    size: 100,
+                    color: Colors.white.withOpacity(0.1),
+                  ),
+                ),
+                // Content
+                Padding(
+                  padding: const EdgeInsets.all(24),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Tank Volume',
+                        'Minimum Tank Volume',
                       style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
+                          fontSize: 16,
+                          color: Colors.white70,
                       ),
                     ),
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                     Text(
-                      'Minimum Tank Volume: ${calculation.minimumTankVolume}',
+                        calculation.minimumTankVolume ?? 'Not specified',
                       style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
                       ),
                     ),
                   ],
                 ),
               ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           // Water Parameters Card
-          SizedBox(
+          Container(
             width: double.infinity,
-            child: Card(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F7FA),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.water_drop,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
                     const Text(
                       'Water Parameters',
                       style: TextStyle(
-                        fontSize: 18,
+                              fontSize: 20,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF006064),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Temperature Range: ${calculation.temperatureRange.replaceAll('Â', '')}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'pH Range: ${calculation.phRange}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
-                      ),
-                    ),
-                  ],
+                                             const SizedBox(height: 16),
+                                              if (calculation.waterParametersResponse != null && calculation.waterParametersResponse!.isNotEmpty) ...[
+                         // Display stored AI-generated water parameters in bullet points
+                         ...calculation.waterParametersResponse!.split('\n').where((line) => line.trim().isNotEmpty).map((line) {
+                           if (line.trim().startsWith('•')) {
+                             return Padding(
+                               padding: const EdgeInsets.only(bottom: 8),
+                               child: Row(
+                                 crossAxisAlignment: CrossAxisAlignment.start,
+                                 children: [
+                                   const Text(
+                                     '• ',
+                                     style: TextStyle(
+                                       color: Color(0xFF006064),
+                                       fontSize: 16,
+                                       fontWeight: FontWeight.bold,
+                                     ),
+                                   ),
+                                   Expanded(
+                                     child: Text(
+                                       line.trim().substring(1).trim(),
+                                       style: const TextStyle(
+                                         fontSize: 14,
+                                         color: Colors.black87,
+                                         height: 1.5,
+                                       ),
+                                     ),
+                                   ),
+                                 ],
+                               ),
+                             );
+                           } else {
+                             return Padding(
+                               padding: const EdgeInsets.only(bottom: 8),
+                               child: Text(
+                                 line.trim(),
+                                 style: const TextStyle(
+                                   fontSize: 14,
+                                   color: Colors.black87,
+                                   height: 1.5,
+                                 ),
+                               ),
+                             );
+                           }
+                         }).toList(),
+                       ] else ...[
+                         // Fallback to basic parameters if AI response is not available
+                         Text(
+                           'Temperature Range: ${calculation.temperatureRange.replaceAll('Â', '')}',
+                           style: const TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                         const SizedBox(height: 8),
+                         Text(
+                           'pH Range: ${calculation.phRange}',
+                           style: const TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                       ],
+                    ],
+                  ),
                 ),
-              ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Tankmate Recommendations Card
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F7FA),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.people,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Tankmate Recommendations',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                        ],
+                      ),
+                                             const SizedBox(height: 16),
+                       if (calculation.tankmateRecommendations != null && calculation.tankmateRecommendations!.isNotEmpty) ...[
+                         ...calculation.tankmateRecommendations!.map((recommendation) => Padding(
+                           padding: const EdgeInsets.only(bottom: 8),
+                           child: Text(
+                             '• $recommendation',
+                             style: const TextStyle(
+                               fontSize: 14,
+                               color: Colors.black87,
+                               height: 1.5,
+                             ),
+                           ),
+                         )).toList(),
+                       ] else ...[
+                         const Text(
+                           'Consider peaceful community fish like tetras, rasboras, or corydoras.',
+                           style: TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                       ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Tank & Environment Card
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F7FA),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.home,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Tank & Environment',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                        ],
+                      ),
+                                             const SizedBox(height: 16),
+                       if (calculation.tankAnalysisResponse != null && calculation.tankAnalysisResponse!.isNotEmpty) ...[
+                         Text(
+                           calculation.tankAnalysisResponse!,
+                           style: const TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                       ] else ...[
+                         const Text(
+                           'Optimal tank provides adequate space and surface area for gas exchange. Consider the fish species requirements for optimal health.',
+                           style: TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                       ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Filtration & Equipment Card
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F7FA),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.filter_alt,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Filtration & Equipment',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                        ],
+                      ),
+                                             const SizedBox(height: 16),
+                       if (calculation.filtrationResponse != null && calculation.filtrationResponse!.isNotEmpty) ...[
+                         Text(
+                           calculation.filtrationResponse!,
+                           style: const TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                       ] else ...[
+                         Text(
+                           'Use a filter rated for ${calculation.minimumTankVolume} or larger with 4-6x tank volume turnover per hour. Clean filter media monthly and monitor water quality weekly for optimal fish health.',
+                           style: const TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                       ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Diet & Care Tips Card
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE0F7FA),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.restaurant,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Diet & Care Tips',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                        ],
+                      ),
+                                             const SizedBox(height: 16),
+                       if (calculation.dietCareResponse != null && calculation.dietCareResponse!.isNotEmpty) ...[
+                         Text(
+                           calculation.dietCareResponse!,
+                           style: const TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                       ] else ...[
+                         const Text(
+                           'Feed 1-2 times daily, only what fish eat in 2-3 minutes. Use high-quality flakes or pellets as staple diet. Perform 25% water changes weekly and monitor fish behavior daily for signs of stress or illness.',
+                           style: TextStyle(
+                             fontSize: 14,
+                             color: Colors.black87,
+                             height: 1.5,
+                           ),
+                         ),
+                       ],
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -1062,7 +1411,148 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               ),
             ),
           ),
+          // AI-generated content cards
+          if (calculation.waterParametersResponse != null) ...[
+            const SizedBox(height: 16),
+            _buildAIContentCard(
+              'Water Parameters',
+              Icons.water_drop,
+              calculation.waterParametersResponse!,
+            ),
+          ],
+          if (calculation.tankAnalysisResponse != null) ...[
+            const SizedBox(height: 16),
+            _buildAIContentCard(
+              'Tank & Environment',
+              Icons.home,
+              calculation.tankAnalysisResponse!,
+            ),
+          ],
+          if (calculation.filtrationResponse != null) ...[
+            const SizedBox(height: 16),
+            _buildAIContentCard(
+              'Filtration & Equipment',
+              Icons.filter_alt,
+              calculation.filtrationResponse!,
+            ),
+          ],
+          if (calculation.dietCareResponse != null) ...[
+            const SizedBox(height: 16),
+            _buildAIContentCard(
+              'Diet & Care Tips',
+              Icons.restaurant,
+              calculation.dietCareResponse!,
+            ),
+          ],
+          if (calculation.tankmateRecommendations != null && calculation.tankmateRecommendations!.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _buildTankmateRecommendationsCard(calculation.tankmateRecommendations!),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildAIContentCard(String title, IconData icon, String content) {
+    return SizedBox(
+      width: double.infinity,
+      child: Card(
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE0F7FA),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      icon,
+                      color: const Color(0xFF006064),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF006064),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                content,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.black87,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTankmateRecommendationsCard(List<String> recommendations) {
+    return SizedBox(
+      width: double.infinity,
+      child: Card(
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE0F7FA),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      FontAwesomeIcons.users,
+                      color: Color(0xFF006064),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Tankmate Recommendations',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF006064),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: recommendations.map((recommendation) => Chip(
+                  label: Text(
+                    recommendation,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  backgroundColor: const Color(0xFFE0F7FA),
+                  labelStyle: const TextStyle(color: Color(0xFF006064)),
+                )).toList(),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1134,7 +1624,55 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               );
             },
           ),
-          // Diet Summary Card
+          // Feeding Schedule Card
+          if (calculation.feedingsPerDay != null || calculation.feedingTimes != null) ...[
+            SizedBox(
+              width: double.infinity,
+              child: Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Feeding Schedule',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (calculation.feedingsPerDay != null) ...[
+                        Text(
+                          'Feed ${calculation.feedingsPerDay} time${calculation.feedingsPerDay == 1 ? '' : 's'} per day',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF004D40),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (calculation.feedingTimes != null) ...[
+                        Text(
+                          calculation.feedingTimes!,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFF004D40),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          
+          // Feeding Guide & Portions Card
           SizedBox(
             width: double.infinity,
             child: Card(
@@ -1145,7 +1683,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Diet Summary',
+                      'Feeding Guide & Portions',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -1153,10 +1691,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    const SizedBox.shrink(),
-                    const SizedBox(height: 8),
                     const Text(
-                      'Tank total per feeding:',
+                      'Total Food Per Feeding:',
                       style: TextStyle(
                         fontSize: 16,
                         color: Color(0xFF006064),
@@ -1164,83 +1700,29 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(
-                      ' • ${calculation.totalPortionRange ?? '${calculation.totalPortion} pcs of ${_inferFoodLabelFromPortionDetails(calculation.portionDetails ?? const {})}'}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    if (calculation.portionDetails?.isNotEmpty == true) ...[
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Per Fish Portions:',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      ...(calculation.portionDetails ?? const {}).entries.map((e) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('• ', style: TextStyle(fontSize: 16, color: Colors.black87)),
-                                Expanded(
-                                  child: Text(
-                                    '${e.key}: ${e.value}',
-                                    style: const TextStyle(fontSize: 16, color: Colors.black87),
-                                  ),
+                    if (calculation.tankTotalsByFood != null) ...[
+                      ...calculation.tankTotalsByFood!.entries.map((e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('• ', style: TextStyle(color: Color(0xFF006064), fontSize: 16)),
+                            Expanded(
+                              child: Text(
+                                '${e.value['low']}-${e.value['high']} ${e.key}',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF004D40),
                                 ),
-                              ],
+                              ),
                             ),
-                          )),
-                    ],
-                    if (calculation.feedingNotes?.isNotEmpty == true) ...[
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Feeding Notes:',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      ...calculation.feedingNotes!
-                          .split(RegExp(r'\r?\n'))
-                          .where((line) => line.trim().isNotEmpty)
-                          .map((line) => Padding(
-                                padding: const EdgeInsets.only(bottom: 4),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text('• ', style: TextStyle(fontSize: 16, color: Colors.black87)),
-                                    Expanded(
-                                      child: Text(
-                                        line.replaceFirst(RegExp(r'^[-•]\s*'), '').trim(),
-                                        style: const TextStyle(fontSize: 16, color: Colors.black87),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )),
-                    ],
-                    if (calculation.feedingsPerDay != null) ...[
-                      const SizedBox(height: 8),
+                      )),
+                    ] else ...[
                       Text(
-                        'Feeding Frequency:',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          color: Color(0xFF006064),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        ' • ${calculation.feedingsPerDay} times per day',
+                        ' • ${calculation.totalPortionRange ?? '${calculation.totalPortion} pcs of fish food'}',
                         style: const TextStyle(
                           fontSize: 16,
                           color: Colors.black87,
@@ -1253,6 +1735,139 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
             ),
           ),
           const SizedBox(height: 16),
+          
+          // Per Fish Breakdown Card
+          if (calculation.portionDetails?.isNotEmpty == true) ...[
+            SizedBox(
+              width: double.infinity,
+              child: Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Per Fish Breakdown',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...(calculation.portionDetails ?? const {}).entries.map((e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.pets, color: Color(0xFF006064), size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${e.value['quantity'] ?? 1}x ${e.key}',
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF006064),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${e.value['per_fish'] ?? 'Standard portion'} each',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: Color(0xFF666666),
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          
+          // Recommended Food Types Card
+          if (calculation.aiFoodTypes?.isNotEmpty == true) ...[
+            SizedBox(
+              width: double.infinity,
+              child: Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Recommended Food Types',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        calculation.aiFoodTypes!.join(', '),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF004D40),
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          
+          // Feeding Tips Card
+          if (calculation.feedingTips?.isNotEmpty == true) ...[
+            SizedBox(
+              width: double.infinity,
+              child: Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Feeding Tips',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        calculation.feedingTips!,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF004D40),
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          const SizedBox(height: 16),
         ],
       ),
     );
@@ -1264,6 +1879,8 @@ String _cleanNeedsDescription(String input) {
   final cleaned = input.replaceAll(pattern, '').replaceAll(RegExp(r'\s+'), ' ').trim();
   return cleaned;
 }
+
+
 
 
   // Infer a concise food label (e.g., 'pellets', 'flakes') from portionDetails values
@@ -1847,119 +2464,57 @@ String _cleanNeedsDescription(String input) {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: FutureBuilder<http.Response?>(
-                            future: ApiConfig.makeRequestWithFailover(
-                              endpoint: '/fish-image/${Uri.encodeComponent(result.fish1Name.replaceAll(' ', ''))}',
-                              method: 'GET',
-                            ),
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState == ConnectionState.waiting) {
-                                return Container(
-                                  width: 60,
-                                  height: 60,
-                                  color: Colors.grey[200],
-                                  child: const Center(child: CircularProgressIndicator()),
-                                );
-                              }
-                              if (snapshot.hasError || snapshot.data == null || snapshot.data!.statusCode != 200) {
-                                return Container(
-                                  width: 60,
-                                  height: 60,
-                                  color: Colors.grey[200],
-                                  child: const Icon(Icons.error),
-                                );
-                              }
-                              try {
-                                final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                                final String? imageUrl = (jsonData['url'] ?? '').toString();
-                                if (imageUrl == null || imageUrl.isEmpty) {
-                                  return Container(
-                                    width: 60,
-                                    height: 60,
-                                    color: Colors.grey[200],
-                                    child: const Icon(Icons.error),
-                                  );
-                                }
-                                return Image.network(
-                                  imageUrl,
-                                  width: 60,
-                                  height: 60,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stack) => Container(
-                                    width: 60,
-                                    height: 60,
-                                    color: Colors.grey[200],
-                                    child: const Icon(Icons.image_not_supported),
-                                  ),
-                                );
-                              } catch (_) {
-                                return Container(
-                                  width: 60,
-                                  height: 60,
-                                  color: Colors.grey[200],
-                                  child: const Icon(Icons.error),
-                                );
-                              }
+                          child: Image.network(
+                            ApiConfig.getFishImageUrl(result.fish1Name),
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                            cacheWidth: (60 * MediaQuery.of(context).devicePixelRatio).round(),
+                            cacheHeight: (60 * MediaQuery.of(context).devicePixelRatio).round(),
+                            filterQuality: FilterQuality.low,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return Container(
+                                width: 60,
+                                height: 60,
+                                color: Colors.grey[200],
+                                child: const Center(child: CircularProgressIndicator()),
+                              );
                             },
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              width: 60,
+                              height: 60,
+                              color: Colors.grey[200],
+                              child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 24),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: FutureBuilder<http.Response?>(
-                            future: ApiConfig.makeRequestWithFailover(
-                              endpoint: '/fish-image/${Uri.encodeComponent(result.fish2Name.replaceAll(' ', ''))}',
-                              method: 'GET',
-                            ),
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState == ConnectionState.waiting) {
-                                return Container(
-                                  width: 60,
-                                  height: 60,
-                                  color: Colors.grey[200],
-                                  child: const Center(child: CircularProgressIndicator()),
-                                );
-                              }
-                              if (snapshot.hasError || snapshot.data == null || snapshot.data!.statusCode != 200) {
-                                return Container(
-                                  width: 60,
-                                  height: 60,
-                                  color: Colors.grey[200],
-                                  child: const Icon(Icons.error),
-                                );
-                              }
-                              try {
-                                final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-                                final String? imageUrl = (jsonData['url'] ?? '').toString();
-                                if (imageUrl == null || imageUrl.isEmpty) {
-                                  return Container(
-                                    width: 60,
-                                    height: 60,
-                                    color: Colors.grey[200],
-                                    child: const Icon(Icons.error),
-                                  );
-                                }
-                                return Image.network(
-                                  imageUrl,
-                                  width: 60,
-                                  height: 60,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stack) => Container(
-                                    width: 60,
-                                    height: 60,
-                                    color: Colors.grey[200],
-                                    child: const Icon(Icons.image_not_supported),
-                                  ),
-                                );
-                              } catch (_) {
-                                return Container(
-                                  width: 60,
-                                  height: 60,
-                                  color: Colors.grey[200],
-                                  child: const Icon(Icons.error),
-                                );
-                              }
+                          child: Image.network(
+                            ApiConfig.getFishImageUrl(result.fish2Name),
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                            cacheWidth: (60 * MediaQuery.of(context).devicePixelRatio).round(),
+                            cacheHeight: (60 * MediaQuery.of(context).devicePixelRatio).round(),
+                            filterQuality: FilterQuality.low,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return Container(
+                                width: 60,
+                                height: 60,
+                                color: Colors.grey[200],
+                                child: const Center(child: CircularProgressIndicator()),
+                              );
                             },
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              width: 60,
+                              height: 60,
+                              color: Colors.grey[200],
+                              child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 24),
+                            ),
                           ),
                         ),
                       ],

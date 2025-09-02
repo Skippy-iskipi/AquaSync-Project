@@ -67,7 +67,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
           if (mounted) {
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
+              MaterialPageRoute(builder: (context) => const AuthScreen(showBackButton: false)),
               (route) => false,
             );
           }
@@ -85,7 +85,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
           if (mounted) {
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
+              MaterialPageRoute(builder: (context) => const AuthScreen(showBackButton: false)),
               (route) => false,
             );
           }

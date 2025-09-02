@@ -279,7 +279,7 @@ class _TierCard extends StatelessWidget {
                           if (onPlanSelected != null) onPlanSelected!();
                           Navigator.pushReplacement(
                             context,
-                            MaterialPageRoute(builder: (context) => const AuthScreen()),
+                            MaterialPageRoute(builder: (context) => const AuthScreen(showBackButton: false)),
                           );
                           return;
                         }

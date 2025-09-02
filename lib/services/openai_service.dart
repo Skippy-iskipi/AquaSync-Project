@@ -72,7 +72,7 @@ Only return the JSON. Do not include explanations or any text outside the JSON o
         return {'error': 'Failed to parse JSON: $e'};
       }
     } else {
-      return {'error': 'Error: [${response.statusCode}]\n${response.body}'};
+      return {'error': 'Error:  [${response.statusCode}]\n${response.body}'};
     }
   }
 
@@ -111,36 +111,6 @@ Only return the JSON. Do not include explanations or any text outside the JSON o
     } catch (e) {
       // On any caching error, just fall back to base reasons to avoid user impact
       return baseReasons;
-    }
-  }
-  final String _baseUrl = 'https://api.openai.com/v1/chat/completions';
-  final String _apiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
-
-  Future<String> getChatResponse(String message) async {
-    if (_apiKey.isEmpty) {
-      return 'API key not found. Check your .env file.';
-    }
-
-    final response = await http.post(
-      Uri.parse(_baseUrl),
-      headers: {
-        'Authorization': 'Bearer $_apiKey',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'model': 'gpt-3.5-turbo',
-        'messages': [
-          {'role': 'user', 'content': message}
-        ]
-      }),
-    );
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final content = data['choices'][0]['message']['content'];
-      return content.trim();
-    } else {
-      return 'Error: ${response.statusCode}\n${response.body}';
     }
   }
 
@@ -347,8 +317,383 @@ For 'portion_size', always give a quantity (like number of pellets, wafers, or a
       return {'error': 'Error: ${response.statusCode}\n${response.body}'};
     }
   }
-}
 
+  /// Generate comprehensive diet recommendations for multiple fish species
+  static Future<Map<String, dynamic>> generateDietRecommendations(Map<String, int> fishSelections) async {
+    final apiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
+    if (apiKey.isEmpty) {
+      return await getFallbackDietRecommendations(fishSelections.keys.toList());
+    }
+
+    final fishList = fishSelections.keys.toList();
+    final prompt = '''
+You are an aquarium care expert. Generate CONCISE diet recommendations for an aquarium containing these fish: ${fishList.join(', ')}.
+
+REQUIREMENTS:
+- Provide group-based portion calculations (not per individual fish)
+- Consider fish age (adult/baby) - adults need smaller portions
+- Use simple measurements: "tiny pinch", "small pinch", "5-8 pellets"
+- If different fish eat same food, total their portions together
+- If different fish eat different foods, list separately
+
+Provide the response in this format:
+
+FOOD TYPES:
+- [Food type] (for: [fish names that eat this])
+
+FEEDING SCHEDULE:
+- Frequency: [X] times per day
+- Best times: [morning/evening or specific times]
+
+FEEDING NOTES:
+- [One concise note about feeding this group]
+
+Example: 5 guppies + 3 mollies = "tiny pinch of flakes" (for guppies) + "small pinch of flakes" (for mollies) = "small pinch of flakes" (total)
+
+Be concise and group-focused. Avoid overwhelming details.
+''';
+
+    final response = await http.post(
+      Uri.parse('https://api.openai.com/v1/chat/completions'),
+      headers: {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-4',
+        'messages': [
+          {'role': 'system', 'content': 'You are an aquarium care expert. Provide specific, practical diet recommendations for mixed fish tanks.'},
+          {'role': 'user', 'content': prompt}
+        ],
+        'temperature': 0.7,
+        'max_tokens': 800,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      try {
+        final data = jsonDecode(response.body);
+        final content = data['choices'][0]['message']['content'];
+        return await _parseDietResponse(content, fishList);
+      } catch (e) {
+        print('Error parsing diet response: $e');
+        return await getFallbackDietRecommendations(fishList);
+      }
+    } else {
+      return await getFallbackDietRecommendations(fishList);
+    }
+  }
+
+  /// Generate specific portion recommendations for individual fish species
+  static Future<Map<String, dynamic>> generatePortionRecommendation(String fishName, int quantity, List<String> availableFoodTypes) async {
+    final apiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
+    if (apiKey.isEmpty) {
+      return await _getFallbackPortionRecommendation(fishName, quantity, availableFoodTypes);
+    }
+
+    final prompt = '''
+Generate CONCISE portion recommendations for $quantity $fishName fish.
+
+Available food types: ${availableFoodTypes.join(', ')}
+
+REQUIREMENTS:
+- Consider fish age (adult/baby) - adults need smaller portions
+- For groups: calculate total portion for the group, not per individual
+- Use simple measurements: "tiny pinch", "small pinch", "5-8 pellets", etc.
+- Choose from available food types only
+
+Provide ONLY:
+1. PORTION SIZE: [Group total like "tiny pinch of flakes" or "5-8 micro pellets"]
+2. FOOD TYPE: [Choose from: ${availableFoodTypes.join(', ')}]
+
+Example: 5 guppies = "tiny pinch of flakes" or "5-8 micro pellets"
+Example: 3 adult mollies = "small pinch of flakes" or "3-4 pellets"
+
+Be concise and group-focused. No explanations needed.
+''';
+
+    final response = await http.post(
+      Uri.parse('https://api.openai.com/v1/chat/completions'),
+      headers: {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-4',
+        'messages': [
+          {'role': 'system', 'content': 'You are an aquarium expert. Provide specific portion recommendations for individual fish species.'},
+          {'role': 'user', 'content': prompt}
+        ],
+        'temperature': 0.7,
+        'max_tokens': 400,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      try {
+        final data = jsonDecode(response.body);
+        final content = data['choices'][0]['message']['content'];
+        return await _parsePortionResponse(content, fishName, quantity, availableFoodTypes);
+      } catch (e) {
+        print('Error parsing portion response: $e');
+        return await _getFallbackPortionRecommendation(fishName, quantity, availableFoodTypes);
+      }
+    } else {
+      return await _getFallbackPortionRecommendation(fishName, quantity, availableFoodTypes);
+    }
+  }
+
+  /// Generate feeding notes for multiple fish species
+  static Future<String> generateFeedingNotes(List<String> fishNames) async {
+    final apiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
+    if (apiKey.isEmpty) {
+      return _getFallbackFeedingNotes();
+    }
+
+    final prompt = """
+Generate CONCISE feeding notes for an aquarium with these fish: ${fishNames.join(', ')}.
+
+REQUIREMENTS:
+- Output exactly 2 lines maximum
+- Each line must be a short, plain sentence
+- Focus on group feeding behavior
+- Do not include species names or headings
+- Content:
+  1) Simple feeding frequency (e.g., "Feed 2 times daily")
+  2) One care tip for this fish group
+
+IMPORTANT: Keep it simple and group-focused. Avoid overwhelming details.
+""";
+
+    final response = await http.post(
+      Uri.parse('https://api.openai.com/v1/chat/completions'),
+      headers: {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-4',
+        'messages': [
+          {'role': 'system', 'content': 'You are an aquarium expert. Provide specific feeding notes for mixed fish tanks.'},
+          {'role': 'user', 'content': prompt}
+        ],
+        'temperature': 0.7,
+        'max_tokens': 300,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      try {
+        final data = jsonDecode(response.body);
+        final content = data['choices'][0]['message']['content'];
+        return content.trim();
+      } catch (e) {
+        print('Error parsing feeding notes: $e');
+        return _getFallbackFeedingNotes();
+      }
+    } else {
+      return _getFallbackFeedingNotes();
+    }
+  }
+
+  /// Parse diet response from AI
+  static Future<Map<String, dynamic>> _parseDietResponse(String response, List<String> fishList) async {
+    try {
+      final lines = response.split('\n');
+      final foodTypes = <String>[];
+      final feedingSchedule = <String, dynamic>{};
+      final feedingNotes = <String>[];
+      
+      bool inFoodTypes = false;
+      bool inSchedule = false;
+      bool inNotes = false;
+      
+      for (final line in lines) {
+        final trimmed = line.trim().toLowerCase();
+        
+        if (trimmed.contains('food types') || trimmed.contains('foods')) {
+          inFoodTypes = true;
+          inSchedule = false;
+          inNotes = false;
+          continue;
+        }
+        
+        if (trimmed.contains('feeding schedule') || trimmed.contains('schedule')) {
+          inFoodTypes = false;
+          inSchedule = true;
+          inNotes = false;
+          continue;
+        }
+        
+        if (trimmed.contains('feeding notes') || trimmed.contains('tips')) {
+          inFoodTypes = false;
+          inSchedule = false;
+          inNotes = true;
+          continue;
+        }
+        
+        if (inFoodTypes && line.trim().isNotEmpty) {
+          final food = line.trim().replaceAll(RegExp(r'^[-•*]\s*'), '');
+          if (food.isNotEmpty && !food.contains(':')) {
+            foodTypes.add(food);
+          }
+        }
+        
+        if (inSchedule && line.trim().isNotEmpty) {
+          if (line.contains('times per day') || line.contains('frequency')) {
+            final freqMatch = RegExp(r'(\d+)').firstMatch(line);
+            if (freqMatch != null) {
+              feedingSchedule['frequency'] = int.tryParse(freqMatch.group(1)!) ?? 2;
+            }
+          }
+          if (line.contains('AM') || line.contains('PM') || line.contains('morning') || line.contains('evening')) {
+            feedingSchedule['times'] = line.trim().replaceAll(RegExp(r'^[-•*]\s*'), '');
+          }
+        }
+        
+        if (inNotes && line.trim().isNotEmpty) {
+          final note = line.trim().replaceAll(RegExp(r'^[-•*]\s*'), '');
+          if (note.isNotEmpty && !note.contains(':')) {
+            feedingNotes.add(note);
+          }
+        }
+      }
+      
+      return {
+        'food_types': foodTypes.isNotEmpty ? foodTypes : ['flakes', 'pellets', 'algae wafers'],
+        'feeding_schedule': {
+          'frequency': feedingSchedule['frequency'] ?? 2,
+          'times': feedingSchedule['times'] ?? 'Morning and evening',
+        },
+        'feeding_notes': feedingNotes.isNotEmpty ? feedingNotes.join('\n') : 'Feed 2-3 times daily in small amounts. Remove uneaten food after 5 minutes.',
+      };
+    } catch (e) {
+      print('Error parsing diet response: $e');
+      return await getFallbackDietRecommendations(fishList);
+    }
+  }
+
+  /// Parse portion response from AI
+  static Future<Map<String, dynamic>> _parsePortionResponse(String response, String fishName, int quantity, List<String> availableFoodTypes) async {
+    try {
+      final lines = response.split('\n');
+      String portionSize = '2-3 small pellets';
+      String foodType = availableFoodTypes.isNotEmpty ? availableFoodTypes.first : 'pellets';
+      
+      for (final line in lines) {
+        final trimmed = line.trim().toLowerCase();
+        
+        if (trimmed.contains('portion size') || trimmed.contains('portion')) {
+          final portionMatch = RegExp(r'([^:]+)$').firstMatch(line);
+          if (portionMatch != null) {
+            portionSize = portionMatch.group(1)!.trim();
+          }
+        }
+        
+        if (trimmed.contains('food type') || trimmed.contains('food')) {
+          for (final availableType in availableFoodTypes) {
+            if (line.toLowerCase().contains(availableType.toLowerCase())) {
+              foodType = availableType;
+              break;
+            }
+          }
+        }
+      }
+      
+      return {
+        'portion_size': portionSize,
+        'food_type': foodType,
+        'reasoning': 'AI-generated recommendation for $quantity $fishName fish',
+      };
+    } catch (e) {
+      print('Error parsing portion response: $e');
+      return await _getFallbackPortionRecommendation(fishName, quantity, availableFoodTypes);
+    }
+  }
+
+  /// Fallback diet recommendations when AI fails
+  static Future<Map<String, dynamic>> getFallbackDietRecommendations(List<String> fishList) async {
+    final foodTypes = <String>['flakes', 'pellets', 'algae wafers'];
+    
+    return {
+      'food_types': foodTypes,
+      'feeding_schedule': {
+        'frequency': 2,
+        'times': 'Morning and evening'
+      },
+      'feeding_notes': 'Feed 2 times daily.\nRemove uneaten food after 5 minutes.',
+    };
+  }
+
+  /// Fallback portion recommendation when AI fails
+  static Future<Map<String, dynamic>> _getFallbackPortionRecommendation(String fishName, int quantity, List<String> availableFoodTypes) async {
+    String foodType = availableFoodTypes.isNotEmpty ? availableFoodTypes.first : 'pellets';
+    String portionSize;
+    
+    // Group-based portion calculation
+    if (quantity <= 3) {
+      portionSize = 'tiny pinch of $foodType';
+    } else if (quantity <= 6) {
+      portionSize = 'small pinch of $foodType';
+    } else if (quantity <= 10) {
+      portionSize = 'medium pinch of $foodType';
+    } else {
+      portionSize = 'large pinch of $foodType';
+    }
+    
+    return {
+      'portion_size': portionSize,
+      'food_type': foodType,
+      'reasoning': 'Group portion for $quantity $fishName fish',
+    };
+  }
+
+  /// Fallback feeding notes when AI fails
+  static String _getFallbackFeedingNotes() {
+    return 'Feed 2 times daily.\nRemove uneaten food after 5 minutes.';
+  }
+
+  /// Check if API key is configured
+  static bool get isConfigured {
+    final apiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
+    return apiKey.isNotEmpty;
+  }
+
+  /// Get API usage info
+  static String get apiInfo => 'OpenAI API - GPT-4 model for advanced AI features';
+
+  /// Get chat response from OpenAI
+  static Future<String> getChatResponse(String message) async {
+    final apiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
+    if (apiKey.isEmpty) {
+      return 'API key not found. Check your .env file.';
+    }
+
+    final response = await http.post(
+      Uri.parse('https://api.openai.com/v1/chat/completions'),
+      headers: {
+        'Authorization': 'Bearer $apiKey',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'model': 'gpt-4',
+        'messages': [
+          {'role': 'user', 'content': message}
+        ],
+        'temperature': 0.7,
+        'max_tokens': 500,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final content = data['choices'][0]['message']['content'];
+      return content.trim();
+    } else {
+      return 'Error: ${response.statusCode}\n${response.body}';
+    }
+  }
+}
 
 
 // Diet and Care Recommendation Generator

@@ -9,6 +9,12 @@ class FishCalculation {
   final String tankStatus;
   final String currentBioload;
   final DateTime? createdAt;
+  // AI-generated content fields
+  final String? waterParametersResponse;
+  final String? tankAnalysisResponse;
+  final String? filtrationResponse;
+  final String? dietCareResponse;
+  final List<String>? tankmateRecommendations;
 
   FishCalculation({
     this.id,
@@ -21,6 +27,11 @@ class FishCalculation {
     required this.tankStatus,
     required this.currentBioload,
     this.createdAt,
+    this.waterParametersResponse,
+    this.tankAnalysisResponse,
+    this.filtrationResponse,
+    this.dietCareResponse,
+    this.tankmateRecommendations,
   });
 
   Map<String, dynamic> toJson() {
@@ -35,6 +46,11 @@ class FishCalculation {
       'tank_status': tankStatus,
       'current_bioload': currentBioload,
       'created_at': createdAt?.toIso8601String(),
+      'water_parameters_response': waterParametersResponse,
+      'tank_analysis_response': tankAnalysisResponse,
+      'filtration_response': filtrationResponse,
+      'diet_care_response': dietCareResponse,
+      'tankmate_recommendations': tankmateRecommendations,
     };
   }
 
@@ -50,6 +66,13 @@ class FishCalculation {
       tankStatus: json['tank_status'] ?? json['tankStatus'] ?? 'Unknown',
       currentBioload: json['current_bioload'] ?? json['currentBioload'] ?? '0%',
       createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
+      waterParametersResponse: json['water_parameters_response'],
+      tankAnalysisResponse: json['tank_analysis_response'],
+      filtrationResponse: json['filtration_response'],
+      dietCareResponse: json['diet_care_response'],
+      tankmateRecommendations: json['tankmate_recommendations'] != null 
+          ? List<String>.from(json['tankmate_recommendations']) 
+          : null,
     );
   }
 } 

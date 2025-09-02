@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
 import '../widgets/description_widget.dart';
-import '../services/openai_service.dart';
+import '../services/openai_service.dart'; // OpenAI AI service
 import 'package:lottie/lottie.dart';
 import 'dart:math' as math;
 import 'dart:collection';
@@ -412,29 +412,32 @@ class _FishListScreenState extends State<FishListScreen> {
     );
 
     try {
-      // Fetch all in parallel
-      final results = await Future.wait([
-        http.get(Uri.parse(ApiConfig.getFishImageUrl(commonName))),
-        OpenAIService.generateFishDescription(commonName, scientificName),
-        OpenAIService.generateCareRecommendations(commonName, scientificName),
-      ]);
+      // Try to use Hugging Face AI service if configured, otherwise fall back to local data
+      if (OpenAIService.isConfigured) {
+        try {
+          // Fetch description and care recommendations in parallel using free AI service
+          final results = await Future.wait([
+            OpenAIService.generateFishDescription(commonName, scientificName),
+            OpenAIService.generateCareRecommendations(commonName, scientificName),
+          ]);
 
-      // Image
-      final http.Response imageResponse = results[0] as http.Response;
-      String? imageUrl;
-      if (imageResponse.statusCode == 200) {
-        final Map<String, dynamic> jsonData = json.decode(imageResponse.body);
-        // New API returns a direct URL string under 'url'
-        imageUrl = (jsonData['url'] ?? '').toString();
+          // Description
+          fishCopy['description'] = results[0] as String;
+
+          // Diet/Care Recommendations
+          fishCopy['care_recommendations'] = results[1] as Map<String, dynamic>;
+        } catch (e) {
+          print('Hugging Face API error, falling back to local data: $e');
+          _generateLocalFishData(fishCopy, commonName, scientificName, fish);
+        }
+      } else {
+        // Use local data generation when AI service is not configured
+        _generateLocalFishData(fishCopy, commonName, scientificName, fish);
       }
-      // Store URL for display; keep base64Image if previously cached to maintain backward-compat
-      fishCopy['imageUrl'] = imageUrl;
 
-      // Description
-      fishCopy['description'] = results[1] as String;
-
-      // Diet/Care Recommendations
-      fishCopy['care_recommendations'] = results[2] as Map<String, dynamic>;
+      // For local images, we don't need to fetch a URL - the image will be served directly
+      // when the user views the details screen
+      fishCopy['imageUrl'] = null; // Clear any old URL-based logic
 
       // Save to in-memory and persistent cache
       _fishDetailsCache[cacheKey] = fishCopy;
@@ -456,14 +459,47 @@ class _FishListScreenState extends State<FishListScreen> {
         _showFishDetailsScreen(fishCopy);
       }
     }
+    }
+
+  /// Generate fish data locally when AI service is not available
+  void _generateLocalFishData(Map<String, dynamic> fishCopy, String commonName, String scientificName, Map<String, dynamic> fish) {
+    // Generate a simple description from available data
+    final waterType = fish['water_type'] ?? 'Unknown';
+    final maxSize = fish['max_size'] ?? 'Unknown';
+    final temperament = fish['temperament'] ?? 'Unknown';
+    final careLevel = fish['care_level'] ?? 'Unknown';
+    
+    fishCopy['description'] = 'The $commonName is a $waterType fish that can grow up to $maxSize cm. '
+        'It has a $temperament temperament and requires $careLevel care level. '
+        'This species is known for its unique characteristics and makes an interesting addition to aquariums.';
+
+    // Generate care recommendations from available fish data
+    final diet = fish['diet'] ?? 'Omnivore';
+    final socialBehavior = fish['social_behavior'] ?? 'Community';
+    final minTankSize = fish['minimum_tank_size_(l)'] ?? fish['minimum_tank_size_l'] ?? fish['minimum_tank_size'] ?? 'Unknown';
+    
+    fishCopy['care_recommendations'] = {
+      'diet_type': diet,
+      'preferred_foods': ['Flake food', 'Pellets', 'Live food', 'Frozen food'],
+      'feeding_frequency': '2-3 times daily',
+      'portion_size': 'Small amounts that can be consumed in 2-3 minutes',
+      'fasting_schedule': 'One fasting day per week',
+      'overfeeding_risks': 'Can lead to water quality issues and health problems',
+      'behavioral_notes': 'Generally $socialBehavior behavior, may need tankmates or solitude depending on species',
+      'tankmate_feeding_conflict': 'Feed at different levels of the tank to avoid competition',
+      'temperature_range': fish['temperature_range'] ?? 'Unknown',
+      'ph_range': fish['ph_range'] ?? 'Unknown',
+      'minimum_tank_size': '$minTankSize L',
+      'water_type': waterType,
+      'temperament': temperament,
+      'care_level': careLevel,
+    };
   }
-  
+
   void _showFishDetailsScreen(Map<String, dynamic> fish) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (BuildContext context) {
-          final String? imageUrl = fish['imageUrl'];
-          final String? base64Image = fish['base64Image']; // legacy cached support
           final Map<String, dynamic> careData = fish['care_recommendations'] ?? {};
           return Scaffold(
             backgroundColor: Colors.white,
@@ -497,75 +533,61 @@ class _FishListScreenState extends State<FishListScreen> {
                         final imageHeight = 300.0;
                         final commonName = (fish['common_name'] ?? '').toString();
 
-                        // 1) Use imageUrl from details if present
-                        String? headerUrl = (imageUrl != null && imageUrl.isNotEmpty) ? imageUrl : null;
-
-                        // 2) Fallback to list thumbnail cache if available and fresh
-                        headerUrl ??= _thumbUrlCache[commonName];
-
-                        Widget buildNet(String url) {
-                          return Image.network(
-                            url,
-                            width: imageWidth,
-                            height: imageHeight,
-                            fit: BoxFit.cover,
-                            cacheWidth: (imageWidth * MediaQuery.of(context).devicePixelRatio).round(),
-                            cacheHeight: (imageHeight * MediaQuery.of(context).devicePixelRatio).round(),
-                            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                              if (wasSynchronouslyLoaded) return child;
-                              return AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 300),
-                                child: frame != null
-                                    ? child
-                                    : Container(
-                                        color: Colors.grey[200],
-                                        child: const Center(child: CircularProgressIndicator()),
-                                      ),
-                              );
-                            },
-                            errorBuilder: (c, e, s) => Container(
-                              color: Colors.grey[200],
-                              child: const Icon(Icons.image_not_supported, size: 50, color: Colors.grey),
-                            ),
-                          );
-                        }
-
-                        if (headerUrl != null && headerUrl.isNotEmpty) {
-                          return buildNet(headerUrl);
-                        }
-
-                        // 3) Try legacy base64 from cache if present
-                        if (base64Image != null && base64Image.isNotEmpty) {
-                          try {
-                            final String base64Str = base64Image.contains(',')
-                                ? base64Image.split(',')[1]
-                                : base64Image;
-                            return Image.memory(
-                              base64Decode(base64Str),
-                              width: imageWidth,
-                              height: imageHeight,
-                              fit: BoxFit.cover,
-                            );
-                          } catch (e) {
-                            print('Error loading base64 image: $e');
-                          }
-                        }
-
-                        // 4) Network fallback: try variations of the name
+                        // For local images, we'll use the local endpoint directly
+                        // This will serve a random image from the local dataset
                         if (commonName.isNotEmpty) {
                           return FutureBuilder<String?>(
-                            future: _fetchFishImageWithFallback(commonName),
+                            future: Future.value('${ApiConfig.baseUrl}/fish-image/${Uri.encodeComponent(commonName)}'),
                             builder: (context, snap) {
                               if (snap.connectionState == ConnectionState.waiting) {
                                 return Container(color: Colors.grey[200]);
                               }
                               final url = snap.data;
                               if (url != null && url.isNotEmpty) {
-                                // Update in-memory caches for consistency in this session
-                                fish['imageUrl'] = url;
-                                _thumbUrlCache[commonName] = url;
-                                _thumbCacheTime[commonName] = DateTime.now();
-                                return buildNet(url);
+                                return Image.network(
+                                  url,
+                                  width: imageWidth,
+                                  height: imageHeight,
+                                  fit: BoxFit.cover,
+                                  cacheWidth: (imageWidth * MediaQuery.of(context).devicePixelRatio).round(),
+                                  cacheHeight: (imageHeight * MediaQuery.of(context).devicePixelRatio).round(),
+                                  frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                                    if (wasSynchronouslyLoaded) return child;
+                                    return AnimatedSwitcher(
+                                      duration: const Duration(milliseconds: 300),
+                                      child: frame != null
+                                          ? child
+                                          : Container(
+                                              color: Colors.grey[200],
+                                              child: const Center(child: CircularProgressIndicator()),
+                                            ),
+                                    );
+                                  },
+                                  errorBuilder: (c, e, s) => Container(
+                                    color: Colors.grey[200],
+                                    height: imageHeight,
+                                    child: Center(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(
+                                            Icons.image_not_supported,
+                                            size: 50,
+                                            color: Colors.grey,
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            'No image available',
+                                            style: TextStyle(
+                                              color: Colors.grey[600],
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
                               }
                               return Container(
                                 color: Colors.grey[200],
@@ -869,11 +891,12 @@ Widget buildFishListImage(String? fishName) {
       }
       
       try {
-        final Map<String, dynamic> jsonData = json.decode(snapshot.data!.body);
-        final String imageUrl = (jsonData['url'] ?? '').toString();
+        // For local images, the response is the actual image file, not JSON
+        // We need to construct the URL for the image
+        final String imageUrl = '${ApiConfig.baseUrl}/fish-image/${Uri.encodeComponent(name)}';
         
         // Debug: Print response data
-        print('API response for "$name": $jsonData');
+        print('Local image URL for "$name": $imageUrl');
         
         if (imageUrl.isNotEmpty) {
           // Update cache (no need to setState for list item image)
@@ -923,8 +946,8 @@ Widget buildFishListImage(String? fishName) {
           ),
         );
       } catch (e) {
-        // Debug: Print JSON parsing error
-        print('JSON parsing error for "$name": $e - Response: ${snapshot.data!.body}');
+        // Debug: Print error
+        print('Error processing image for "$name": $e');
         return Container(
           width: 120,
           height: 80,
@@ -945,7 +968,7 @@ String _sanitizeFishName(String name) {
       .replaceAll(RegExp(r'\s+'), ' '); // Normalize whitespace
 }
 
-// Enhanced method that tries multiple name variations
+// Enhanced method that tries multiple name variations for local images
 Future<String?> _fetchFishImageWithFallback(String fishName) async {
   final variations = [
     fishName, // Original name
@@ -958,26 +981,23 @@ Future<String?> _fetchFishImageWithFallback(String fishName) async {
 
   for (final variation in variations) {
     try {
-      final response = await http.get(
-        Uri.parse(ApiConfig.getFishImageUrl(variation)),
+      // For local images, we construct the URL directly
+      final String imageUrl = '${ApiConfig.baseUrl}/fish-image/${Uri.encodeComponent(variation)}';
+      
+      // Test if the endpoint exists by making a HEAD request
+      final response = await http.head(
+        Uri.parse(imageUrl),
         headers: {'Connection': 'keep-alive'},
       ).timeout(const Duration(seconds: 10));
       
-      print('Image fetch for $variation: Status ${response.statusCode}');
-      if (response.statusCode != 200) {
-        print('Error response body: ${response.body}');
-      }
-
+      print('Image check for $variation: Status ${response.statusCode}');
+      
       if (response.statusCode == 200) {
-        final Map<String, dynamic> jsonData = json.decode(response.body);
-        final String imageUrl = (jsonData['url'] ?? '').toString();
-        if (imageUrl.isNotEmpty) {
-          print('Found image for "$fishName" using variation: "$variation"');
-          return imageUrl;
-        }
+        print('Found image for "$fishName" using variation: "$variation"');
+        return imageUrl;
       }
     } catch (e) {
-      print('Failed to fetch image for "$fishName" with variation "$variation": $e');
+      print('Failed to check image for "$fishName" with variation "$variation": $e');
       continue;
     }
   }
@@ -1387,7 +1407,7 @@ class _FishImagesGrid extends StatefulWidget {
   const _FishImagesGrid({
     Key? key,
     required this.fishName,
-    this.initialDisplayCount = 4,
+    this.initialDisplayCount = 2,
     this.maxImages = 20,
     this.showTitle = false,
   }) : super(key: key);
@@ -1409,6 +1429,8 @@ class _FishImagesGridState extends State<_FishImagesGrid> {
   @override
   void initState() {
     super.initState();
+    _showAll = false; // Ensure we start with showing only 2 images
+    print('_FishImagesGrid initState: _showAll = $_showAll');
     _loadImages();
   }
 
@@ -1428,10 +1450,12 @@ class _FishImagesGridState extends State<_FishImagesGrid> {
         DateTime.now().difference(fetchedAt) < _cacheTtl;
 
     if (cached != null && isCacheValid) {
+      print('Loading from cache: ${cached.length} URLs');
       setState(() {
         _imageUrls.addAll(cached);
         _isLoading = false;
       });
+      print('After cache load: _imageUrls.length = ${_imageUrls.length}');
       return;
     }
 
@@ -1460,54 +1484,54 @@ class _FishImagesGridState extends State<_FishImagesGrid> {
   }
 
   Future<List<String>> _fetchImages() async {
-    final urls = <String>{};
-    final batchSize = 4;
-    final maxBatches = (widget.maxImages / batchSize).ceil();
-    
-    for (var i = 0; i < maxBatches && urls.length < widget.maxImages; i++) {
-      try {
-        final response = await http.get(
-          Uri.parse('${ApiConfig.baseUrl}/fish-image/${Uri.encodeComponent(widget.fishName.replaceAll(' ', ''))}?batch=$i'),
-          headers: {'Content-Type': 'application/json'},
-        );
+    try {
+      // Use the new grid endpoint that ensures different images
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/fish-images-grid/${Uri.encodeComponent(widget.fishName)}?count=4'),
+        headers: {'Content-Type': 'application/json'},
+      );
 
-        if (response.statusCode == 200) {
-          print('Goldfish API Response Body: ${response.body}');
+      if (response.statusCode == 200) {
+        try {
           final data = json.decode(response.body);
-          print('Goldfish Parsed Data: $data');
-          print('Goldfish Data Type: ${data.runtimeType}');
+          print('Fish Images Grid Response: $data');
           
-          if (data is List) {
-            print('Processing list with ${data.length} items');
-            for (var item in data) {
-              print('List item: $item');
-              if (item is Map && item['url'] != null) {
-                urls.add(item['url'].toString());
-                print('Added URL: ${item['url']}');
-                if (urls.length >= widget.maxImages) break;
+          if (data is Map && data['images'] is List) {
+            final List<dynamic> images = data['images'];
+            final urls = <String>[];
+            
+            for (final image in images) {
+              if (image is Map && image['url'] != null) {
+                final url = '${ApiConfig.baseUrl}${image['url']}';
+                urls.add(url);
+                print('Added image URL: $url');
               }
             }
-          } else if (data is Map && data['url'] != null) {
-            print('Processing single map item: $data');
-            urls.add(data['url'].toString());
-            print('Added single URL: ${data['url']}');
+            
+            return urls;
           } else {
-            print('Unexpected data structure for Goldfish: $data');
+            print('Unexpected response structure: $data');
+            return [];
           }
-        } else {
-          print('Goldfish API Error: Status ${response.statusCode}, Body: ${response.body}');
+        } catch (e) {
+          print('Error parsing fish images grid response: $e');
+          return [];
         }
-      } catch (e) {
-        print('Error fetching image batch $i: $e');
-        // Continue with next batch even if one fails
+      } else {
+        print('Fish Images Grid API Error: Status ${response.statusCode}');
+        return [];
       }
+    } catch (e) {
+      print('Error fetching fish images grid: $e');
+      return [];
     }
-
-    return urls.toList();
   }
 
   void _updateWithUrls(List<String> urls) {
     if (!mounted) return;
+    
+    print('_updateWithUrls called with ${urls.length} URLs');
+    print('URLs: $urls');
     
     setState(() {
       _imageUrls.clear();
@@ -1521,6 +1545,8 @@ class _FishImagesGridState extends State<_FishImagesGrid> {
       _cache[widget.fishName] = List.from(urls);
       _cacheTime[widget.fishName] = DateTime.now();
     }
+    
+    print('After setState: _imageUrls.length = ${_imageUrls.length}');
   }
 
   void _handleError(dynamic error) {
@@ -1548,72 +1574,139 @@ class _FishImagesGridState extends State<_FishImagesGrid> {
       return const SizedBox.shrink();
     }
 
-    // Show 2 by default, and when expanded, cap at 4
-  final int limit = _showAll ? 4 : widget.initialDisplayCount;
-  final displayUrls = _imageUrls.take(limit).toList();
+    // Show 2 by default, and when expanded, show all 4
+    final int limit = _showAll ? 4 : 2;
+    final displayUrls = _imageUrls.take(limit).toList();
+    
+    // Debug logging
+    print('Fish Images Grid Debug:');
+    print('  _showAll: $_showAll');
+    print('  _imageUrls.length: ${_imageUrls.length}');
+    print('  limit: $limit');
+    print('  displayUrls.length: ${displayUrls.length}');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-            childAspectRatio: 1.2,
-          ),
-          itemCount: displayUrls.length,
-          itemBuilder: (context, index) {
-            final url = displayUrls[index];
-            return GestureDetector(
-              onTap: () => _showFullScreenImage(url),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final dpr = MediaQuery.of(context).devicePixelRatio;
-                    final targetW = (constraints.maxWidth * dpr).round();
-                    final targetH = (constraints.maxHeight * dpr).round();
-                    return Image.network(
-                      url,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                      cacheWidth: targetW,
-                      cacheHeight: targetH,
-                      filterQuality: FilterQuality.low,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Container(
-                          color: Colors.grey[200],
-                          child: const SizedBox.shrink(),
-                        );
-                      },
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          color: Colors.grey[200],
-                          child: Center(
-                            child: SizedBox(
-                              width: 60,
-                              height: 60,
-                              child: Lottie.asset(
-                                'lib/lottie/BowlAnimation.json',
-                                fit: BoxFit.contain,
-                                repeat: true,
-                                frameRate: FrameRate(60),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+          height: _showAll ? null : 200, // Smooth height transition
+          child: GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 8,
+              mainAxisSpacing: 8,
+              childAspectRatio: 1.2,
+            ),
+            itemCount: displayUrls.length,
+            itemBuilder: (context, index) {
+              final url = displayUrls[index];
+              return AnimatedContainer(
+                duration: Duration(milliseconds: 300 + (index * 100)), // Staggered animation
+                curve: Curves.easeOutBack,
+                child: GestureDetector(
+                  onTap: () => _showFullScreenImage(url),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final dpr = MediaQuery.of(context).devicePixelRatio;
+                        final targetW = (constraints.maxWidth * dpr).round();
+                        final targetH = (constraints.maxHeight * dpr).round();
+                        return Image.network(
+                          url,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          cacheWidth: targetW,
+                          cacheHeight: targetH,
+                          filterQuality: FilterQuality.low,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Container(
+                              color: Colors.grey[200],
+                              child: const SizedBox.shrink(),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: Colors.grey[200],
+                              child: Center(
+                                child: SizedBox(
+                                  width: 60,
+                                  height: 60,
+                                  child: Lottie.asset(
+                                    'lib/lottie/BowlAnimation.json',
+                                    fit: BoxFit.contain,
+                                    repeat: true,
+                                    frameRate: FrameRate(60),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
+                            );
+                          },
                         );
                       },
-                    );
-                  },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+
+        // "See more" / "See less" button - only show if there are more than 2 images
+        if (_imageUrls.length > 2)
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 500),
+            opacity: 1.0,
+            child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            padding: const EdgeInsets.only(top: 12.0),
+            child: Center(
+              child: AnimatedScale(
+                duration: const Duration(milliseconds: 200),
+                scale: _showAll ? 0.95 : 1.0,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: _showAll 
+                        ? const Color(0xFF006064).withOpacity(0.1)
+                        : Colors.transparent,
+                  ),
+                  child: TextButton.icon(
+                    onPressed: () {
+                      print('Button pressed: _showAll was $_showAll');
+                      setState(() {
+                        _showAll = !_showAll;
+                      });
+                      print('Button pressed: _showAll is now $_showAll');
+                    },
+                    icon: AnimatedRotation(
+                      duration: const Duration(milliseconds: 300),
+                      turns: _showAll ? 0.5 : 0.0,
+                      child: Icon(
+                        Icons.keyboard_arrow_down,
+                        color: const Color(0xFF006064),
+                      ),
+                    ),
+                    label: Text(
+                      _showAll ? 'See less' : 'See more',
+                      style: const TextStyle(
+                        color: Color(0xFF006064),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            );
-          },
+            ),
+          ),
         ),
       ],
     );

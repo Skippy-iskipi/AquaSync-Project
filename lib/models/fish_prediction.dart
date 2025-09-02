@@ -17,6 +17,8 @@ class FishPrediction {
   final String phRange;
   final String socialBehavior;
   final String minimumTankSize;
+  final String compatibilityNotes;
+  final String tankLevel;
   final DateTime? createdAt;
 
   FishPrediction({
@@ -38,6 +40,8 @@ class FishPrediction {
     this.phRange = '',
     this.socialBehavior = '',
     this.minimumTankSize = '',
+    this.compatibilityNotes = '',
+    this.tankLevel = '',
     this.createdAt,
   });
 
@@ -76,6 +80,8 @@ class FishPrediction {
     String? phRange,
     String? socialBehavior,
     String? minimumTankSize,
+    String? compatibilityNotes,
+    String? tankLevel,
     DateTime? createdAt,
   }) {
     return FishPrediction(
@@ -97,6 +103,8 @@ class FishPrediction {
       phRange: phRange ?? this.phRange,
       socialBehavior: socialBehavior ?? this.socialBehavior,
       minimumTankSize: minimumTankSize ?? this.minimumTankSize,
+      compatibilityNotes: compatibilityNotes ?? this.compatibilityNotes,
+      tankLevel: tankLevel ?? this.tankLevel,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -121,6 +129,8 @@ class FishPrediction {
       'phRange': phRange,
       'socialBehavior': socialBehavior,
       'minimumTankSize': minimumTankSize,
+      'compatibilityNotes': compatibilityNotes,
+      'tankLevel': tankLevel,
       'created_at': createdAt?.toIso8601String(),
     };
   }
@@ -152,12 +162,14 @@ class FishPrediction {
       phRange: json['ph_range'] ?? json['phRange'] ?? '',
       socialBehavior: json['social_behavior'] ?? json['socialBehavior'] ?? '',
       minimumTankSize: json['minimum_tank_size'] ?? json['minimumTankSize'] ?? '',
+      compatibilityNotes: json['compatibility_notes'] ?? json['compatibilityNotes'] ?? '',
+      tankLevel: json['tank_level'] ?? json['tankLevel'] ?? '',
       createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
     );
   }
 
   @override
   String toString() {
-    return 'FishPrediction{id: $id, commonName: $commonName, scientificName: $scientificName, waterType: $waterType, probability: $probability, imagePath: $imagePath, maxSize: $maxSize, temperament: $temperament, careLevel: $careLevel, lifespan: $lifespan, diet: $diet, preferredFood: $preferredFood, feedingFrequency: $feedingFrequency, description: $description, temperatureRange: $temperatureRange, phRange: $phRange, socialBehavior: $socialBehavior, minimumTankSize: $minimumTankSize, createdAt: $createdAt}';
+    return 'FishPrediction{id: $id, commonName: $commonName, scientificName: $scientificName, waterType: $waterType, probability: $probability, imagePath: $imagePath, maxSize: $maxSize, temperament: $temperament, careLevel: $careLevel, lifespan: $lifespan, diet: $diet, preferredFood: $preferredFood, feedingFrequency: $feedingFrequency, description: $description, temperatureRange: $temperatureRange, phRange: $phRange, socialBehavior: $socialBehavior, minimumTankSize: $minimumTankSize, compatibilityNotes: $compatibilityNotes, tankLevel: $tankLevel, createdAt: $createdAt}';
   }
 }

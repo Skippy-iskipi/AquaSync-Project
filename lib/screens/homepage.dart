@@ -229,91 +229,118 @@ class _HomePageState extends State<HomePage> {
     final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
     
     return Scaffold(
-      body: Stack(
-        children: [
-          Scaffold(
-            backgroundColor: Colors.white,
-            appBar: AppBar(
-              title: Text(
-                _selectedIndex == 0 ? 'AquaSync' :
-                _selectedIndex == 1 ? 'Sync' :
-                _selectedIndex == 2 ? 'Calculator' : 'History',
-                style: const TextStyle(
-                  color: Color(0xFF006064),
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              backgroundColor: Colors.white,
-              elevation: 2,
-              automaticallyImplyLeading: false,
-              actions: [
-                Consumer<UserPlanProvider>(
-                  builder: (context, userPlanProvider, child) {
-                    final plan = userPlanProvider.plan.toLowerCase().replaceAll(' ', '_');
-                    if (plan == 'free') {
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: ElevatedButton(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => const SubscriptionPage()),
-                            );
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF00BFB3),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            elevation: 0,
-                          ),
-                          child: const Text(
-                            'Upgrade Your Plan',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                          ),
-                        ),
-                      );
-                    } else {
-                      return const SizedBox.shrink();
-                    }
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.account_circle),
-                  onPressed: () => _showUserInfo(context),
-                  tooltip: 'Account',
-                ),
-              ],
-            ),
-            body: _getSelectedScreen(),
-            floatingActionButton: isKeyboardVisible ? null : FloatingActionButton(
-              key: GuideOverlay.captureKey,
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const CaptureScreen()),
-                );
-              },
-              backgroundColor: Colors.white,
-              shape: const CircleBorder(),
-              child: Image.asset('lib/icons/capture_icon.png', width: 60, height: 60),
-            ),
-            floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-            bottomNavigationBar: BottomNavigation(
-              selectedIndex: _selectedIndex,
-              onItemTapped: _onItemTapped,
-              exploreKey: GuideOverlay.exploreKey,
-              logbookKey: GuideOverlay.logbookKey,
-              calculatorKey: GuideOverlay.calculatorKey,
-              syncKey: GuideOverlay.syncKey,
+      backgroundColor: Colors.white,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(35),
+        child: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          automaticallyImplyLeading: false,
+          title: Text(
+            _selectedIndex == 0 ? 'AquaSync' :
+            _selectedIndex == 1 ? 'Sync' :
+            _selectedIndex == 2 ? 'Calculator' : 'History',
+            style: const TextStyle(
+              color: Color(0xFF006064),
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
             ),
           ),
+          actions: [
+            // Upgrade Button for Free Users
+            Consumer<UserPlanProvider>(
+              builder: (context, userPlanProvider, child) {
+                final plan = userPlanProvider.plan.toLowerCase().replaceAll(' ', '_');
+                if (plan == 'free') {
+                  return Container(
+                    margin: const EdgeInsets.only(right: 12),
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00BFB3),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        elevation: 2,
+                      ),
+                      child: const Text(
+                        'Upgrade',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
+            // Profile Icon
+            Container(
+              margin: const EdgeInsets.only(right: 12),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFF006064),
+                  width: 4,
+                ),
+              ),
+              child: IconButton(
+                icon: const Icon(
+                  Icons.person,
+                  color: Color(0xFF006064),
+                  size: 32,
+                ),
+                onPressed: () => _showUserInfo(context),
+                tooltip: 'Profile',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 40,
+                  minHeight: 40,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: Stack(
+        children: [
+          _getSelectedScreen(),
           if (_showGuide)
             GuideOverlay(
               onFinish: _finishGuide,
             ),
+          
         ],
+      ),
+      floatingActionButton: isKeyboardVisible ? null : FloatingActionButton(
+        key: GuideOverlay.captureKey,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const CaptureScreen()),
+          );
+        },
+        backgroundColor: Colors.white,
+        shape: const CircleBorder(),
+        child: Image.asset('lib/icons/capture_icon.png', width: 60, height: 60),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      bottomNavigationBar: BottomNavigation(
+        selectedIndex: _selectedIndex,
+        onItemTapped: _onItemTapped,
+        exploreKey: GuideOverlay.exploreKey,
+        logbookKey: GuideOverlay.logbookKey,
+        calculatorKey: GuideOverlay.calculatorKey,
+        syncKey: GuideOverlay.syncKey,
       ),
     );
   }
@@ -422,7 +449,7 @@ class _ModernRecentActivityCard extends StatelessWidget {
     } else if (item is WaterCalculation) {
       title = 'Water Calculator';
       final fishNames = item.fishSelections.keys.join(', ');
-      subtitle = 'Fish: $fishNames\npH level: ${item.phRange}\nTemperature range: ${item.temperatureRange.replaceAll('Â', '')}';
+      subtitle = 'Fish: $fishNames\npH level: ${item.phRange}\nTemperature range: ${item.temperatureRange.replaceAll('Ã‚', '')}';
       icon = Icons.science;
       iconColor = Colors.green;
       time = _relativeTime(item.dateCalculated);
@@ -582,25 +609,45 @@ class _UserProfileSheet extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    Text(
-                      email.isNotEmpty ? email : 'No Email',
-                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
-                    ),
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF00BCD4).withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(8),
+                    // Show different content based on authentication status
+                    if (user != null) ...[
+                      Text(
+                        email.isNotEmpty ? email : 'No Email',
+                        style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
                       ),
-                      child: Text(
-                        'Plan: ${tierPlan[0].toUpperCase()}${tierPlan.substring(1)}',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: const Color(0xFF006064),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00BCD4).withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Plan: ${tierPlan[0].toUpperCase()}${tierPlan.substring(1)}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF006064),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ] else ...[
+                      Text(
+                        'Guest User',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: Colors.grey[700],
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Sign in to access premium features\nand save your data',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey[600],
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
                     const Spacer(),
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -608,15 +655,30 @@ class _UserProfileSheet extends StatelessWidget {
                         onPressed: () {
                           // Close bottom sheet and navigate immediately
                           Navigator.of(context).pop();
-                          Navigator.of(context).pushAndRemoveUntil(
-                            MaterialPageRoute(builder: (context) => const AuthScreen()),
-                            (route) => false,
-                          );
-                          // Sign out after navigation started
-                          Supabase.instance.client.auth.signOut();
+                          if (user != null) {
+                            // User is logged in - sign out
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(
+                                builder: (context) => const AuthScreen(showBackButton: false),
+                              ),
+                              (route) => false,
+                            );
+                            // Sign out after navigation started
+                            Supabase.instance.client.auth.signOut();
+                          } else {
+                            // User is not logged in - navigate to auth screen
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const AuthScreen(showBackButton: true),
+                              ),
+                            );
+                          }
                         },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF006064),
+                          backgroundColor: user != null 
+                            ? const Color(0xFF006064)  // Dark teal for logout
+                            : const Color(0xFF00BCD4), // Bright teal for sign in
                           foregroundColor: Colors.white,
                           elevation: 2,
                           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -625,10 +687,13 @@ class _UserProfileSheet extends StatelessWidget {
                           ),
                           minimumSize: const Size(double.infinity, 50),
                         ),
-                        icon: const Icon(Icons.logout, size: 24),
-                        label: const Text(
-                          'Logout',
-                          style: TextStyle(
+                        icon: Icon(
+                          user != null ? Icons.logout : Icons.login,
+                          size: 24,
+                        ),
+                        label: Text(
+                          user != null ? 'Logout' : 'Sign In / Sign Up',
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
                           ),

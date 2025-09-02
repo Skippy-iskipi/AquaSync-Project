@@ -10,7 +10,7 @@ import 'dart:convert';
 import '../config/api_config.dart';
 import 'package:provider/provider.dart';
 import '../providers/user_plan_provider.dart';
-import '../services/openai_service.dart';
+import '../services/openai_service.dart'; // OpenAI AI service
 import 'capture.dart';
 
 class LogBookProvider with ChangeNotifier {
@@ -296,6 +296,12 @@ class LogBookProvider with ChangeNotifier {
         'filtration_needs': calculation.filtrationNeeds,
         'date_calculated': calculation.dateCalculated.toIso8601String(),
         'created_at': DateTime.now().toIso8601String(),
+        // AI-generated content fields
+        'water_parameters_response': calculation.waterParametersResponse,
+        'tank_analysis_response': calculation.tankAnalysisResponse,
+        'filtration_response': calculation.filtrationResponse,
+        'diet_care_response': calculation.dietCareResponse,
+        'tankmate_recommendations': calculation.tankmateRecommendations,
       }).select();
 
       if (response.isNotEmpty) {
@@ -553,7 +559,7 @@ class LogBookProvider with ChangeNotifier {
     // If not in cache, call OpenAI API
     print('Generating new care recommendations for $commonName');
     try {
-      final recommendations = await OpenAIService.generateCareRecommendations(commonName, scientificName);
+              final recommendations = await OpenAIService.generateCareRecommendations(commonName, scientificName);
       return recommendations;
     } catch (e) {
       print('Error generating care recommendations: $e');

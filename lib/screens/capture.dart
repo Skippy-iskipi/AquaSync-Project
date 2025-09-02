@@ -17,12 +17,13 @@ import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import '../screens/homepage.dart';
 import '../widgets/snap_tips_dialog.dart';
-import '../services/openai_service.dart';
+import '../services/openai_service.dart'; // OpenAI AI service
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/subscription_page.dart';
 import 'package:lottie/lottie.dart';
+import '../widgets/auth_required_dialog.dart';
 
 // Widget for displaying grouped recommendation fields in an ExpansionTile
 class _RecommendationExpansionGroup extends StatefulWidget {
@@ -164,9 +165,7 @@ class CaptureScreenState extends State<CaptureScreen> {
   bool _isLoading = false;
   bool _isCameraAvailable = false;
 
-  // Retry control for auto-capture on low confidence / no fish
-  int _retryCount = 0;
-  static const int _maxRetries = 2;
+
 
   // Plan-based state
   String _userPlan = 'free';
@@ -224,6 +223,10 @@ class CaptureScreenState extends State<CaptureScreen> {
         final provider = Provider.of<LogBookProvider>(context, listen: false);
         count = provider.savedPredictions.length;
       } catch (_) {}
+    } else {
+      // For unauthenticated users, set plan to 'free' and count to 0
+      plan = 'free';
+      count = 0;
     }
     if (!mounted) return;
     setState(() {
@@ -233,6 +236,10 @@ class CaptureScreenState extends State<CaptureScreen> {
   }
 
   bool _canSave() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      return false; // Don't show dialog here, let the calling method handle it
+    }
     if (_userPlan == 'free' && _savedCapturesCount >= 5) return false;
     // Pro tier has unlimited captures
     if (_userPlan == 'pro') return true;
@@ -240,6 +247,20 @@ class CaptureScreenState extends State<CaptureScreen> {
   }
 
   void _showUpgradeDialog(String message) {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      // Show auth required dialog instead
+      showDialog(
+        context: context,
+        builder: (BuildContext context) => const AuthRequiredDialog(
+          title: 'Sign In Required',
+          message: 'You need to sign in to access premium features and save more captures.',
+        ),
+      );
+      return;
+    }
+    
+    // User is authenticated, show upgrade dialog
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -299,19 +320,7 @@ class CaptureScreenState extends State<CaptureScreen> {
       context: context,
       useRootNavigator: true,
       builder: (context) => SnapTipsDialog(message: reason),
-    ).then((_) {
-      // After dialog closes, offer retry if from camera and retries available
-      if (fromCamera && _retryCount < _maxRetries) {
-        _retryCount++;
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (mounted) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _captureImage(isRetry: true);
-            });
-          }
-        });
-      }
-    });
+    );
   }
 
   Future<void> _initializeCamera() async {
@@ -386,101 +395,272 @@ class CaptureScreenState extends State<CaptureScreen> {
     });
     
     try {
-      // Show loading dialog with scanning animation
+      // Show full-screen loading dialog with enhanced scanning animation
       if (mounted) {
         showDialog(
           context: context,
           barrierDismissible: false,
           useRootNavigator: true,
-          builder: (context) => Dialog(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
+          builder: (context) => Dialog.fullscreen(
+            backgroundColor: const Color(0xFF006064),
             child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0xFF006064),
+                    Color(0xFF00ACC1),
+                    Color(0xFF006064),
+                  ],
+                ),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(height: 16),
-                  Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Container(
-                        width: 300,
-                        height: 300,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          image: DecorationImage(
-                            image: FileImage(io.File(imageFile.path)),
-                            fit: BoxFit.cover,
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    // Header with close button
+                    Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Fish Identification',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        ),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: IconButton(
+                              icon: const Icon(Icons.close, color: Colors.white),
+                              onPressed: () => Navigator.of(context).pop(),
+                            ),
+                          ),
+                        ],
                       ),
-                      Container(
-                        width: 300,
-                        height: 300,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          color: Colors.black.withOpacity(0.3),
-                        ),
-                      ),
-                      // Scanning line animations
-                      ...List.generate(10, (i) => 
-                        TweenAnimationBuilder<double>(
-                          tween: Tween<double>(begin: -300 - (i * 100), end: 500),
-                          duration: const Duration(seconds: 4),
-                          curve: Curves.linear,
-                          builder: (context, double value, child) {
-                            return Positioned(
-                              top: value,
-                              child: Container(
-                                width: 300,
-                                height: 3,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Colors.teal.withOpacity(0.5),
-                                      Colors.teal.withOpacity(1),
-                                      Colors.teal.withOpacity(0.5),
-                                    ],
-                                    stops: const [0.0, 0.5, 1.0],
+                    ),
+                    
+                    // Main scanning area
+                    Expanded(
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            // Image container with scanning overlay
+                            Container(
+                              width: MediaQuery.of(context).size.width * 0.8,
+                              height: MediaQuery.of(context).size.width * 0.8,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.3),
+                                    blurRadius: 20,
+                                    offset: const Offset(0, 10),
                                   ),
-                                ),
+                                ],
                               ),
-                            );
-                          },
-                          onEnd: () {
-                            // Restart animation when it reaches the bottom
-                            if (mounted) {
-                              setState(() {});
-                            }
-                          },
+                              child: Stack(
+                                children: [
+                                  // Fish image
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(20),
+                                    child: Image.file(
+                                      io.File(imageFile.path),
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                  
+                                  // Scanning overlay
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(20),
+                                      color: Colors.black.withOpacity(0.4),
+                                    ),
+                                  ),
+                                  
+                                  // Corner scanning indicators
+                                  Positioned(
+                                    top: 20,
+                                    left: 20,
+                                    child: Container(
+                                      width: 40,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          top: BorderSide(color: Colors.teal, width: 3),
+                                          left: BorderSide(color: Colors.teal, width: 3),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 20,
+                                    right: 20,
+                                    child: Container(
+                                      width: 40,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          top: BorderSide(color: Colors.teal, width: 3),
+                                          right: BorderSide(color: Colors.teal, width: 3),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    bottom: 20,
+                                    left: 20,
+                                    child: Container(
+                                      width: 40,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          bottom: BorderSide(color: Colors.teal, width: 3),
+                                          left: BorderSide(color: Colors.teal, width: 3),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    bottom: 20,
+                                    right: 20,
+                                    child: Container(
+                                      width: 40,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          bottom: BorderSide(color: Colors.teal, width: 3),
+                                          right: BorderSide(color: Colors.teal, width: 3),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  
+                                  // Simple horizontal scanning lines
+                                  ...List.generate(5, (i) => 
+                                    TweenAnimationBuilder<double>(
+                                      tween: Tween<double>(
+                                        begin: -MediaQuery.of(context).size.width * 0.8 - (i * 40),
+                                        end: MediaQuery.of(context).size.width * 0.8 + 50,
+                                      ),
+                                      duration: Duration(seconds: 2 + (i * 1)),
+                                      curve: Curves.easeInOut,
+                                      builder: (context, double value, child) {
+                                        return Positioned(
+                                          top: value,
+                                          child: Container(
+                                            width: MediaQuery.of(context).size.width * 0.8,
+                                            height: 2,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                colors: [
+                                                  Colors.transparent,
+                                                  Colors.teal.withOpacity(0.3),
+                                                  Colors.teal.withOpacity(0.8),
+                                                  Colors.teal.withOpacity(1),
+                                                  Colors.teal.withOpacity(0.8),
+                                                  Colors.teal.withOpacity(0.3),
+                                                  Colors.transparent,
+                                                ],
+                                                stops: const [0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 1.0],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      onEnd: () {
+                                        if (mounted) {
+                                          setState(() {});
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                  
+                                  // Pulsing center dot
+                                  Center(
+                                    child: TweenAnimationBuilder<double>(
+                                      tween: Tween<double>(begin: 0.8, end: 1.2),
+                                      duration: const Duration(seconds: 2),
+                                      curve: Curves.easeInOut,
+                                      builder: (context, double value, child) {
+                                        return Transform.scale(
+                                          scale: value,
+                                          child: Container(
+                                            width: 20,
+                                            height: 20,
+                                            decoration: BoxDecoration(
+                                              color: Colors.teal,
+                                              shape: BoxShape.circle,
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.teal.withOpacity(0.6),
+                                                  blurRadius: 20,
+                                                  spreadRadius: 5,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      onEnd: () {
+                                        if (mounted) {
+                                          setState(() {});
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            
+                            const SizedBox(height: 40),
+                            
+                            // Status text
+                            const Text(
+                              'Analyzing Fish Species',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            
+                            const SizedBox(height: 16),
+                            
+                            Text(
+                              'Please wait while we identify your fish...',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontSize: 16,
+                              ),
+                            ),
+                            
+                            const SizedBox(height: 40),
+                            
+                            // Progress indicator
+                            SizedBox(
+                              width: 200,
+                              child: LinearProgressIndicator(
+                                backgroundColor: Colors.white.withOpacity(0.3),
+                                valueColor: const AlwaysStoppedAnimation<Color>(Colors.teal),
+                                minHeight: 6,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Identifying Fish Species',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF006064),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Please wait...',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -551,9 +731,6 @@ class CaptureScreenState extends State<CaptureScreen> {
                 );
 
             print('Created prediction object: ${prediction.toJson()}');
-
-            // Reset retry count on success
-            _retryCount = 0;
 
             if (mounted) {
               _safePop();
@@ -687,6 +864,19 @@ class CaptureScreenState extends State<CaptureScreen> {
   }
 
   void _savePredictions(List<FishPrediction> predictions) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      // Show auth required dialog
+      showDialog(
+        context: context,
+        builder: (BuildContext context) => const AuthRequiredDialog(
+          title: 'Sign In Required',
+          message: 'You need to sign in to save fish captures to your collection.',
+        ),
+      );
+      return;
+    }
+    
     if (!_canSave()) {
       _showUpgradeDialog(_userPlan == 'free'
         ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro for unlimited captures!'
@@ -750,8 +940,13 @@ class CaptureScreenState extends State<CaptureScreen> {
         builder: (BuildContext context) {
           return WillPopScope(
             onWillPop: () async {
-              // Simply pop back to the existing capture screen
-              Navigator.of(context).pop();
+              // Redirect to homepage initial state instead of going back
+              Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                MaterialPageRoute(
+                  builder: (context) => const HomePage(initialTabIndex: 0),
+                ),
+                (route) => false,
+              );
               return false;
             },
             child: Scaffold(
@@ -762,14 +957,20 @@ class CaptureScreenState extends State<CaptureScreen> {
                 leading: IconButton(
                   icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
                   onPressed: () {
-                    Navigator.of(context).pop();
+                    // Redirect to homepage initial state instead of going back
+                    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                      MaterialPageRoute(
+                        builder: (context) => const HomePage(initialTabIndex: 0),
+                      ),
+                      (route) => false,
+                    );
                   },
                 ),
                 title: const Text(
                   'Fish Identification Results',
                   style: TextStyle(
                     color: Color(0xFF006064),
-                    fontSize: 24,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -778,49 +979,128 @@ class CaptureScreenState extends State<CaptureScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(
-                      width: double.infinity,
-                      height: 300, // Increased image height
-                      child: kIsWeb
-                          ? Image.network(
-                              imageFile.path,
-                              fit: BoxFit.cover,
-                            )
-                          : Image.file(
-                              io.File(imageFile.path),
-                              fit: BoxFit.cover,
+                    // Image container with fish name overlay
+                    Stack(
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          height: 350,
+                          child: kIsWeb
+                              ? Image.network(
+                                  imageFile.path,
+                                  fit: BoxFit.cover,
+                                )
+                              : Image.file(
+                                  io.File(imageFile.path),
+                                  fit: BoxFit.cover,
+                                ),
+                        ),
+                        // Fish name overlay positioned higher for better visibility
+                        Positioned(
+                          bottom: 15,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.black.withOpacity(0.8),
+                                  Colors.black.withOpacity(0.95),
+                                ],
+                              ),
                             ),
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  highestPrediction.commonName,
+                                  style: const TextStyle(
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                    shadows: [
+                                      Shadow(
+                                        offset: Offset(1, 1),
+                                        blurRadius: 3,
+                                        color: Colors.black54,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  highestPrediction.scientificName,
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    fontStyle: FontStyle.italic,
+                                    color: Colors.white,
+                                    shadows: [
+                                      Shadow(
+                                        offset: Offset(1, 1),
+                                        blurRadius: 3,
+                                        color: Colors.black54,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    
+                    // Floating info card
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Transform.translate(
+                        offset: const Offset(0, -30),
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 20,
+                                offset: const Offset(0, 10),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              _buildInfoCard('Max Size', highestPrediction.maxSize, Icons.straighten),
+                              _buildInfoCard('Lifespan', highestPrediction.lifespan, Icons.timer),
+                              _buildInfoCard('Water Type', highestPrediction.waterType, Icons.water),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                    // About this fish section
                     Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            highestPrediction.commonName,
-                            style: const TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            highestPrediction.scientificName,
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontStyle: FontStyle.italic,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(height: 20),
                           DescriptionWidget(
                             description: highestPrediction.description,
-                            maxLines: 3,
+                            maxLines: 6,
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 30),
+                          
+                          // Image gallery
                           FishImagesGrid(fishName: highestPrediction.commonName),
                           const SizedBox(height: 30),
+                          
+                          // Basic Information section
                           const Text(
                             'Basic Information',
                             style: TextStyle(
@@ -830,12 +1110,12 @@ class CaptureScreenState extends State<CaptureScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          _buildDetailRow('Water Type', highestPrediction.waterType),
-                          _buildDetailRow('Maximum Size', highestPrediction.maxSize),
-                          _buildDetailRow('Temperament', highestPrediction.temperament),
-                          _buildDetailRow('Care Level', highestPrediction.careLevel),
-                          _buildDetailRow('Lifespan', highestPrediction.lifespan),
-                          const SizedBox(height: 40),
+                          _buildDetailCard('Temperament', highestPrediction.temperament, Icons.psychology),
+                          _buildDetailCard('Social Behavior', highestPrediction.socialBehavior, Icons.group),
+                          _buildDetailCard('Compatibility Notes', highestPrediction.compatibilityNotes, Icons.info),
+                          const SizedBox(height: 30),
+                          
+                          // Habitat Information section
                           const Text(
                             'Habitat Information',
                             style: TextStyle(
@@ -845,11 +1125,20 @@ class CaptureScreenState extends State<CaptureScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          _buildDetailRow('Temperature Range', highestPrediction.temperatureRange.isNotEmpty ? highestPrediction.temperatureRange : 'Unknown'),
-                          _buildDetailRow('pH Range', highestPrediction.phRange.isNotEmpty ? highestPrediction.phRange : 'Unknown'),
-                          _buildDetailRow('Minimum Tank Size', highestPrediction.minimumTankSize.isNotEmpty ? highestPrediction.minimumTankSize : 'Unknown'),
-                          _buildDetailRow('Social Behavior', highestPrediction.socialBehavior.isNotEmpty ? highestPrediction.socialBehavior : 'Unknown'),
-                          const SizedBox(height: 40),
+                          _buildDetailCard('pH Range', highestPrediction.phRange.isNotEmpty ? highestPrediction.phRange : 'Unknown', Icons.science),
+                          _buildDetailCard('Minimum Tank Size', highestPrediction.minimumTankSize.isNotEmpty ? highestPrediction.minimumTankSize : 'Unknown', Icons.water_drop),
+                          _buildDetailCard(
+                            'Temperature Range',
+                            (highestPrediction.temperatureRange.isNotEmpty &&
+                                    highestPrediction.temperatureRange.toLowerCase() != 'unknown')
+                                ? '${highestPrediction.temperatureRange} °C'
+                                : 'Unknown',
+                            Icons.thermostat,
+                          ),
+                          _buildDetailCard('Tank Level', highestPrediction.tankLevel.isNotEmpty ? highestPrediction.tankLevel : 'Unknown', Icons.layers),
+                          const SizedBox(height: 30),
+                          
+                          // Diet Information section
                           const Text(
                             'Diet Information',
                             style: TextStyle(
@@ -875,31 +1164,33 @@ class CaptureScreenState extends State<CaptureScreen> {
                                   'behavioral_notes': 'N/A',
                                   'tankmate_feeding_conflict': 'N/A',
                                 };
-                              final fields = [
-                                {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
-                                {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
-                                {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
-                                {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
-                                {'label': 'Fasting Schedule', 'key': 'fasting_schedule', 'icon': Icons.calendar_today},
-                                {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
-                                {'label': 'Behavioral Notes', 'key': 'behavioral_notes', 'icon': Icons.psychology},
-                                {'label': 'Tankmate Feeding Conflict', 'key': 'tankmate_feeding_conflict', 'icon': Icons.warning},
-                              ];
-                              final List<List<Map<String, dynamic>>> fieldGroups = [
-                                fields.sublist(0, 2),
-                                fields.sublist(2, 5),
-                                fields.sublist(5, 8),
-                              ];
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  ...fieldGroups.map((group) => _RecommendationExpansionGroup(fields: group, data: dietData)).toList(),
-                                ],
-                              );
-                            },
-                          ),
+                                final fields = [
+                                  {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
+                                  {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
+                                  {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
+                                  {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
+                                  {'label': 'Fasting Schedule', 'key': 'fasting_schedule', 'icon': Icons.calendar_today},
+                                  {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
+                                  {'label': 'Behavioral Notes', 'key': 'behavioral_notes', 'icon': Icons.psychology},
+                                  {'label': 'Tankmate Feeding Conflict', 'key': 'tankmate_feeding_conflict', 'icon': Icons.warning},
+                                ];
+                                final List<List<Map<String, dynamic>>> fieldGroups = [
+                                  fields.sublist(0, 2),
+                                  fields.sublist(2, 5),
+                                  fields.sublist(5, 8),
+                                ];
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    ...fieldGroups.map((group) => _RecommendationExpansionGroup(fields: group, data: dietData)).toList(),
+                                  ],
+                                );
+                              },
+                            ),
                           ],
                           const SizedBox(height: 40),
+                          
+                          // Action buttons
                           Row(
                             children: [
                               if (_canSave()) ...[
@@ -910,15 +1201,16 @@ class CaptureScreenState extends State<CaptureScreen> {
                                       foregroundColor: Colors.white,
                                       padding: const EdgeInsets.symmetric(vertical: 16),
                                       shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
+                                      elevation: 2,
                                     ),
                                     onPressed: () {
                                       _savePredictions([highestPrediction]);
                                     },
                                     child: const Text(
-                                      'Save',
-                                      style: TextStyle(fontSize: 18),
+                                      'Save to Collection',
+                                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                                     ),
                                   ),
                                 ),
@@ -931,7 +1223,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                                       foregroundColor: Colors.white,
                                       padding: const EdgeInsets.symmetric(vertical: 16),
                                       shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
                                     ),
                                     onPressed: () {
@@ -941,7 +1233,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                                     },
                                     child: const Text(
                                       'Upgrade to Save',
-                                      style: TextStyle(fontSize: 18),
+                                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                                     ),
                                   ),
                                 ),
@@ -954,12 +1246,12 @@ class CaptureScreenState extends State<CaptureScreen> {
                                     foregroundColor: Colors.white,
                                     padding: const EdgeInsets.symmetric(vertical: 16),
                                     shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
+                                      borderRadius: BorderRadius.circular(12),
                                     ),
+                                    elevation: 2,
                                   ),
                                   onPressed: () {
-                                    final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
-                                    logBookProvider.addPredictions([highestPrediction]);
+                                    // Navigate to sync screen directly without saving
                                     Navigator.pushReplacement(
                                       context,
                                       MaterialPageRoute(
@@ -973,7 +1265,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                                   },
                                   child: const Text(
                                     'Sync',
-                                    style: TextStyle(fontSize: 18),
+                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                                   ),
                                 ),
                               ),
@@ -993,42 +1285,25 @@ class CaptureScreenState extends State<CaptureScreen> {
     );
   }
 
+  // Method to fetch fish species data from Supabase
+  Future<Map<String, dynamic>?> _fetchFishSpeciesData(String commonName, String scientificName) async {
+    try {
+      final response = await Supabase.instance.client
+          .from('fish_species')
+          .select('*')
+          .or('common_name.ilike.%$commonName%,scientific_name.ilike.%$scientificName%')
+          .limit(1)
+          .single();
+      
+      return response;
+    } catch (e) {
+      print('Error fetching fish species data: $e');
+      return null;
+    }
+  }
+
   // Method to load the description and care recommendations, then show results
   Future<void> _loadDescriptionAndShowResults(XFile imageFile, FishPrediction prediction, String commonName, String scientificName) async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      useRootNavigator: true,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 150,
-                height: 150,
-                child: Lottie.asset(
-                  'lib/lottie/BowlAnimation.json',
-                  fit: BoxFit.contain,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Generating Prediction Result',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    
     try {
       print('Attempting to generate description and care recommendations for $commonName ($scientificName)');
       
@@ -1047,8 +1322,8 @@ class CaptureScreenState extends State<CaptureScreen> {
         print('Generating new results for $commonName');
         // Generate both description and care recommendations in parallel
         final results = await Future.wait([
-          OpenAIService.generateFishDescription(commonName, scientificName),
-          OpenAIService.generateCareRecommendations(commonName, scientificName),
+                  OpenAIService.generateFishDescription(commonName, scientificName),
+        OpenAIService.generateCareRecommendations(commonName, scientificName),
         ]);
         
         description = results[0] as String;
@@ -1059,38 +1334,46 @@ class CaptureScreenState extends State<CaptureScreen> {
         _careRecommendationsCache[cacheKey] = careRecommendations;
       }
       
+      // Fetch fish species data from Supabase
+      final fishSpeciesData = await _fetchFishSpeciesData(commonName, scientificName);
+      
       // Cache the image path for this fish
       _imagePathCache[cacheKey] = imageFile.path;
       
-      // Update the prediction with the description and care recommendations
-      final updatedPrediction = FishPrediction(
-        commonName: prediction.commonName,
-        scientificName: prediction.scientificName,
-        waterType: prediction.waterType,
-        probability: prediction.probability,
-        imagePath: prediction.imagePath,
-        maxSize: prediction.maxSize,
-        temperament: prediction.temperament,
-        careLevel: prediction.careLevel,
-        lifespan: prediction.lifespan,
-        diet: prediction.diet,
-        preferredFood: prediction.preferredFood,
-        feedingFrequency: prediction.feedingFrequency,
-        description: description,
-        temperatureRange: prediction.temperatureRange, 
-        phRange: prediction.phRange,
-        socialBehavior: prediction.socialBehavior,
-        minimumTankSize: prediction.minimumTankSize
-      );
+              // Update the prediction with the description, care recommendations, and fish species data
+        final updatedPrediction = FishPrediction(
+          commonName: prediction.commonName,
+          scientificName: prediction.scientificName,
+          waterType: prediction.waterType,
+          probability: prediction.probability,
+          imagePath: prediction.imagePath,
+          maxSize: prediction.maxSize,
+          temperament: prediction.temperament,
+          careLevel: prediction.careLevel,
+          lifespan: prediction.lifespan,
+          diet: prediction.diet,
+          preferredFood: prediction.preferredFood,
+          feedingFrequency: prediction.feedingFrequency,
+          description: description,
+          temperatureRange: fishSpeciesData?['temperature_range'] ?? prediction.temperatureRange, 
+          phRange: fishSpeciesData?['ph_range'] ?? prediction.phRange,
+          socialBehavior: fishSpeciesData?['social_behavior'] ?? prediction.socialBehavior,
+          minimumTankSize: fishSpeciesData?['minimum_tank_size_(l)'] != null 
+              ? '${fishSpeciesData!['minimum_tank_size_(l)']} L' 
+              : prediction.minimumTankSize,
+          compatibilityNotes: fishSpeciesData?['compatibility_notes'] ?? 'No compatibility notes available',
+          tankLevel: fishSpeciesData?['tank_level'] ?? prediction.tankLevel,
+        );
       
       if (mounted) {
-        _safePop(); // Close the loading dialog if still present
         _showPredictionResults(imageFile, [updatedPrediction], careRecommendations);
       }
     } catch (e) {
       print('Error loading description and care recommendations: $e');
       if (mounted) {
-        _safePop(); // Close the loading dialog if still present
+        // Even if AI generation fails, still try to fetch Supabase data
+        final fishSpeciesData = await _fetchFishSpeciesData(commonName, scientificName);
+        
         // Still show results but with error messages
         final fallbackPrediction = FishPrediction(
           commonName: prediction.commonName,
@@ -1106,15 +1389,104 @@ class CaptureScreenState extends State<CaptureScreen> {
           preferredFood: prediction.preferredFood,
           feedingFrequency: prediction.feedingFrequency,
           description: 'Failed to generate description. Try again later.',
-          temperatureRange: prediction.temperatureRange, 
-          phRange: prediction.phRange,
-          socialBehavior: prediction.socialBehavior,
-          minimumTankSize: prediction.minimumTankSize
+          temperatureRange: fishSpeciesData?['temperature_range'] ?? prediction.temperatureRange, 
+          phRange: fishSpeciesData?['ph_range'] ?? prediction.phRange,
+          socialBehavior: fishSpeciesData?['social_behavior'] ?? prediction.socialBehavior,
+          minimumTankSize: fishSpeciesData?['minimum_tank_size_(l)'] != null 
+              ? '${fishSpeciesData!['minimum_tank_size_(l)']} L' 
+              : prediction.minimumTankSize,
+          compatibilityNotes: fishSpeciesData?['compatibility_notes'] ?? 'No compatibility notes available',
+          tankLevel: fishSpeciesData?['tank_level'] ?? prediction.tankLevel,
         );
         final errorCareData = {'error': 'Failed to load diet/care recommendations.'};
         _showPredictionResults(imageFile, [fallbackPrediction], errorCareData);
       }
     }
+  }
+
+  Widget _buildInfoCard(String label, String value, IconData icon) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          icon,
+          color: const Color(0xFF00ACC1),
+          size: 28,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF006064),
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.grey[600],
+            fontWeight: FontWeight.w500,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailCard(String label, String value, IconData icon) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00ACC1).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              icon,
+              color: const Color(0xFF00ACC1),
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF006064),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Colors.grey[700],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildDetailRow(String label, String value) {
@@ -1185,7 +1557,7 @@ class CaptureScreenState extends State<CaptureScreen> {
     );
   }
 
-  Future<void> _captureImage({bool isRetry = false}) async {
+  Future<void> _captureImage() async {
     if (_controller == null || !_isCameraAvailable) {
       showCustomNotification(
         context,
@@ -1198,9 +1570,6 @@ class CaptureScreenState extends State<CaptureScreen> {
     try {
       await _initializeControllerFuture;
       final image = await _controller!.takePicture();
-      if (!isRetry) {
-        _retryCount = 0; // reset for a fresh capture
-      }
       await _analyzeFishImage(image, await _saveImageToStorage(image), fromCamera: true);
     } catch (e) {
       print('Image capture error: $e');

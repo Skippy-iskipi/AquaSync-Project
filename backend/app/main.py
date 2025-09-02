@@ -36,6 +36,15 @@ from .models import FishSpecies
 from .routes.fish_images import router as fish_images_router
 from .routes.model_management import router as model_management_router
 from .routes.payments import router as payments_router
+from .compatibility_logic import parse_range, get_temperament_score, can_same_species_coexist, check_pairwise_compatibility
+from .conditional_compatibility import check_conditional_compatibility
+from .enhanced_compatibility_integration import (
+    check_enhanced_fish_compatibility, 
+    get_compatibility_summary,
+    check_same_species_enhanced,
+    get_enhanced_tankmate_compatibility_info
+)
+from .ai_compatibility_generator import ai_generator
 from supabase import Client
 
 # Set up logging
@@ -112,253 +121,47 @@ def log_memory_usage(context: str):
     memory_mb = get_memory_usage()
     logger.info(f"Memory usage at {context}: {memory_mb:.2f} MB")
 
-# Helper function to determine if a fish species can coexist with itself
-def can_same_species_coexist(fish_name: str, fish_info: Dict[str, Any]) -> Tuple[bool, str]:
-    """
-    Determines if multiple individuals of the same fish species can coexist
-    based on temperament, behavior, and species-specific knowledge.
+def find_fish_folder(fish_name: str) -> str:
+    """Find the fish folder by trying different name variations"""
+    from pathlib import Path
     
-    Args:
-        fish_name: The common name of the fish
-        fish_info: The database record for the fish with all attributes
-        
-    Returns:
-        (bool, str): Tuple of (can_coexist, reason)
-    """
-    fish_name_lower = fish_name.lower()
-    temperament = fish_info.get('temperament', "").lower()
-    behavior = fish_info.get('social_behavior', "").lower()
+    base_path = Path(__file__).resolve().parent / "datasets" / "fish_images" / "train"
     
-    # List of fish that are often aggressive towards their own species
-    incompatible_species = [
-        "betta", "siamese fighting fish", "paradise fish", 
-        "dwarf gourami", "honey gourami", 
-        "flowerhorn", "wolf cichlid", "oscar", "jaguar cichlid",
-        "rainbow shark", "red tail shark", "pearl gourami",
-        "silver arowana", "jardini arowana", "banjar arowana"
-    ]
+    # Try multiple variants to be resilient to naming differences
+    variants = []
+    provided = fish_name.strip()
+    if provided:
+        variants.append(provided)  # Exact match
+        variants.append(provided.title())  # Title Case (e.g., betta -> Betta)
+        variants.append(provided.lower())  # Lower case (e.g., Betta -> betta)
+        # Handle cases like "PeaPuffer" -> "Pea Puffer"
+        if ' ' not in provided:
+            # Try to insert spaces before capital letters (except the first)
+            spaced_version = provided[0] + ''.join([' ' + c if c.isupper() and i > 0 else c for i, c in enumerate(provided[1:])])
+            variants.append(spaced_version)
     
-    # Check for known incompatible species
-    for species in incompatible_species:
-        if species in fish_name_lower:
-            return False, f"{fish_name} are known to be aggressive/territorial with their own kind."
+    # Try to find a matching folder
+    for variant in variants:
+        folder_path = base_path / variant
+        if folder_path.exists() and folder_path.is_dir():
+            return str(folder_path)
     
-    # Check temperament keywords
-    if "aggressive" in temperament or "territorial" in temperament and "community" not in temperament:
-        return False, f"{fish_name} have an aggressive or territorial temperament and may fight with each other."
+    # If no exact match, try fuzzy matching
+    for folder in base_path.iterdir():
+        if folder.is_dir():
+            folder_name = folder.name.lower()
+            fish_name_lower = fish_name.lower()
+            
+            # Check if fish name is contained in folder name or vice versa
+            if (fish_name_lower in folder_name or 
+                folder_name in fish_name_lower or
+                fish_name_lower.replace(' ', '') in folder_name.replace(' ', '') or
+                folder_name.replace(' ', '') in fish_name_lower.replace(' ', '')):
+                return str(folder)
     
-    # Check social behavior keywords
-    if "solitary" in behavior:
-        return False, f"{fish_name} are solitary and prefer to live alone."
-    
-    return True, f"{fish_name} can generally live together in groups."
+    return None
 
-def parse_range(range_str: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
-    """Parse a range string (e.g., '6.5-7.5' or '22-28') into min and max values."""
-    if not range_str:
-        return None, None
-    try:
-        # Remove any non-numeric characters except dash and dot
-        range_str = (
-            str(range_str)
-            .replace('Â°C', '')
-            .replace('C', '')
-            .replace('c', '')
-            .replace('pH', '')
-            .replace('PH', '')
-            .strip()
-        )
-        parts = range_str.split('-')
-        if len(parts) == 2:
-            return float(parts[0].strip()), float(parts[1].strip())
-        return None, None
-    except (ValueError, IndexError):
-        return None, None
-
-def get_temperament_score(temperament_str: Optional[str]) -> int:
-    """Converts a temperament string to a numerical score for comparison."""
-    if not temperament_str:
-        return 0  # Default to peaceful
-    temperament_lower = temperament_str.lower()
-    if "aggressive" in temperament_lower:
-        return 2
-    if "semi-aggressive" in temperament_lower:
-        return 1
-    if "peaceful" in temperament_lower or "community" in temperament_lower:
-        return 0
-    if "territorial" in temperament_lower and "peaceful" not in temperament_lower:
-        return 1
-    return 0
-
-def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -> Tuple[bool, List[str]]:
-    """
-    Checks if two fish are compatible based on a set of explicit rules.
-
-    Args:
-        fish1: A dictionary containing the details of the first fish.
-        fish2: A dictionary containing the details of the second fish.
-
-    Returns:
-        A tuple containing a boolean for compatibility and a list of reasons if not compatible.
-    """
-    reasons = []
-
-    # Rule 1: Water Type
-    if fish1.get('water_type') != fish2.get('water_type'):
-        reasons.append(f"Water type mismatch: {fish1.get('water_type')} vs {fish2.get('water_type')}")
-
-    # Extract commonly used fields safely
-    def _to_float(val) -> Optional[float]:
-        try:
-            if val is None:
-                return None
-            return float(val)
-        except (ValueError, TypeError):
-            return None
-
-    name1 = str(fish1.get('common_name') or '').lower()
-    name2 = str(fish2.get('common_name') or '').lower()
-    size1 = _to_float(fish1.get('max_size_(cm)')) or 0.0
-    size2 = _to_float(fish2.get('max_size_(cm)')) or 0.0
-    min_tank1 = (
-        _to_float(fish1.get('minimum_tank_size_l'))
-        or _to_float(fish1.get('minimum_tank_size_(l)'))
-        or _to_float(fish1.get('minimum_tank_size'))
-    )
-    min_tank2 = (
-        _to_float(fish2.get('minimum_tank_size_l'))
-        or _to_float(fish2.get('minimum_tank_size_(l)'))
-        or _to_float(fish2.get('minimum_tank_size'))
-    )
-
-    temp1_str = fish1.get('temperament')
-    temp2_str = fish2.get('temperament')
-    temp1_score = get_temperament_score(temp1_str)
-    temp2_score = get_temperament_score(temp2_str)
-    behavior1 = str(fish1.get('social_behavior') or '').lower()
-    behavior2 = str(fish2.get('social_behavior') or '').lower()
-
-    # Rule 2: Size Difference (general)
-    try:
-        if (size1 > 0 and size2 > 0) and (size1 / size2 >= 2 or size2 / size1 >= 2):
-            reasons.append("Significant size difference may lead to predation or bullying.")
-    except Exception:
-        logger.warning("Could not parse size for compatibility check.")
-
-    # Rule 3: Temperament
-    if temp1_score == 2 and temp2_score == 0:
-        reasons.append(f"Temperament conflict: '{temp1_str}' fish cannot be kept with '{temp2_str}' fish.")
-    if temp2_score == 2 and temp1_score == 0:
-        reasons.append(f"Temperament conflict: '{temp2_str}' fish cannot be kept with '{temp1_str}' fish.")
-
-    # New Rule 3b: Aggressive vs Aggressive is high-risk
-    if temp1_score == 2 and temp2_score == 2:
-        reasons.append("Both fish are aggressive; high risk of severe fighting and territorial disputes.")
-
-    # New Rule 3c: Territorial or Solitary behavior
-    if ("solitary" in behavior1) or ("solitary" in behavior2):
-        reasons.append("At least one species is solitary and prefers to live alone.")
-    if (temp1_str and isinstance(temp1_str, str) and "territorial" in temp1_str.lower()) or \
-       (temp2_str and isinstance(temp2_str, str) and "territorial" in temp2_str.lower()):
-        # Escalate if both are medium/large
-        if (size1 >= 20 and size2 >= 20):
-            reasons.append("Territorial species pairing (both medium/large) is likely to lead to conflict.")
-        else:
-            reasons.append("Territorial behavior increases conflict risk, especially in limited space.")
-
-    # Rule 4: pH Range Overlap
-    try:
-        ph1_min, ph1_max = parse_range(fish1.get('ph_range'))
-        ph2_min, ph2_max = parse_range(fish2.get('ph_range'))
-        if ph1_min is not None and ph2_min is not None and (ph1_max < ph2_min or ph2_max < ph1_min):
-            reasons.append(f"Incompatible pH requirements: {fish1.get('ph_range')} vs {fish2.get('ph_range')}")
-    except (ValueError, TypeError):
-        pass
-
-    # Rule 5: Temperature Range Overlap
-    try:
-        t1_min, t1_max = parse_range(fish1.get('temperature_range_c') or fish1.get('temperature_range_(Â°c)'))
-        t2_min, t2_max = parse_range(fish2.get('temperature_range_c') or fish2.get('temperature_range_(Â°c)'))
-        if t1_min is not None and t2_min is not None and (t1_max < t2_min or t2_max < t1_min):
-            reasons.append(f"Incompatible temperature requirements.")
-    except (ValueError, TypeError):
-        pass
-
-    # New Rule 6: Predatory species heuristics by name (broad, not just arowanas)
-    predator_keywords = [
-        "arowana", "oscar", "flowerhorn", "wolf cichlid", "snakehead", "peacock bass",
-        "pike cichlid", "payara", "gar", "bichir", "datnoid", "dorado", "piranha",
-        "bull shark", "barracuda", "tiger shovelnose", "red tail catfish"
-    ]
-    is_pred1 = any(k in name1 for k in predator_keywords)
-    is_pred2 = any(k in name2 for k in predator_keywords)
-    if is_pred1 and is_pred2:
-        reasons.append("Both species are large predatory/territorial fish; cohabitation is generally unsafe.")
-
-    # New Rule 7: Predation risk using size and temperament
-    try:
-        if size1 > 0 and size2 > 0:
-            ratio = max(size1, size2) / min(size1, size2) if min(size1, size2) > 0 else None
-            if ratio and ratio >= 1.5 and (is_pred1 or is_pred2 or temp1_score >= 1 or temp2_score >= 1):
-                reasons.append("Size imbalance with predatory/territorial temperament increases predation/bullying risk.")
-    except Exception:
-        pass
-
-    # New Rule 7b: Diet-based risks (using 'diet' and 'preferred_food')
-    def _diet_category(diet: str, pref: str) -> str:
-        s = f"{diet} {pref}".lower()
-        if any(k in s for k in ["piscivore", "feeds on fish", "fish-based", "fish prey"]):
-            return "piscivore"
-        if "carniv" in s or any(k in s for k in ["meat", "predator", "live food"]):
-            return "carnivore"
-        if "herbiv" in s or any(k in s for k in ["algae", "vegetable", "plant"]):
-            return "herbivore"
-        if "omniv" in s:
-            return "omnivore"
-        if any(k in s for k in ["plankt", "zooplank"]):
-            return "planktivore"
-        if any(k in s for k in ["insect", "invertebr", "worm"]):
-            return "invertivore"
-        return "unknown"
-
-    diet1_raw = str(fish1.get('diet') or '').lower()
-    pref1_raw = str(fish1.get('preferred_food') or '').lower()
-    diet2_raw = str(fish2.get('diet') or '').lower()
-    pref2_raw = str(fish2.get('preferred_food') or '').lower()
-    cat1 = _diet_category(diet1_raw, pref1_raw)
-    cat2 = _diet_category(diet2_raw, pref2_raw)
-
-    # Carnivore/piscivore with smaller tankmates
-    try:
-        if size1 > 0 and size2 > 0:
-            if cat1 in ("piscivore", "carnivore") and size1 >= size2 * 1.3:
-                reasons.append("Carnivorous/piscivorous diet with a much smaller tankmate increases predation risk.")
-            if cat2 in ("piscivore", "carnivore") and size2 >= size1 * 1.3:
-                reasons.append("Carnivorous/piscivorous diet with a much smaller tankmate increases predation risk.")
-    except Exception:
-        pass
-
-    # Both carnivorous/piscivorous and medium/large size → feeding aggression
-    if (cat1 in ("piscivore", "carnivore")) and (cat2 in ("piscivore", "carnivore")) and (size1 >= 20 and size2 >= 20):
-        reasons.append("Both species are carnivorous/piscivorous and medium/large; high competition and aggression during feeding.")
-
-    # Herbivore with large carnivore/piscivore
-    if (cat1 == "herbivore" and cat2 in ("piscivore", "carnivore") and size2 >= 20) or \
-       (cat2 == "herbivore" and cat1 in ("piscivore", "carnivore") and size1 >= 20):
-        reasons.append("Herbivore paired with a large carnivore/piscivore is at risk of harassment or predation.")
-
-    # New Rule 8: Large aggressive/territorial combo
-    if (size1 >= 30 and size2 >= 30) and (temp1_score >= 1 and temp2_score >= 1):
-        reasons.append("Both species are large and non-peaceful; high likelihood of severe aggression in shared tanks.")
-
-    # New Rule 9: Extremely large minimum tank requirements suggest incompatibility without exceptionally large systems
-    try:
-        if (min_tank1 and min_tank2) and (min_tank1 >= 300 or min_tank2 >= 300):
-            reasons.append("One or both species require very large tanks; mixing species further increases risk in typical setups.")
-    except Exception:
-        pass
-
-    return not reasons, reasons
+# Compatibility functions are now imported from compatibility_logic and conditional_compatibility modules
 
 def download_file_with_retry(storage, object_key: str, max_retries: int = 3, retry_delay: float = 2.0) -> bytes:
     """Download file from Supabase storage with retry logic"""
@@ -888,107 +691,63 @@ async def get_fish_list(db: Client = Depends(get_supabase_client)):
 @app.get("/fish-image/{fish_name}")
 async def get_fish_image(
     fish_name: str,
+    specific: str = Query(default=None, description="Specific image filename to return"),
     debug: bool = False,
     db: Client = Depends(get_supabase_client),
 ):
-    """Return a random image URL for a fish from Supabase Storage.
+    """Return an image for a fish from local dataset folder.
 
-    Looks in bucket 'models' under folder 'fish-images/{common_name}' where
-    common_name removes spaces and non-alphanumeric (e.g., 'Kuhli Loach' -> 'KuhliLoach').
-    Returns a public URL if available, otherwise a signed URL valid for 1 hour.
+    Looks in backend/app/datasets/fish_images/train/{fish_name}/ folder.
+    If 'specific' filename is provided, returns that exact image.
+    Otherwise, returns a random image.
+    Returns the image file directly as a FileResponse.
     """
-    import re
     import random
-
-    def _folder_from_name(name: str) -> str:
-        # Remove spaces and non-alphanumeric characters
-        no_spaces = name.replace(' ', '')
-        return re.sub(r"[^A-Za-z0-9_-]", "", no_spaces)
+    from pathlib import Path
 
     try:
-        # Use the 'fish-images' bucket as shown in storage
-        storage = db.storage.from_("fish-images")
-        base = "raw_fish_images"
-        # Try multiple variants to be resilient to naming differences
-        variants = []
-        provided = fish_name.strip()
-        if provided:
-            variants.append(f"{base}/{provided}")
-            # Title Case variant (e.g., betta -> Betta, african cichlid -> African Cichlid)
-            variants.append(f"{base}/{provided.title()}")
-        # Sanitized no-space variant (e.g., AfricanCichlid)
-        variants.append(f"{base}/{_folder_from_name(provided)}")
-
-        items = []
-        folder = None
-        tried_paths = []
-        for candidate in variants:
-            try:
-                # Try without and with trailing slash to handle SDK differences
-                for path_variant in (candidate, f"{candidate}/"):
-                    tried_paths.append(path_variant)
-                    lst = storage.list(path=path_variant) or []
-                    # Keep only files (exclude subfolders)
-                    file_items = []
-                    for it in lst:
-                        # supabase-py may return dicts; detect folder by id/name ending with '/'
-                        nm = getattr(it, 'name', None) or (it.get('name') if isinstance(it, dict) else None)
-                        is_folder = bool(nm and str(nm).endswith('/'))
-                        if not is_folder and nm:
-                            file_items.append(it)
-                    if file_items:
-                        items = file_items
-                        folder = path_variant.rstrip('/')
-                        break
-                if items:
-                    break
-            except Exception:
-                continue
-        if not items or not folder:
+        # Find the fish folder using the utility function
+        fish_folder = find_fish_folder(fish_name)
+        
+        if not fish_folder:
             detail = {"message": f"No images found for fish: {fish_name}"}
             if debug:
-                detail["tried_paths"] = tried_paths
+                detail["searched_path"] = str(Path(__file__).resolve().parent / "datasets" / "fish_images" / "train")
             raise HTTPException(status_code=404, detail=detail)
 
-        choice = random.choice(items)
-        name = getattr(choice, 'name', None) or choice.get('name') if isinstance(choice, dict) else None
-        if not name:
-            raise HTTPException(status_code=404, detail=f"No image files found for fish: {fish_name}")
+        # Get list of image files in the folder
+        folder_path = Path(fish_folder)
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+        
+        image_files = []
+        for file_path in folder_path.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+                image_files.append(file_path)
+        
+        if not image_files:
+            raise HTTPException(status_code=404, detail=f"No image files found in folder for fish: {fish_name}")
 
-        file_path = f"{folder}/{name}"
+        # Select image based on parameters
+        if specific:
+            # Look for the specific image
+            selected_image = folder_path / specific
+            if not selected_image.exists():
+                raise HTTPException(status_code=404, detail=f"Specific image '{specific}' not found")
+        else:
+            # Select a random image
+            selected_image = random.choice(image_files)
+        
+        # Return the image file directly
+        return FileResponse(
+            path=str(selected_image),
+            media_type=f"image/{selected_image.suffix.lower().lstrip('.')}",
+            filename=selected_image.name
+        )
 
-        def _extract_url(val):
-            # Handle both string and dict return types from supabase-py
-            if not val:
-                return None
-            if isinstance(val, str):
-                return val
-            if isinstance(val, dict):
-                # Common keys in supabase clients
-                for k in ("publicUrl", "public_url", "signedURL", "signedUrl", "signed_url", "url"):
-                    if k in val and isinstance(val[k], str) and val[k]:
-                        return val[k]
-            return None
-
-        try:
-            public_val = storage.get_public_url(file_path)
-            url = _extract_url(public_val)
-            if not url:
-                signed_val = storage.create_signed_url(file_path, 3600)
-                url = _extract_url(signed_val)
-        except Exception:
-            # Fallback to signed URL if public fails
-            signed_val = storage.create_signed_url(file_path, 3600)
-            url = _extract_url(signed_val)
-
-        if not url:
-            raise HTTPException(status_code=500, detail="Failed to generate image URL")
-
-        return {"url": url, "file": name}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching fish image from storage: {e}")
+        logger.error(f"Error fetching fish image from local dataset: {e}")
         raise HTTPException(status_code=500, detail="Error fetching fish image")
 
 @app.get("/fish-species")
@@ -1026,26 +785,56 @@ async def check_group_compatibility(payload: FishGroup, db: Client = Depends(get
         return fish_data
 
     async def fetch_fish_image_base64(fish_name: str) -> str:
+        """Fetch fish image from local dataset and convert to base64"""
         if fish_name in fish_image_cache:
             return fish_image_cache[fish_name]
+        
+        try:
+            import base64
+            import random
+            from pathlib import Path
             
-        response = db.table('fish_images_dataset').select('*').ilike('common_name', fish_name).execute()
-        images = response.data if response.data else []
-        
-        image_result = None
-        if images:
-            image = random.choice(images)
-            image_data = image.get('image_data')
-            if image_data:
-                if isinstance(image_data, str) and image_data.startswith('data:image'):
-                    image_result = image_data
-                elif isinstance(image_data, str):
-                    image_result = f"data:image/jpeg;base64,{image_data}"
-                else:
-                    image_result = f"data:image/jpeg;base64,{base64.b64encode(image_data).decode('utf-8')}"
-        
-        fish_image_cache[fish_name] = image_result
-        return image_result
+            # Find the fish folder using the utility function
+            fish_folder = find_fish_folder(fish_name)
+            
+            if not fish_folder:
+                logger.warning(f"No local images found for fish: {fish_name}")
+                return None
+
+            # Get list of image files in the folder
+            folder_path = Path(fish_folder)
+            image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+            
+            image_files = []
+            for file_path in folder_path.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+                    image_files.append(file_path)
+            
+            if not image_files:
+                logger.warning(f"No image files found in folder for fish: {fish_name}")
+                return None
+
+            # Select a random image
+            selected_image = random.choice(image_files)
+            
+            # Read the image file and convert to base64
+            with open(selected_image, 'rb') as img_file:
+                img_data = img_file.read()
+                img_base64 = base64.b64encode(img_data).decode('utf-8')
+                
+                # Determine MIME type based on file extension
+                mime_type = f"image/{selected_image.suffix.lower().lstrip('.')}"
+                if mime_type == "image/jpg":
+                    mime_type = "image/jpeg"
+                
+                # Return base64 data URL
+                result = f"data:{mime_type};base64,{img_base64}"
+                fish_image_cache[fish_name] = result
+                return result
+                
+        except Exception as e:
+            logger.warning(f"Error fetching local image for {fish_name}: {e}")
+            return None
 
     try:
         fish_names = payload.fish_names
@@ -1079,32 +868,41 @@ async def check_group_compatibility(payload: FishGroup, db: Client = Depends(get
             fish1_image = fish_image_cache.get(fish1_name)
             fish2_image = fish_image_cache.get(fish2_name)
 
-            reasons = []
-            compatibility_str = "Compatible"
-
             # Special case: Check if the same fish species is compared against itself
             if fish1_name.lower() == fish2_name.lower():
-                is_compatible, reason = can_same_species_coexist(fish1_name, fish1)
+                is_compatible, reason = check_same_species_enhanced(fish1_name, fish1)
                 if not is_compatible:
-                    reasons.append(reason)
+                    compatibility_level = "incompatible"
+                    reasons = [reason]
+                    conditions = []
+                else:
+                    compatibility_level = "compatible"
+                    reasons = [reason if reason else "These fish can generally live together in groups."]
+                    conditions = []
             else:
-                # Use the new rule-based compatibility check
-                is_pair_compatible, rule_reasons = check_pairwise_compatibility(fish1, fish2)
-                if not is_pair_compatible:
-                    reasons.extend(rule_reasons)
+                # Use the enhanced compatibility check system
+                compatibility_level, reasons, conditions = check_enhanced_fish_compatibility(fish1, fish2)
+                
+                # Ensure we always have meaningful reasons
+                if not reasons:
+                    if compatibility_level == "compatible":
+                        reasons = ["These fish are compatible based on comprehensive attribute analysis including water parameters, temperament, and behavioral traits."]
+                    elif compatibility_level == "conditional":
+                        reasons = ["These fish may be compatible under specific conditions."]
+                    else:
+                        reasons = ["These fish are not recommended to be kept together."]
             
-            if reasons:
-                compatibility_str = "Not Compatible"
-            else:
-                reasons.append("These fish are generally compatible.")
-
-            results.append({
-                "pair": [fish1['common_name'], fish2['common_name']],
-                "compatibility": compatibility_str,
-                "reasons": reasons,
-                "fish1_image": fish1_image,
-                "fish2_image": fish2_image
-            })
+            # Generate standardized result using enhanced system
+            result = get_compatibility_summary(
+                fish1['common_name'], fish2['common_name'], 
+                compatibility_level, reasons, conditions
+            )
+            
+            # Add images
+            result["fish1_image"] = fish1_image
+            result["fish2_image"] = fish2_image
+                
+            results.append(result)
             
         return {"results": results}
     except HTTPException:
@@ -1296,16 +1094,23 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
             if ph_max is not None:
                 max_ph = min(max_ph, ph_max)
 
-            # Build species-specific rules
-            can_coexist, reason_same = can_same_species_coexist(fish_name, fish_info)
+            # Build species-specific rules using enhanced system
+            can_coexist, reason_same = check_same_species_enhanced(fish_name, fish_info)
+            
+            # Get enhanced compatibility info
+            compatibility_info = get_enhanced_tankmate_compatibility_info(fish_info)
+            
             behavior = str(fish_info.get('social_behavior') or '').lower()
             is_schooling = ('school' in behavior) or ('shoal' in behavior)
-            min_group = 6 if is_schooling else 1
+            min_group = fish_info.get('schooling_min_number', 6 if is_schooling else 1)
+            
             species_rules[fish_name] = {
                 "solitary": not can_coexist,
                 "reason_same": reason_same,
                 "schooling": is_schooling,
                 "min_group": min_group,
+                "allow_tankmates": compatibility_info.get("allow_tankmates", True),
+                "special_requirements": compatibility_info.get("special_requirements", [])
             }
             # If user requested more than allowed for solitary species, log an issue
             if (not can_coexist) and fish_selections.get(fish_name, 0) > 1:
@@ -1351,12 +1156,21 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
             for fish1_name, fish2_name in pairwise_combinations:
                 fish1 = fish_info_map[fish1_name]
                 fish2 = fish_info_map[fish2_name]
-                is_pair_compatible, reasons = check_pairwise_compatibility(fish1, fish2)
-                if not is_pair_compatible:
+                compatibility_level, reasons, conditions = check_enhanced_fish_compatibility(fish1, fish2)
+                if compatibility_level == "incompatible":
                     are_compatible = False
                     compatibility_issues.append({
                         "pair": [fish1_name, fish2_name],
+                        "compatibility_level": compatibility_level,
                         "reasons": reasons
+                    })
+                elif compatibility_level == "conditional":
+                    # For capacity calculations, treat conditional as compatible but add notes
+                    compatibility_issues.append({
+                        "pair": [fish1_name, fish2_name],
+                        "compatibility_level": compatibility_level,
+                        "reasons": reasons,
+                        "conditions": conditions
                     })
 
         # Calculate optimal fish distribution if compatible
@@ -2231,6 +2045,10 @@ async def save_diet_calculation(
 class CompatibilityRequest(BaseModel):
     fish_names: List[str]
 
+class CompatibilityAnalysisRequest(BaseModel):
+    fish1_name: str
+    fish2_name: str
+
 @app.post("/check_compatibility")
 async def check_fish_compatibility(
     request: CompatibilityRequest,
@@ -2255,32 +2073,447 @@ async def check_fish_compatibility(
                     "reason": f"Fish '{fish_name}' not found in database"
                 }
         
-        # Check pairwise compatibility
+        # Check pairwise compatibility using the new conditional system
         fish_list = list(fish_data.values())
+        incompatible_pairs = []
+        conditional_pairs = []
+        
         for i in range(len(fish_list)):
             for j in range(i + 1, len(fish_list)):
                 fish1, fish2 = fish_list[i], fish_list[j]
                 
                 # Check if same species can coexist
                 if fish1['common_name'].lower() == fish2['common_name'].lower():
-                    can_coexist, reason = can_same_species_coexist(fish1['common_name'], fish1)
+                    can_coexist, reason = check_same_species_enhanced(fish1['common_name'], fish1)
                     if not can_coexist:
-                        return {"compatible": False, "reason": reason}
+                        incompatible_pairs.append({
+                            "pair": [fish1['common_name'], fish2['common_name']],
+                            "reason": reason,
+                            "compatibility_level": "incompatible"
+                        })
                 else:
-                    # Check different species compatibility
-                    compatible, reasons = check_pairwise_compatibility(fish1, fish2)
-                    if not compatible:
-                        return {
-                            "compatible": False,
-                            "reason": f"{fish1['common_name']} and {fish2['common_name']} are not compatible: {'; '.join(reasons)}"
-                        }
+                    # Use enhanced compatibility check system
+                    compatibility_level, reasons, conditions = check_enhanced_fish_compatibility(fish1, fish2)
+                    if compatibility_level == "incompatible":
+                        incompatible_pairs.append({
+                            "pair": [fish1['common_name'], fish2['common_name']],
+                            "reason": '; '.join(reasons) if reasons else "Not compatible based on comprehensive analysis",
+                            "compatibility_level": compatibility_level
+                        })
+                    elif compatibility_level == "conditional":
+                        conditional_pairs.append({
+                            "pair": [fish1['common_name'], fish2['common_name']],
+                            "reasons": reasons if reasons else ["May be compatible under specific conditions"],
+                            "conditions": conditions,
+                            "compatibility_level": compatibility_level
+                        })
         
-        return {"compatible": True, "reason": "All fish are compatible"}
+        if incompatible_pairs:
+            return {
+                "compatible": False, 
+                "reason": f"Incompatible pairs found: {incompatible_pairs[0]['reason']}",
+                "incompatible_pairs": incompatible_pairs
+            }
+        elif conditional_pairs:
+            return {
+                "compatible": True,
+                "conditional": True,
+                "reason": "All fish are compatible with conditions",
+                "conditional_pairs": conditional_pairs
+            }
+        else:
+            return {"compatible": True, "reason": "All fish are fully compatible"}
         
     except Exception as e:
         logger.error(f"Error checking compatibility: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to check compatibility: {str(e)}")
 
+@app.post("/tankmate-recommendations")
+async def get_tankmate_recommendations(
+    payload: FishGroup, 
+    db: Client = Depends(get_supabase_client)
+):
+    """Get enhanced tankmate recommendations with compatibility levels for the given fish species"""
+    try:
+        fish_names = payload.fish_names
+        
+        if not fish_names:
+            return {"recommendations": []}
+        
+        # Get detailed tankmate recommendations for all provided fish
+        all_recommendations = {}
+        detailed_recommendations = {}
+        
+        for fish_name in fish_names:
+            try:
+                # Query the enhanced tankmate recommendations
+                response = db.table('fish_tankmate_recommendations')\
+                    .select('*')\
+                    .ilike('fish_name', fish_name)\
+                    .execute()
+                
+                if response.data and response.data[0]:
+                    fish_data = response.data[0]
+                    
+                    # Store detailed recommendations for this fish
+                    detailed_recommendations[fish_name] = {
+                        'fully_compatible': fish_data.get('fully_compatible_tankmates', []),
+                        'conditional': fish_data.get('conditional_tankmates', []),
+                        'incompatible': fish_data.get('incompatible_tankmates', []),
+                        'special_requirements': fish_data.get('special_requirements', []),
+                        'care_level': fish_data.get('care_level', ''),
+                        'total_recommended': fish_data.get('total_recommended', 0)
+                    }
+                    
+                    # For backward compatibility, combine fully compatible and conditional
+                    all_compatible = fish_data.get('fully_compatible_tankmates', []) + \
+                                   [item['name'] if isinstance(item, dict) else item 
+                                    for item in fish_data.get('conditional_tankmates', [])]
+                    
+                    if all_recommendations:
+                        # Intersection: only fish compatible with ALL provided fish
+                        all_recommendations &= set(all_compatible)
+                    else:
+                        # First fish: start with its recommendations
+                        all_recommendations = set(all_compatible)
+                
+            except Exception as e:
+                logger.warning(f"Error getting recommendations for {fish_name}: {e}")
+                continue
+        
+        # Remove the input fish from recommendations
+        for fish_name in fish_names:
+            all_recommendations.discard(fish_name)
+        
+        # Convert to sorted list and limit to top 10
+        recommendations = sorted(list(all_recommendations))[:10]
+        
+        return {
+            "recommendations": recommendations,
+            "total_found": len(recommendations),
+            "input_fish": fish_names,
+            "detailed_recommendations": detailed_recommendations,
+            "compatibility_levels": {
+                "fully_compatible": "Fish that can live together without issues",
+                "conditional": "Fish that can live together with specific conditions",
+                "incompatible": "Fish that should never be kept together"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting tankmate recommendations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get tankmate recommendations: {str(e)}")
+
+@app.get("/tankmate-details/{fish_name}")
+async def get_tankmate_details(
+    fish_name: str,
+    db: Client = Depends(get_supabase_client)
+):
+    """Get detailed tankmate information for a specific fish species"""
+    try:
+        # Query the enhanced tankmate recommendations
+        response = db.table('fish_tankmate_recommendations')\
+            .select('*')\
+            .ilike('fish_name', fish_name)\
+            .execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=404, detail=f"No tankmate data found for {fish_name}")
+        
+        fish_data = response.data[0]
+        
+        return {
+            "fish_name": fish_data.get('fish_name'),
+            "fully_compatible_tankmates": fish_data.get('fully_compatible_tankmates', []),
+            "conditional_tankmates": fish_data.get('conditional_tankmates', []),
+            "incompatible_tankmates": fish_data.get('incompatible_tankmates', []),
+            "special_requirements": fish_data.get('special_requirements', []),
+            "care_level": fish_data.get('care_level', ''),
+            "confidence_score": fish_data.get('confidence_score', 0.0),
+            "total_fully_compatible": fish_data.get('total_fully_compatible', 0),
+            "total_conditional": fish_data.get('total_conditional', 0),
+            "total_incompatible": fish_data.get('total_incompatible', 0),
+            "total_recommended": fish_data.get('total_recommended', 0),
+            "generation_method": fish_data.get('generation_method', ''),
+            "calculated_at": fish_data.get('calculated_at', ''),
+            "compatibility_summary": {
+                "fully_compatible": "Fish that can live together without issues",
+                "conditional": "Fish that can live together with specific conditions", 
+                "incompatible": "Fish that should never be kept together"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting tankmate details for {fish_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get tankmate details: {str(e)}")
+
+@app.get("/compatibility-matrix/{fish1_name}/{fish2_name}")
+async def get_compatibility_matrix(
+    fish1_name: str,
+    fish2_name: str,
+    db: Client = Depends(get_supabase_client)
+):
+    """Get detailed compatibility information between two specific fish species"""
+    try:
+        # Query the compatibility matrix
+        response = db.table('fish_compatibility_matrix')\
+            .select('*')\
+            .or_(f"fish1_name.eq.{fish1_name},fish2_name.eq.{fish1_name}")\
+            .or_(f"fish1_name.eq.{fish2_name},fish2_name.eq.{fish2_name}")\
+            .execute()
+        
+        if not response.data:
+            return {
+                "fish1_name": fish1_name,
+                "fish2_name": fish2_name,
+                "compatibility_level": "unknown",
+                "is_compatible": False,
+                "compatibility_reasons": ["No compatibility data available"],
+                "conditions": [],
+                "confidence_score": 0.0
+            }
+        
+        # Find the specific pair
+        compatibility_data = None
+        for item in response.data:
+            if ((item['fish1_name'] == fish1_name and item['fish2_name'] == fish2_name) or
+                (item['fish1_name'] == fish2_name and item['fish2_name'] == fish1_name)):
+                compatibility_data = item
+                break
+        
+        if not compatibility_data:
+            return {
+                "fish1_name": fish1_name,
+                "fish2_name": fish2_name,
+                "compatibility_level": "unknown",
+                "is_compatible": False,
+                "compatibility_reasons": ["No compatibility data available"],
+                "conditions": [],
+                "confidence_score": 0.0
+            }
+        
+        return {
+            "fish1_name": compatibility_data.get('fish1_name'),
+            "fish2_name": compatibility_data.get('fish2_name'),
+            "compatibility_level": compatibility_data.get('compatibility_level'),
+            "is_compatible": compatibility_data.get('is_compatible'),
+            "compatibility_reasons": compatibility_data.get('compatibility_reasons', []),
+            "conditions": compatibility_data.get('conditions', []),
+            "compatibility_score": compatibility_data.get('compatibility_score', 0.0),
+            "confidence_score": compatibility_data.get('confidence_score', 0.0),
+            "generation_method": compatibility_data.get('generation_method', ''),
+            "calculated_at": compatibility_data.get('calculated_at', '')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting compatibility matrix for {fish1_name} + {fish2_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get compatibility matrix: {str(e)}")
+
+@app.post("/ai-compatibility-analysis")
+async def get_ai_compatibility_analysis(
+    fish1_name: str,
+    fish2_name: str,
+    db: Client = Depends(get_supabase_client)
+):
+    """Get AI-generated compatibility analysis between two fish species"""
+    try:
+        # Get fish data from database
+        fish1_response = db.table('fish_species').select('*').ilike('common_name', fish1_name).execute()
+        fish2_response = db.table('fish_species').select('*').ilike('common_name', fish2_name).execute()
+        
+        # Extract the first result if available
+        fish1_data = fish1_response.data[0] if fish1_response.data else None
+        fish2_data = fish2_response.data[0] if fish2_response.data else None
+        
+        if not fish1_data:
+            raise HTTPException(status_code=404, detail=f"Fish species '{fish1_name}' not found")
+        
+        if not fish2_data:
+            raise HTTPException(status_code=404, detail=f"Fish species '{fish2_name}' not found")
+        
+        # Generate AI compatibility analysis
+        compatibility_result = await ai_generator.generate_compatibility_requirements(
+            fish1_data, fish2_data
+        )
+        
+        return {
+            "success": True,
+            "data": compatibility_result,
+            "ai_generated": compatibility_result.get('ai_generated', False),
+            "confidence_score": compatibility_result.get('confidence_score', 0.0),
+            "generation_method": compatibility_result.get('generation_method', 'unknown')
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating AI compatibility analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate compatibility analysis: {str(e)}")
+
+@app.get("/ai-fish-requirements/{fish_name}")
+async def get_ai_fish_requirements(
+    fish_name: str,
+    db: Client = Depends(get_supabase_client)
+):
+    """Get AI-generated care requirements for a specific fish species"""
+    try:
+        # Get fish data from database
+        fish_response = db.table('fish_species').select('*').ilike('common_name', fish_name).maybeSingle()
+        
+        if not fish_response:
+            raise HTTPException(status_code=404, detail=f"Fish species '{fish_name}' not found")
+        
+        # Generate AI fish requirements
+        requirements_result = await ai_generator.generate_fish_specific_requirements(fish_response)
+        
+        return {
+            "success": True,
+            "data": requirements_result,
+            "ai_generated": requirements_result.get('ai_generated', False),
+            "confidence_score": requirements_result.get('confidence_score', 0.0),
+            "generation_method": requirements_result.get('generation_method', 'unknown')
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating AI fish requirements: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate fish requirements: {str(e)}")
+
 # Note: Diet calculation is now handled client-side using OpenAI service
 # The /calculate_diet endpoint has been removed as diet portions are generated
 # using OpenAI's generateCareRecommendations function in the Flutter app
+
+@app.get("/fish-image-base64/{fish_name}")
+async def get_fish_image_base64(
+    fish_name: str,
+    debug: bool = False,
+    db: Client = Depends(get_supabase_client),
+):
+    """Return a random image for a fish as base64 data URL from local dataset folder.
+
+    Looks in backend/app/datasets/fish_images/train/{fish_name}/ folder.
+    Returns the image as a base64 data URL for easy frontend consumption.
+    """
+    import random
+    import base64
+    from pathlib import Path
+
+    try:
+        # Find the fish folder using the utility function
+        fish_folder = find_fish_folder(fish_name)
+        
+        if not fish_folder:
+            detail = {"message": f"No images found for fish: {fish_name}"}
+            if debug:
+                detail["searched_path"] = str(Path(__file__).resolve().parent / "datasets" / "fish_images" / "train")
+            raise HTTPException(status_code=404, detail=detail)
+
+        # Get list of image files in the folder
+        folder_path = Path(fish_folder)
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+        
+        image_files = []
+        for file_path in folder_path.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+                image_files.append(file_path)
+        
+        if not image_files:
+            raise HTTPException(status_code=404, detail=f"No image files found in folder for fish: {fish_name}")
+
+        # Select a random image
+        selected_image = random.choice(image_files)
+        
+        # Read the image file and convert to base64
+        with open(selected_image, 'rb') as img_file:
+            img_data = img_file.read()
+            img_base64 = base64.b64encode(img_data).decode('utf-8')
+            
+            # Determine MIME type based on file extension
+            mime_type = f"image/{selected_image.suffix.lower().lstrip('.')}"
+            if mime_type == "image/jpg":
+                mime_type = "image/jpeg"
+            
+            # Return base64 data URL
+            data_url = f"data:{mime_type};base64,{img_base64}"
+            
+            return {
+                "data_url": data_url,
+                "filename": selected_image.name,
+                "mime_type": mime_type,
+                "size_bytes": len(img_data),
+                "fish_name": fish_name
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching fish image from local dataset: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching fish image")
+
+@app.get("/fish-images-grid/{fish_name}")
+async def get_fish_images_grid(
+    fish_name: str,
+    count: int = Query(default=4, ge=1, le=10, description="Number of different images to return"),
+    debug: bool = False,
+    db: Client = Depends(get_supabase_client),
+):
+    """Return multiple different images for a fish from local dataset folder.
+
+    Looks in backend/app/datasets/fish_images/train/{fish_name}/ folder.
+    Returns exactly 'count' different images to ensure variety in the grid.
+    """
+    import random
+    from pathlib import Path
+
+    try:
+        # Find the fish folder using the utility function
+        fish_folder = find_fish_folder(fish_name)
+        
+        if not fish_folder:
+            detail = {"message": f"No images found for fish: {fish_name}"}
+            if debug:
+                detail["searched_path"] = str(Path(__file__).resolve().parent / "datasets" / "fish_images" / "train")
+            raise HTTPException(status_code=404, detail=detail)
+
+        # Get list of image files in the folder
+        folder_path = Path(fish_folder)
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+        
+        image_files = []
+        for file_path in folder_path.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+                image_files.append(file_path)
+        
+        if not image_files:
+            raise HTTPException(status_code=404, detail=f"No image files found in folder for fish: {fish_name}")
+
+        # Ensure we don't request more images than available
+        requested_count = min(count, len(image_files))
+        
+        # Select exactly 'requested_count' different images
+        selected_images = random.sample(image_files, requested_count)
+        
+        # Return the list of selected image files
+        return {
+            "fish_name": fish_name,
+            "total_available": len(image_files),
+            "requested_count": count,
+            "returned_count": requested_count,
+            "images": [
+                {
+                    "filename": img.name,
+                    "url": f"/fish-image/{fish_name}?specific={img.name}",
+                    "size_bytes": img.stat().st_size if img.exists() else 0
+                }
+                for img in selected_images
+            ]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching fish images grid from local dataset: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching fish images grid")

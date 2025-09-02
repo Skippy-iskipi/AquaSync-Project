@@ -6,12 +6,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import '../screens/logbook_provider.dart';
-import '../services/openai_service.dart';
+import '../services/openai_service.dart'; // OpenAI AI service
 import '../models/diet_calculation.dart';
 import 'dart:async';
 import '../widgets/expandable_reason.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:lottie/lottie.dart';
+import '../widgets/auth_required_dialog.dart';
 
 class DietFishCard {
   final TextEditingController fishController;
@@ -199,7 +200,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
             if (pair.length == 2) {
               final reasons = (item['reasons'] as List).cast<String>();
               try {
-                final detailed = await OpenAIService.getOrExplainIncompatibilityReasons(
+                final detailed = await OpenAIService.explainIncompatibilityReasons(
                   pair[0].toString(),
                   pair[1].toString(),
                   reasons,
@@ -375,128 +376,83 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
   Future<void> _calculateDietPortions(Map<String, int> fishSelections) async {
     try {
       Map<String, dynamic> fishPortions = {};
-      int totalLow = 0;
-      int totalHigh = 0;
-      final List<int> feedingsPerDayCandidates = [];
+      final Map<String, Map<String, int>> tankTotalsByFoodType = {};
       
-      // Get portion data from OpenAI for each fish type
+      // Generate AI-based diet recommendations for the entire tank
+      final dietRecommendations = await _generateAIDietRecommendations(fishSelections);
+      
+      if (dietRecommendations.containsKey('error')) {
+        throw Exception('Failed to generate AI diet recommendations');
+      }
+      
+      // Process AI-generated food types and portions
+      final aiFoodTypes = dietRecommendations['food_types'] as List<String>? ?? [];
+      final aiFeedingSchedule = dietRecommendations['feeding_schedule'] as Map<String, dynamic>? ?? {};
+      final aiFeedingNotes = dietRecommendations['feeding_notes'] as String? ?? '';
+      
+      // Generate portion data for each fish type using AI
       for (String fishName in fishSelections.keys) {
         final quantity = fishSelections[fishName]!;
         
-        // Get OpenAI care recommendations
-        final careData = await OpenAIService.generateCareRecommendations(fishName, '');
+        // Get AI-generated portion recommendation for this specific fish
+        final fishPortionData = await _generateFishPortionRecommendation(fishName, quantity, aiFoodTypes);
         
-        if (careData.containsKey('error')) {
+        if (fishPortionData.containsKey('error')) {
           throw Exception('Failed to get portion data for $fishName');
         }
         
-        // Extract portion options (handle multiple options like "2-3 small flakes or 1-2 brine shrimp")
-        final portionSize = (careData['portion_size'] ?? '2-3 small pellets').toString();
-        final optionParts = portionSize
-            .split(RegExp(r'\bor\b', caseSensitive: false))
-            .map((s) => s.trim().replaceAll(RegExp(r'^,\s*'), ''))
-            .where((s) => s.isNotEmpty)
-            .toList();
-
-        // Build species-wide segments for each option and accumulate simple numeric totals from the first option
-        final List<String> speciesSegments = [];
-        for (int idx = 0; idx < optionParts.length; idx++) {
-          final opt = optionParts[idx];
-          final (low, high) = _extractPortionRange(opt);
-          final fishLow = low * quantity;
-          final fishHigh = high * quantity;
-          final perFishRange = low == high ? '$low' : '$low-$high';
-          final fishRange = fishLow == fishHigh ? '$fishLow' : '$fishLow-$fishHigh';
-          // Keep option text concise inside parentheses
-          final optLabel = _concisePortionOption(opt);
-          speciesSegments.add('$quantity × $perFishRange = $fishRange portions ($optLabel each)');
-          if (idx == 0) {
-            totalLow += fishLow;
-            totalHigh += fishHigh;
-          }
-        }
-
-        // Join multiple option segments with ' OR '
-        fishPortions[fishName] = speciesSegments.join(' OR ');
-
-        // Extract feeding frequency per day if present, e.g., "2 times per day"
-        final freqText = (careData['feeding_frequency'] ?? '').toString();
-        final freqMatch = RegExp(r'(\d+)').firstMatch(freqText);
-        if (freqMatch != null) {
-          final f = int.tryParse(freqMatch.group(1)!) ?? 0;
-          if (f > 0) feedingsPerDayCandidates.add(f);
+        final portionSize = fishPortionData['portion_size'] as String;
+        final foodType = fishPortionData['food_type'] as String;
+        final (low, high) = _extractPortionRange(portionSize);
+        final fishLow = low * quantity;
+        final fishHigh = high * quantity;
+        
+        // Store fish-specific portion info
+        fishPortions[fishName] = {
+          'per_fish': portionSize,
+          'quantity': quantity,
+          'total_low': fishLow,
+          'total_high': fishHigh,
+          'food_type': foodType,
+        };
+        
+        // Accumulate tank totals by food type
+        if (!tankTotalsByFoodType.containsKey(foodType)) {
+          tankTotalsByFoodType[foodType] = {'low': fishLow, 'high': fishHigh};
+        } else {
+          final current = tankTotalsByFoodType[foodType]!;
+          tankTotalsByFoodType[foodType] = {
+            'low': (current['low'] ?? 0) + fishLow, 
+            'high': (current['high'] ?? 0) + fishHigh
+          };
         }
       }
       
-      // Generate feeding notes using OpenAI
-      String feedingNotes = 'Feed 2-3 times daily in small amounts. Remove uneaten food after 5 minutes. Adjust portions based on fish activity and appetite.';
-      try {
-        feedingNotes = await _generateFeedingNotes(fishPortions.keys.toList());
-        // Remove any heading like "Feeding Notes:" that the model might include
-        feedingNotes = feedingNotes
-            .replaceFirst(RegExp(r'^\s*feeding\s*notes\s*:?', caseSensitive: false), '')
-            .trim();
-        // Additional cleanup: strip bullets/numbering and drop placeholder labels
-        final lines = feedingNotes.split(RegExp(r'\r?\n'));
-        final cleanedLines = lines
-            .map((l) => l
-                .replaceFirst(RegExp(r'^\s*(?:[-–•\u2022]|\d+[\.)])\s*'), '') // bullets or numbering
-                .trim())
-            .where((l) => l.isNotEmpty)
-            .where((l) => !RegExp(r'^feeding\s*frequency', caseSensitive: false).hasMatch(l))
-            .where((l) => !RegExp(r'^food\s*removal', caseSensitive: false).hasMatch(l))
-            .where((l) => !RegExp(r'^any\s*special\s*considerations', caseSensitive: false).hasMatch(l))
-            .toList();
-        if (cleanedLines.isNotEmpty) {
-          feedingNotes = cleanedLines.join('\n');
-        }
-      } catch (e) {
-        print('Error generating feeding notes: $e');
-        // Keep default feeding notes if OpenAI fails
-      }
-      
-      // Choose a tank-wide feeding frequency. Strategy: use the maximum suggested per-day frequency among species.
-      int? feedingsPerDay;
-      if (feedingsPerDayCandidates.isNotEmpty) {
-        feedingsPerDay = feedingsPerDayCandidates.reduce((a, b) => a > b ? a : b);
-      }
-
-      // Build descriptive tank totals per feeding (grouped by food type), including all options
-      final Map<String, ({int low, int high})> tankTotals = {};
-      fishPortions.forEach((fishName, rawVal) {
-        final text = (rawVal ?? '').toString();
-        if (text.isEmpty) return;
-        final entries = _extractSpeciesTotalsWithLabels(text);
-        for (final e in entries) {
-          if (!tankTotals.containsKey(e.label)) {
-            tankTotals[e.label] = (low: e.low, high: e.high);
-          } else {
-            final cur = tankTotals[e.label]!;
-            tankTotals[e.label] = (low: cur.low + e.low, high: cur.high + e.high);
-          }
-        }
-      });
-
-      final List<String> totalStrings = tankTotals.entries.map((e) {
-        final r = e.value;
-        final rangeStr = r.low == r.high ? '${r.low}' : '${r.low}–${r.high}';
-        if (e.key == 'food') {
-          return '$rangeStr pcs';
-        }
-        return '$rangeStr pcs of ${e.key}';
+      // Build clear, user-friendly tank totals
+      final List<String> tankTotalStrings = tankTotalsByFoodType.entries.map((e) {
+        final foodType = e.key;
+        final range = e.value;
+        final low = range['low'] ?? 0;
+        final high = range['high'] ?? 0;
+        // If low and high are the same, show just one number to avoid "4-4 pellets"
+        final rangeStr = low == high ? '$low' : '$low–$high';
+        return '$rangeStr $foodType';
       }).toList();
-      final descriptiveTotalRange = totalStrings.join('; ');
 
+      // Generate AI feeding tips
+      final aiFeedingTips = await _generateAIFeedingTips(fishSelections.keys.toList());
+      
       final result = {
         'fish_portions': fishPortions,
-        // Keep numeric total_portion for compatibility (use low bound)
-        'total_portion': totalLow,
-        // New: human-readable descriptive string
-        'total_portion_range': descriptiveTotalRange.isNotEmpty
-            ? descriptiveTotalRange
-            : (totalLow == totalHigh ? '$totalLow pcs' : '$totalLow–$totalHigh pcs'),
-        if (feedingsPerDay != null) 'feedings_per_day': feedingsPerDay,
-        'feeding_notes': feedingNotes,
+        'tank_totals_by_food': tankTotalsByFoodType,
+        'tank_total_display': tankTotalStrings.join('; '),
+        'total_portion': tankTotalsByFoodType.values.fold<int>(0, (sum, range) => sum + (range['low'] ?? 0)),
+        'total_portion_range': tankTotalStrings.join('; '),
+        'feedings_per_day': aiFeedingSchedule['frequency'] ?? 2,
+        'feeding_times': aiFeedingSchedule['times'] ?? 'Morning and evening',
+        'feeding_notes': aiFeedingNotes,
+        'feeding_tips': aiFeedingTips,
+        'ai_food_types': aiFoodTypes,
         'calculation_date': DateTime.now().toIso8601String()
       };
       setState(() {
@@ -537,6 +493,8 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
     if (rangeMatch != null) {
       final low = int.tryParse(rangeMatch.group(1)!) ?? 2;
       final high = int.tryParse(rangeMatch.group(2)!) ?? low;
+      // If low and high are the same, return just one value to avoid "4-4 pellets"
+      if (low == high) return (low, low);
       if (high < low) return (low, low);
       return (low, high);
     }
@@ -546,6 +504,157 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
       return (n, n);
     }
     return (2, 2);
+  }
+
+  // Clean and format portion text for display
+  String _formatPortionForDisplay(String portionText) {
+    final text = portionText.toLowerCase();
+    
+    // Handle ranges like "2-3 small pellets"
+    final rangeMatch = RegExp(r'(\d+)\s*[-–]\s*(\d+)').firstMatch(text);
+    if (rangeMatch != null) {
+      final low = int.tryParse(rangeMatch.group(1)!) ?? 2;
+      final high = int.tryParse(rangeMatch.group(2)!) ?? low;
+      if (high < low) return '${low} ${_extractFoodTypeFromText(text)}';
+      return '${low}-${high} ${_extractFoodTypeFromText(text)}';
+    }
+    
+    // Handle single numbers like "2 small pellets"
+    final singleMatch = RegExp(r'(\d+)').firstMatch(text);
+    if (singleMatch != null) {
+      final n = int.tryParse(singleMatch.group(1)!) ?? 2;
+      return '${n} ${_extractFoodTypeFromText(text)}';
+    }
+    
+    return '2 ${_extractFoodTypeFromText(text)}';
+  }
+
+  // Extract food type from portion text
+  String _extractFoodTypeFromText(String text) {
+    if (text.contains('pellet')) return 'pellets';
+    if (text.contains('flake')) return 'flakes';
+    if (text.contains('algae wafer') || text.contains('wafer')) return 'algae wafers';
+    if (text.contains('bloodworm')) return 'bloodworms';
+    if (text.contains('brine shrimp')) return 'brine shrimp';
+    if (text.contains('daphnia')) return 'daphnia';
+    if (text.contains('pea')) return 'cooked peas';
+    if (text.contains('micropellet')) return 'micro-pellets';
+    if (text.contains('mini pellet')) return 'mini pellets';
+    return 'fish food';
+  }
+
+  // Format feeding tips for display
+  String _formatFeedingTips(String tips) {
+    if (tips.isEmpty) return tips;
+    
+    // Split by newlines and format each line
+    final lines = tips.split('\n').where((line) => line.trim().isNotEmpty).toList();
+    
+    if (lines.isEmpty) return tips;
+    
+    // Format as bullet points
+    return lines.map((line) => '• ${line.trim()}').join('\n');
+  }
+
+  // Validate and normalize portion text to ensure reasonable values
+  String _validateAndNormalizePortion(String portionText) {
+    final text = portionText.toLowerCase().trim();
+    
+    // Extract numeric values
+    final rangeMatch = RegExp(r'(\d+)\s*[-–]\s*(\d+)').firstMatch(text);
+    if (rangeMatch != null) {
+      final low = int.tryParse(rangeMatch.group(1)!) ?? 2;
+      final high = int.tryParse(rangeMatch.group(2)!) ?? low;
+      
+      // Validate reasonable portion sizes
+      final validatedLow = low.clamp(1, 10);
+      final validatedHigh = high.clamp(validatedLow, 15);
+      
+      // Reconstruct the portion text with validated values
+      final baseText = text.replaceAll(RegExp(r'\d+\s*[-–]\s*\d+'), '$validatedLow-$validatedHigh');
+      return baseText;
+    }
+    
+    final singleMatch = RegExp(r'(\d+)').firstMatch(text);
+    if (singleMatch != null) {
+      final value = int.tryParse(singleMatch.group(1)!) ?? 2;
+      final validatedValue = value.clamp(1, 10);
+      return text.replaceFirst(RegExp(r'\d+'), validatedValue.toString());
+    }
+    
+    return '2-3 small pellets'; // Default fallback
+  }
+
+  // Extract food type from portion text
+  String _extractFoodType(String portionText) {
+    final text = portionText.toLowerCase();
+    
+    // Define common food types with their keywords
+    final foodTypes = {
+      'pellets': ['pellet', 'pellets', 'granule', 'granules', 'micro pellets', 'micropellets'],
+      'flakes': ['flake', 'flakes', 'flake food'],
+      'algae wafers': ['algae wafer', 'algae wafers', 'wafer', 'wafers'],
+      'bloodworms': ['bloodworm', 'bloodworms'],
+      'brine shrimp': ['brine shrimp', 'brine'],
+      'daphnia': ['daphnia'],
+      'tubifex': ['tubifex'],
+      'cooked peas': ['cooked pea', 'cooked peas', 'pea', 'peas'],
+      'frozen food': ['frozen', 'frozen food'],
+      'live food': ['live', 'live food'],
+      'vegetables': ['vegetable', 'vegetables', 'cucumber', 'zucchini'],
+    };
+    
+    for (final entry in foodTypes.entries) {
+      for (final keyword in entry.value) {
+        if (text.contains(keyword)) {
+          return entry.key;
+        }
+      }
+    }
+    
+    // Try to extract more specific food type from the text
+    if (text.contains('pinch')) {
+      if (text.contains('flake')) return 'flakes';
+      if (text.contains('pellet')) return 'pellets';
+      return 'small food portions';
+    }
+    
+    if (text.contains('tablet') || text.contains('wafer')) return 'algae wafers';
+    if (text.contains('worm')) return 'bloodworms';
+    if (text.contains('shrimp')) return 'brine shrimp';
+    
+    return 'fish food'; // More descriptive default fallback
+  }
+
+  // Clean up feeding notes to be more user-friendly
+  String _cleanFeedingNotes(String notes) {
+    if (notes.isEmpty) return notes;
+    
+    // Remove any heading like "Feeding Notes:" that the model might include
+    var cleaned = notes
+        .replaceFirst(RegExp(r'^\s*feeding\s*notes\s*:?', caseSensitive: false), '')
+        .trim();
+    
+    // Split by newlines first; if none, split by sentence endings
+    List<String> parts = cleaned.contains('\n')
+        ? cleaned.split('\n')
+        : cleaned.split(RegExp(r'(?<=[.!?])\s+'));
+    
+    final cleanedLines = parts
+        .map((l) => l
+            .replaceFirst(RegExp(r'^\s*(?:[-–•\u2022]|\d+[\.)])\s*'), '') // Remove bullets/numbering
+            .trim())
+        .where((l) => l.isNotEmpty)
+        .where((l) => !RegExp(r'^feeding\s*frequency', caseSensitive: false).hasMatch(l))
+        .where((l) => !RegExp(r'^food\s*removal', caseSensitive: false).hasMatch(l))
+        .where((l) => !RegExp(r'^any\s*special\s*considerations', caseSensitive: false).hasMatch(l))
+        .toList();
+    
+    if (cleanedLines.isNotEmpty) {
+      return cleanedLines.join('\n');
+    }
+    
+    return 'Feed 2-3 times daily in small amounts. Remove uneaten food after 5 minutes. Adjust portions based on fish activity and appetite.';
   }
 
   void _showNotification(String message, {bool isError = false}) {
@@ -559,7 +668,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
 
   Widget _buildResultsTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -574,47 +683,12 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
   }
 
   // Build feeding notes as bullet points instead of a single paragraph
-  List<Widget> _buildFeedingNotesList() {
-    final notes = (_calculationResult?['feeding_notes'] as String?)?.trim();
-    if (notes == null || notes.isEmpty) return [];
 
-    // Split by newlines first; if none, split by sentence endings.
-    List<String> parts = notes.contains('\n')
-        ? notes.split('\n')
-        : notes.split(RegExp(r'(?<=[.!?])\s+'));
-
-    final items = parts
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-
-    return items
-        .map((line) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '•',
-                    style: TextStyle(fontSize: 16, color: Colors.black87),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      line,
-                      style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.5),
-                    ),
-                  ),
-                ],
-              ),
-            ))
-        .toList();
-  }
 
   // Infer a concise food label (e.g., 'pellets', 'flakes') from portion strings
   String _inferFoodLabel() {
     final map = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
-    if (map == null || map.isEmpty) return 'food';
+    if (map == null || map.isEmpty) return 'fish food';
 
     final foods = <String>{};
     for (final value in map.values) {
@@ -631,11 +705,23 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
         label = label.replaceAll(RegExp(r'\b(food|feeds?)\b'), '').trim();
         if (label.isNotEmpty) foods.add(label);
       }
+      
+      // Also check for food types in the per_fish field
+      if (value is Map<String, dynamic> && value.containsKey('per_fish')) {
+        final perFishText = (value['per_fish'] ?? '').toString().toLowerCase();
+        if (perFishText.contains('pellet')) foods.add('pellets');
+        if (perFishText.contains('flake')) foods.add('flakes');
+        if (perFishText.contains('algae wafer') || perFishText.contains('wafer')) foods.add('algae wafers');
+        if (perFishText.contains('bloodworm')) foods.add('bloodworms');
+        if (perFishText.contains('brine shrimp')) foods.add('brine shrimp');
+        if (perFishText.contains('daphnia')) foods.add('daphnia');
+        if (perFishText.contains('pea')) foods.add('cooked peas');
+      }
     }
 
-    if (foods.isEmpty) return 'food';
+    if (foods.isEmpty) return 'fish food';
     if (foods.length == 1) return foods.first;
-    return 'mixed food';
+    return 'mixed fish food';
   }
   
   // Try to infer a more descriptive phrase, e.g., 'small pinch of flakes' or 'small algae wafers'
@@ -810,7 +896,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
         .replaceAll(RegExp(r'\b(food|feeds?)\b', caseSensitive: false), '')
         .trim();
     cleaned = cleaned.replaceAll(RegExp(r'\s*(per\s*day|/day|daily)\s*$', caseSensitive: false), '').trim();
-    return cleaned.isNotEmpty ? cleaned : 'recommended food';
+    return cleaned.isNotEmpty ? cleaned : 'recommended fish food';
   }
 
   List<String> _collectPerFeedingOptions() {
@@ -962,7 +1048,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
       }
     }
     // Fallback to inferred generic label
-    return _inferFoodLabel() ?? 'food';
+    return _inferFoodLabel() ?? 'fish food';
   }
 
   // Extract all species-total segments and their food labels from a constructed text like:
@@ -981,9 +1067,9 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
       // Normalize using existing mapping; feed as a phrase containing 'of <label>' so mapping matches
       var canonical = _normalizeFoodLabelFromText('of $rawLabel');
       if ((canonical == 'food' || canonical.isEmpty) && rawLabel.isNotEmpty) {
-        canonical = rawLabel; // fall back to the literal label rather than generic 'food'
+        canonical = rawLabel; // fall back to the literal label rather than generic 'fish food'
       }
-      if (canonical.isEmpty) canonical = 'food';
+      if (canonical.isEmpty) canonical = 'fish food';
       entries.add((label: canonical, low: a, high: b));
     }
 
@@ -996,18 +1082,18 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
       if ((canonical == 'food' || canonical.isEmpty) && rawLabel.isNotEmpty) {
         canonical = rawLabel;
       }
-      if (canonical.isEmpty) canonical = 'food';
+      if (canonical.isEmpty) canonical = 'fish food';
       entries.add((label: canonical, low: n, high: n));
     }
 
     return entries;
   }
 
-  Map<String, ({int low, int high})> _aggregateTankPortionsPerFeeding() {
+  Map<String, Map<String, int>> _aggregateTankPortionsPerFeeding() {
     final map = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
     if (map == null || map.isEmpty) return {};
 
-    final totals = <String, ({int low, int high})>{};
+    final totals = <String, Map<String, int>>{};
 
     map.forEach((fishName, rawVal) {
       final portionText = (rawVal ?? '').toString();
@@ -1015,10 +1101,10 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
       final parts = _extractSpeciesTotalsWithLabels(portionText);
       for (final p in parts) {
         if (!totals.containsKey(p.label)) {
-          totals[p.label] = (low: p.low, high: p.high);
+          totals[p.label] = {'low': p.low, 'high': p.high};
         } else {
           final cur = totals[p.label]!;
-          totals[p.label] = (low: cur.low + p.low, high: cur.high + p.high);
+          totals[p.label] = {'low': (cur['low'] ?? 0) + p.low, 'high': (cur['high'] ?? 0) + p.high};
         }
       }
     });
@@ -1033,7 +1119,9 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
     final items = totals.entries.map((e) {
       final label = e.key;
       final r = e.value;
-      final rangeStr = r.low == r.high ? '${r.low}' : '${r.low}–${r.high}';
+      final low = r['low'] ?? 0;
+      final high = r['high'] ?? 0;
+      final rangeStr = low == high ? '$low' : '$low–$high';
       const unit = 'pcs';
       return '$rangeStr $unit of $label';
     }).toList();
@@ -1109,7 +1197,11 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
         portionDetails: portionDetails,
         compatibilityIssues: _compatibilityReason.isNotEmpty ? [_compatibilityReason] : null,
         feedingNotes: _calculationResult!['feeding_notes'] as String,
+        feedingTips: _calculationResult!['feeding_tips'] as String?,
         feedingsPerDay: feedingsPerDay,
+        feedingTimes: _calculationResult!['feeding_times'] as String?,
+        aiFoodTypes: _calculationResult!['ai_food_types'] as List<String>?,
+        tankTotalsByFood: _calculationResult!['tank_totals_by_food'] as Map<String, dynamic>?,
         dateCalculated: DateTime.now(),
       );
 
@@ -1118,7 +1210,15 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
       final session = supabase.auth.currentSession;
       
       if (session == null) {
-        throw Exception('Please login to save diet calculations');
+        // Show auth required dialog instead of throwing exception
+        showDialog(
+          context: context,
+          builder: (BuildContext context) => const AuthRequiredDialog(
+            title: 'Sign In Required',
+            message: 'You need to sign in to save diet calculations to your collection.',
+          ),
+        );
+        return;
       }
 
       final response = await http.post(
@@ -1580,85 +1680,156 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
     if (_calculationResult == null) return const SizedBox();
 
     return Container(
-      margin: const EdgeInsets.all(12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(16),
+      decoration: const BoxDecoration(
         color: Color(0xFFE0F7FA),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Color(0xFF00BCD4)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.set_meal, color: Color(0xFF00BCD4), size: 24),
-              SizedBox(width: 8),
-              Text(
-                'Diet Recommendation',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF00BCD4),
+              const Icon(Icons.set_meal, color: Color(0xFF00BCD4), size: 24),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Diet Recommendation',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF00BCD4),
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          if (_calculationResult!['fish_portions'] != null) ...[
-            const Text(
-              'Individual Fish Portions:',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF006064),
-              ),
+          
+          // Feeding Schedule Section
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Color(0xFF00BCD4).withOpacity(0.3)),
             ),
-            const SizedBox(height: 8),
-            ...(_calculationResult!['fish_portions'] as Map<String, dynamic>).entries.map(
-              (entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '• ${entry.key}: ${entry.value}',
-                  style: const TextStyle(fontSize: 14),
-                  textAlign: TextAlign.justify,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
-          if (_calculationResult!['total_portion'] != null) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00BCD4).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if ((_calculationResult?['feedings_per_day'] is int) && (_calculationResult!['feedings_per_day'] as int) > 0)
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.schedule, color: Color(0xFF006064), size: 20),
+                    SizedBox(width: 8),
                     Text(
-                      'Feed the tank ${_calculationResult!['feedings_per_day']} time${_calculationResult!['feedings_per_day'] == 1 ? '' : 's'} per day',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      'Feeding Schedule',
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF00BCD4),
+                        color: Color(0xFF006064),
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if ((_calculationResult?['feedings_per_day'] is int) && (_calculationResult!['feedings_per_day'] as int) > 0)
+                  Text(
+                    'Feed ${_calculationResult!['feedings_per_day']} time${_calculationResult!['feedings_per_day'] == 1 ? '' : 's'} per day',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF004D40),
+                    ),
+                  ),
+                if ((_calculationResult?['feedings_per_day'] is int) && (_calculationResult!['feedings_per_day'] as int) > 0)
                   const SizedBox(height: 8),
-                  _buildTankTotalsPerFeeding(),
+                Text(
+                  _getFeedingTimesText(),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF004D40),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // Tank Totals Section
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Color(0xFF00BCD4).withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.restaurant, color: Color(0xFF006064), size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'Feeding Guide & Portions',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildTankTotalsDisplay(),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // Feeding Notes Section (if available)
+          if (_calculationResult!['feeding_notes'] != null && (_calculationResult!['feeding_notes'] as String).isNotEmpty) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Color(0xFF00BCD4).withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.lightbulb_outline, color: Color(0xFF006064), size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'Feeding Tips',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _formatFeedingTips(_calculationResult!['feeding_tips'] ?? _calculationResult!['feeding_notes'] as String),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF004D40),
+                    ),
+                  ),
                 ],
               ),
             ),
-          ],
-          if (_calculationResult!['feeding_notes'] != null) ...[
             const SizedBox(height: 16),
-            ..._buildFeedingNotesList(),
           ],
-          const SizedBox(height: 20),
+          // Action Buttons
           Row(
             children: [
               Expanded(
@@ -1675,7 +1846,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
                     ),
                   ),
                   child: const Text(
-                    'Try Again',
+                    'Calculate Again',
                     style: TextStyle(
                       color: Color(0xFF00BCD4),
                       fontWeight: FontWeight.w600,
@@ -1719,6 +1890,229 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
           ),
         ],
       ),
+    );
+  }
+
+  // Helper method to get user-friendly food type display names
+  String _getFoodTypeDisplayName(String foodType) {
+    switch (foodType.toLowerCase()) {
+      case 'pellets':
+        return 'pellets';
+      case 'flakes':
+        return 'flakes';
+      case 'algae wafers':
+        return 'algae wafers';
+      case 'bloodworms':
+        return 'bloodworms';
+      case 'brine shrimp':
+        return 'brine shrimp';
+      case 'daphnia':
+        return 'daphnia';
+      case 'cooked peas':
+        return 'cooked peas';
+      case 'micropellets':
+        return 'micro-pellets';
+      case 'mini pellets':
+        return 'mini pellets';
+      case 'small pellets':
+        return 'small pellets';
+      default:
+        return foodType;
+    }
+  }
+
+  // Helper method to format food type recommendations
+  String _formatFoodTypeRecommendations(List<String> foodTypes) {
+    if (foodTypes.isEmpty) return 'No specific recommendations available.';
+    
+    final formattedTypes = foodTypes.map((type) => _getFoodTypeDisplayName(type)).toList();
+    
+    if (formattedTypes.length == 1) {
+      return 'Use ${formattedTypes.first} for optimal nutrition.';
+    } else if (formattedTypes.length == 2) {
+      return 'Use ${formattedTypes.first} and ${formattedTypes.last} for variety.';
+    } else {
+      final last = formattedTypes.last;
+      final others = formattedTypes.take(formattedTypes.length - 1).join(', ');
+      return 'Use $others, and $last for balanced nutrition.';
+    }
+  }
+
+  Widget _buildTankTotalsDisplay() {
+    final tankTotals = _calculationResult?['tank_totals_by_food'] as Map<String, dynamic>?;
+    final aiFoodTypes = _calculationResult?['ai_food_types'] as List<String>?;
+    final fishPortions = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
+    
+    if (tankTotals == null || tankTotals.isEmpty) {
+      return const Text(
+        'No food totals available',
+        style: TextStyle(
+          fontSize: 14,
+          color: Color(0xFF004D40),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Main feeding summary
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.restaurant, color: Color(0xFF006064), size: 20),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Total Food Per Feeding',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF006064),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ...tankTotals.entries.map((entry) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('• ', style: TextStyle(color: Color(0xFF006064), fontSize: 16)),
+                    Expanded(
+                      child: Text(
+                        '${(entry.value['low'] ?? 0) == (entry.value['high'] ?? 0) ? (entry.value['low'] ?? 0) : '${entry.value['low'] ?? 0}-${entry.value['high'] ?? 0}'} ${_getFoodTypeDisplayName(entry.key)}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF004D40),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+            ],
+          ),
+        ),
+        
+        const SizedBox(height: 12),
+        
+                // Individual fish breakdown (if multiple fish)
+        if (fishPortions != null && fishPortions.length > 1) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const FaIcon(FontAwesomeIcons.fish, color: Color(0xFF006064), size: 20),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Per Fish Breakdown',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                ...fishPortions.entries.map((entry) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      const FaIcon(FontAwesomeIcons.fish, color: Color(0xFF006064), size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${entry.value['quantity']}x ${entry.key}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            Text(
+                              '${entry.value['per_fish']} each',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF666666),
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+              ],
+            ),
+          ),
+        ],
+        
+        // Food type recommendations
+        if (aiFoodTypes != null && aiFoodTypes.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.lightbulb_outline, color: Color(0xFF006064), size: 20),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Recommended Food Types',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _formatFoodTypeRecommendations(aiFoodTypes),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF004D40),
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -1809,41 +2203,99 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
           ),
         ),
 
-        // Full-screen loading overlay (covers entire phone screen including AppBar)
-        if (_isCalculating)
-          Positioned.fill(
-            child: AbsorbPointer(
-              absorbing: true,
-              child: Container(
-                color: Colors.transparent,
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Lottie.asset(
-                        'lib/lottie/BowlAnimation.json',
-                        width: 160,
-                        height: 160,
-                        repeat: true, 
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Calculating diet... ',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
+        // Full-screen dialog overlay
+        if (_isCalculating) _buildCalculatingDialog(),
       ],
     );
   }
+
+  String _getFeedingTimesText() {
+    final feedingTimes = _calculationResult?['feeding_times'] as String?;
+    if (feedingTimes != null && feedingTimes.isNotEmpty) {
+      return feedingTimes;
+    }
+    
+    final feedingsPerDay = _calculationResult?['feedings_per_day'] as int?;
+    if (feedingsPerDay == null || feedingsPerDay <= 0) {
+      return 'Best times: Morning, afternoon, and evening';
+    }
+    
+    switch (feedingsPerDay) {
+      case 1:
+        return 'Best time: Morning (8-10 AM)';
+      case 2:
+        return 'Best times: Morning (8-10 AM) and evening (6-8 PM)';
+      case 3:
+        return 'Best times: Morning (8-10 AM), afternoon (2-4 PM), and evening (6-8 PM)';
+      case 4:
+        return 'Best times: Morning (8-9 AM), noon (12-1 PM), afternoon (3-4 PM), and evening (7-8 PM)';
+      case 5:
+        return 'Best times: Early morning (7-8 AM), late morning (10-11 AM), afternoon (2-3 PM), evening (6-7 PM), and night (9-10 PM)';
+      default:
+        return 'Best times: Morning, afternoon, and evening';
+    }
+  }
+
+  Future<Map<String, dynamic>> _generateAIDietRecommendations(Map<String, int> fishSelections) async {
+    try {
+      print('🔄 Generating AI diet recommendations for: ${fishSelections.keys.join(', ')}');
+      final result = await OpenAIService.generateDietRecommendations(fishSelections);
+      print('✅ AI diet recommendations generated successfully');
+      return result;
+    } catch (e) {
+      print('❌ Error generating AI diet recommendations: $e');
+      print('🔄 Falling back to local recommendations...');
+      return await _getFallbackDietRecommendations(fishSelections.keys.toList());
+    }
+  }
+
+
+  Future<Map<String, dynamic>> _getFallbackDietRecommendations(List<String> fishList) async {
+    return await OpenAIService.getFallbackDietRecommendations(fishList);
+  }
+
+
+
+
+  Future<Map<String, dynamic>> _generateFishPortionRecommendation(String fishName, int quantity, List<String> availableFoodTypes) async {
+    try {
+      final prompt = '''
+Generate specific portion recommendations for $quantity $fishName fish.
+Available food types: ${availableFoodTypes.join(', ')}
+
+Provide:
+1. PORTION SIZE: Specific portion size (e.g., "2-3 small pellets", "1 pinch of flakes")
+2. FOOD TYPE: Choose the most appropriate food type from the available list
+3. REASONING: Brief explanation of why this food type and portion size is recommended
+
+Consider:
+- Fish size and dietary needs
+- Quantity of fish
+- Food type compatibility
+- Nutritional balance
+
+Format as structured information.
+''';
+
+      final response = await OpenAIService.generatePortionRecommendation(fishName, quantity, availableFoodTypes);
+      
+      return response;
+    } catch (e) {
+      print('Error generating portion recommendation for $fishName: $e');
+      return _getFallbackPortionRecommendation(fishName, quantity, availableFoodTypes);
+    }
+  }
+
+  Future<Map<String, dynamic>> _getFallbackPortionRecommendation(String fishName, int quantity, List<String> availableFoodTypes) async {
+    final foodType = availableFoodTypes.isNotEmpty ? availableFoodTypes.first : 'pellets';
+    return {
+      'portion_size': '2-3 small $foodType',
+      'food_type': foodType,
+      'reasoning': 'Standard portion for $quantity $fishName fish',
+    };
+  }
+
+
 
   Future<String> _generateFeedingNotes(List<String> fishNames) async {
     final prompt = """
@@ -1859,15 +2311,36 @@ Requirements:
 - Keep it concise and user-friendly.
 - Lines must be separated only by a newline.
 """;
-    final openAIService = OpenAIService();
-    final response = await openAIService.getChatResponse(prompt);
+            final response = await OpenAIService.generateFeedingNotes(fishNames);
     
-    // Return the response if it's not an error message
-    if (!response.startsWith('Error:') && !response.contains('API key not found')) {
+    return response;
+  }
+
+  Future<String> _generateAIFeedingTips(List<String> fishNames) async {
+    try {
+      final response = await OpenAIService.generateFeedingNotes(fishNames);
       return response;
+    } catch (e) {
+      print('Error generating AI feeding tips: $e');
+      return 'Start with smaller portions and observe fish appetite. Remove uneaten food after 2-3 minutes. Adjust feeding based on fish activity and water quality.';
     }
-    
-    // Fallback to default if OpenAI fails
-    return 'Feed 2-3 times daily in small amounts. Remove uneaten food after 5 minutes. Adjust portions based on fish activity and appetite.';
+  }
+
+  Widget _buildCalculatingDialog() {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: EdgeInsets.zero,
+      child: Center(
+        child: SizedBox(
+          width: 200,
+          height: 200,
+          child: Lottie.asset(
+            'lib/lottie/BowlAnimation.json',
+            fit: BoxFit.contain,
+            repeat: true,
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -12,17 +12,22 @@ import 'package:lottie/lottie.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:dropdown_search/dropdown_search.dart';
 import 'package:provider/provider.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../models/fish_prediction.dart';
 import '../models/compatibility_result.dart';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import '../widgets/snap_tips_dialog.dart';
 import '../widgets/expandable_reason.dart';
-import '../services/openai_service.dart';
+import '../services/openai_service.dart'; // OpenAI AI service
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
+import '../widgets/fish_info_dialog.dart';
 import '../screens/subscription_page.dart';
 import '../screens/logbook_provider.dart';
+import '../widgets/auth_required_dialog.dart';
+
+import '../services/enhanced_tankmate_service.dart';
 
 // Widget for displaying grouped recommendation fields in an ExpansionTile
 class _RecommendationExpansionGroup extends StatefulWidget {
@@ -47,7 +52,7 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
       initiallyExpanded: false,
       title: Row(
         children: [
-          Icon(firstField['icon'] as IconData, size: 22, color: Color(0xFF006064)),
+          Icon(firstField['icon'] as IconData, size: 22, color: const Color(0xFF006064)),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -91,7 +96,7 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(field['icon'] as IconData, color: Color(0xFF006064), size: 22),
+                  Icon(field['icon'] as IconData, color: const Color(0xFF006064), size: 22),
                   const SizedBox(width: 20),
                   Expanded(
                     child: Column(
@@ -171,17 +176,7 @@ class _SyncScreenState extends State<SyncScreen> {
   int _compatibilityChecksCount = 0;
   String _userPlan = 'free';
   
-  // Track which reasons are expanded
-  final Map<int, bool> _expandedReasons = {};
-  
-  String _shortenReason(String text, {int maxSentences = 2, int maxChars = 220}) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return trimmed;
-    final parts = trimmed.split(RegExp(r'(?<=[.!?])\s+'));
-    final take = parts.take(maxSentences).join(' ').trim();
-    if (take.length <= maxChars) return take;
-    return take.substring(0, maxChars).trimRight() + '…';
-  }
+
 
   @override
   void initState() {
@@ -198,20 +193,678 @@ class _SyncScreenState extends State<SyncScreen> {
       });
     }
 
-  // Helper: keep only the first 1–2 sentences and cap overly long text
-  String _shortenReason(String text, {int maxSentences = 2, int maxChars = 220}) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return trimmed;
-    final parts = trimmed.split(RegExp(r'(?<=[.!?])\s+'));
-    final take = parts.take(maxSentences).join(' ').trim();
-    if (take.length <= maxChars) return take;
-    return take.substring(0, maxChars).trimRight() + '…';
-  }
+
     if (widget.initialFishImage != null) {
       setState(() {
         _capturedImage1 = widget.initialFishImage;
         _fish1ImagePath = widget.initialFishImage!.path;
       });
+    }
+  }
+
+
+
+  Widget _buildAIRequirementsSection(String fish1Name, String fish2Name, String compatibilityLevel) {
+    // Only show AI analysis for Pro users
+    if (_userPlan.toLowerCase() != 'pro') {
+      return const SizedBox.shrink();
+    }
+    
+    // Hide AI analysis when incompatible or same species to avoid contradictions
+    if (compatibilityLevel == 'incompatible' ||
+        fish1Name.trim().toLowerCase() == fish2Name.trim().toLowerCase()) {
+      return const SizedBox.shrink();
+    }
+    
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE0F7FA),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3), width: 1),
+      ),
+      child: FutureBuilder<List<dynamic>>(
+        future: Future.wait([
+          EnhancedTankmateService.getCompatibilityReasons(fish1Name, fish2Name),
+          EnhancedTankmateService.getCompatibilityConditions(fish1Name, fish2Name),
+        ]),
+        builder: (context, snapshot) {
+          final isLoading = snapshot.connectionState == ConnectionState.waiting;
+          final hasData = snapshot.hasData && snapshot.data != null;
+          final List<String> reasons = hasData ? List<String>.from(snapshot.data![0] as List) : const <String>[];
+          final List<String> conditions = hasData ? List<String>.from(snapshot.data![1] as List) : const <String>[];
+
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (isLoading)
+                  _buildLoadingState()
+                else ...[
+                  if (reasons.isNotEmpty) ...[
+                    const Text(
+                      'Analysis',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...reasons.map((reason) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                margin: const EdgeInsets.only(top: 6),
+                                width: 6,
+                                height: 6,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF00BCD4),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  reason,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.black87,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                  ],
+                  // For compatible results, also show Care Recommendations (AI-sourced),
+                  // similar to water_calculator style but concise.
+                  if (compatibilityLevel == 'compatible') ...[
+                    const SizedBox(height: 12),
+                    FutureBuilder<Map<String, dynamic>?>(
+                      future: EnhancedTankmateService.getAICompatibilityAnalysis(fish1Name, fish2Name),
+                      builder: (context, careSnap) {
+                        if (careSnap.connectionState == ConnectionState.waiting) {
+                          return _buildLoadingState();
+                        }
+                        if (!careSnap.hasData || careSnap.data == null) {
+                          return const SizedBox.shrink();
+                        }
+                        final analysisData = careSnap.data!['data'] ?? careSnap.data!;
+                        final List<String> careRequirements = List<String>.from(analysisData['care_requirements'] ?? []);
+                        if (careRequirements.isEmpty) return const SizedBox.shrink();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE0F7FA),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: const [
+                                      Icon(Icons.eco, color: Color(0xFF006064), size: 18),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Care Recommendations',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF006064),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ...careRequirements.map((req) => Padding(
+                                        padding: const EdgeInsets.only(bottom: 4),
+                                        child: Row(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              '• ',
+                                              style: TextStyle(
+                                                color: Color(0xFF00BCD4),
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: Text(
+                                                req,
+                                                style: const TextStyle(
+                                                  fontSize: 13,
+                                                  color: Color(0xFF006064),
+                                                  height: 1.3,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                  if (compatibilityLevel == 'conditional' && conditions.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE0F7FA),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.warning_amber, color: Color(0xFF006064), size: 18),
+                              SizedBox(width: 8),
+                              Text(
+                                'Required Conditions',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF006064),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          ...conditions.map((c) => Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('• ', style: TextStyle(color: Color(0xFF00BCD4), fontSize: 14, fontWeight: FontWeight.bold)),
+                                    Expanded(
+                                      child: Text(
+                                        c,
+                                        style: const TextStyle(fontSize: 13, color: Color(0xFF006064), height: 1.3),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (reasons.isEmpty)
+                    FutureBuilder<Map<String, dynamic>?>(
+                      future: EnhancedTankmateService.getAICompatibilityAnalysis(fish1Name, fish2Name),
+                      builder: (context, aiSnap) {
+                        if (aiSnap.connectionState == ConnectionState.waiting) {
+                          return _buildLoadingState();
+                        } else if (aiSnap.hasData && aiSnap.data != null) {
+                          return _buildAIAnalysisContent(aiSnap.data!);
+                        } else {
+                          return _buildFallbackAnalysis(fish1Name, fish2Name);
+                        }
+                      },
+                    ),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Generating compatibility analysis...',
+              style: const TextStyle(
+                color: Color(0xFF006064),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'This may take a few seconds',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // _buildErrorState removed (no longer used)
+
+
+
+  Widget _buildFallbackAnalysis(String fish1Name, String fish2Name) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Status indicator
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE0F7FA),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.analytics, color: Color(0xFF006064), size: 16),
+              const SizedBox(width: 8),
+              Text(
+                'Basic Analysis',
+                style: const TextStyle(
+                  color: Color(0xFF006064),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        const SizedBox(height: 16),
+        
+        // Basic compatibility analysis
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE0F7FA),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.lightbulb_outline, color: Color(0xFF006064), size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Compatibility Notes',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF006064),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'AI-powered analysis is temporarily unavailable. Please check the tankmate recommendations below for compatible species, or consult aquarium compatibility guides for detailed information about keeping $fish1Name and $fish2Name together.',
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF006064),
+                  height: 1.3,
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // Generation Info
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            'Basic compatibility info • ${DateTime.now().toString().split(' ')[0]}',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey[600],
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAIAnalysisContent(Map<String, dynamic> data) {
+    // Extract the actual data from the response structure
+    final analysisData = data['data'] ?? data;
+    
+    final reasons = List<String>.from(analysisData['compatibility_reasons'] ?? []);
+    final conditions = List<String>.from(analysisData['conditions'] ?? []);
+    final careRequirements = List<String>.from(analysisData['care_requirements'] ?? []);
+    // confidence score and compatibility level omitted from UI for minimalist design
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Reasons
+        if (reasons.isNotEmpty) ...[
+          Text(
+            'Analysis',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF006064),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...reasons.map((reason) => Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 6),
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF00BCD4),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    reason,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.black87,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )),
+        ],
+        
+        // Conditions (if conditional compatibility)
+        if (conditions.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE0F7FA),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.warning_amber, color: Color(0xFF006064), size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Requirements for Compatibility',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ...conditions.map((condition) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '• ',
+                        style: const TextStyle(
+                          color: Color(0xFF00BCD4),
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          condition,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF006064),
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+              ],
+            ),
+          ),
+        ],
+        
+        // Care Requirements
+        if (careRequirements.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE0F7FA),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.eco, color: Color(0xFF006064), size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Care Recommendations',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ...careRequirements.map((requirement) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '• ',
+                        style: const TextStyle(
+                          color: Color(0xFF00BCD4),
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          requirement,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF006064),
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+              ],
+            ),
+          ),
+        ],
+      
+      ],
+    );
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _loadTankmateRecommendations(String fish1Name, String fish2Name) async {
+    try {
+      // Get enhanced tankmate recommendations from Supabase
+      final supabase = Supabase.instance.client;
+      
+      Map<String, Map<String, dynamic>> recommendations = {
+        fish1Name: {
+          'fully_compatible': <String>[],
+          'conditional': <Map<String, dynamic>>[],
+        },
+        fish2Name: {
+          'fully_compatible': <String>[],
+          'conditional': <Map<String, dynamic>>[],
+        },
+      };
+      
+      // Get recommendations for fish1
+      try {
+        final response1 = await supabase
+            .from('fish_tankmate_recommendations')
+            .select('fully_compatible_tankmates, conditional_tankmates')
+            .ilike('fish_name', fish1Name)
+            .maybeSingle();
+        
+        if (response1 != null) {
+          List<String> fullyCompatible = [];
+          List<Map<String, dynamic>> conditional = [];
+          
+          // Add fully compatible tankmates
+          if (response1['fully_compatible_tankmates'] != null) {
+            fullyCompatible.addAll(List<String>.from(response1['fully_compatible_tankmates']));
+          }
+          
+          // Add conditional tankmates (preserve full objects with conditions)
+          if (response1['conditional_tankmates'] != null) {
+            List<dynamic> conditionalData = response1['conditional_tankmates'];
+            for (var item in conditionalData) {
+              if (item is Map<String, dynamic> && item['name'] != null) {
+                conditional.add(item);
+              } else if (item is String) {
+                // Convert string to object format for consistency
+                conditional.add({
+                  'name': item,
+                  'conditions': ['Compatibility requires specific conditions'],
+                });
+              }
+            }
+          }
+          
+          // Remove self and the other selected fish from both lists
+          fullyCompatible.remove(fish1Name);
+          fullyCompatible.remove(fish2Name);
+          conditional.removeWhere((item) => item['name'] == fish1Name || item['name'] == fish2Name);
+          
+          // Sort and limit
+          fullyCompatible.sort();
+          conditional.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+          
+          recommendations[fish1Name] = {
+            'fully_compatible': fullyCompatible.take(6).toList(),
+            'conditional': conditional.take(6).toList(),
+          };
+        }
+      } catch (e1) {
+        print('Warning: Could not get recommendations for $fish1Name: $e1');
+      }
+      
+      // Get recommendations for fish2
+      try {
+        final response2 = await supabase
+            .from('fish_tankmate_recommendations')
+            .select('fully_compatible_tankmates, conditional_tankmates')
+            .ilike('fish_name', fish2Name)
+            .maybeSingle();
+        
+        if (response2 != null) {
+          List<String> fullyCompatible = [];
+          List<Map<String, dynamic>> conditional = [];
+          
+          // Add fully compatible tankmates
+          if (response2['fully_compatible_tankmates'] != null) {
+            fullyCompatible.addAll(List<String>.from(response2['fully_compatible_tankmates']));
+          }
+          
+          // Add conditional tankmates (preserve full objects with conditions)
+          if (response2['conditional_tankmates'] != null) {
+            List<dynamic> conditionalData = response2['conditional_tankmates'];
+            for (var item in conditionalData) {
+              if (item is Map<String, dynamic> && item['name'] != null) {
+                conditional.add(item);
+              } else if (item is String) {
+                // Convert string to object format for consistency
+                conditional.add({
+                  'name': item,
+                  'conditions': ['Compatibility requires specific conditions'],
+                });
+              }
+            }
+          }
+          
+          // Remove self and the other selected fish from both lists
+          fullyCompatible.remove(fish1Name);
+          fullyCompatible.remove(fish2Name);
+          conditional.removeWhere((item) => item['name'] == fish1Name || item['name'] == fish2Name);
+          
+          // Sort and limit
+          fullyCompatible.sort();
+          conditional.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+          
+          recommendations[fish2Name] = {
+            'fully_compatible': fullyCompatible.take(6).toList(),
+            'conditional': conditional.take(6).toList(),
+          };
+        }
+      } catch (e2) {
+        print('Warning: Could not get recommendations for $fish2Name: $e2');
+      }
+      
+      return recommendations;
+      
+    } catch (e) {
+      print('Error loading tankmate recommendations from Supabase: $e');
+      return {
+        fish1Name: {
+          'fully_compatible': <String>[],
+          'conditional': <Map<String, dynamic>>[],
+        },
+        fish2Name: {
+          'fully_compatible': <String>[],
+          'conditional': <Map<String, dynamic>>[],
+        },
+      };
     }
   }
 
@@ -225,9 +878,6 @@ class _SyncScreenState extends State<SyncScreen> {
 
   Future<void> _checkServerAndLoadData() async {
     if (!mounted) return;
-    setState(() {
-      _isLoading = true;
-    });
     
     // Check server connection first
     final isConnected = await ApiConfig.checkServerConnection();
@@ -237,9 +887,6 @@ class _SyncScreenState extends State<SyncScreen> {
       await _loadFishSpecies();
     } else if (mounted) {
       // If not connected, show error message
-      setState(() {
-        _isLoading = false;
-      });
       showCustomNotification(
         context,
         'Unable to connect to server. Please check your network connection.',
@@ -250,9 +897,6 @@ class _SyncScreenState extends State<SyncScreen> {
 
   Future<void> _loadFishSpecies() async {
     if (!mounted) return;
-    setState(() {
-      _isLoading = true;
-    });
 
     try {
       // Use the new failover method for more reliable API access
@@ -282,12 +926,6 @@ class _SyncScreenState extends State<SyncScreen> {
           'Error loading fish species: ${e.toString()}',
           isError: true,
         );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
       }
     }
   }
@@ -702,7 +1340,7 @@ class _SyncScreenState extends State<SyncScreen> {
         final commonName = decodedResponse['common_name'] ?? 'Unknown';
         final scientificName = decodedResponse['scientific_name'] ?? 'Unknown';
         
-        // Generate description using OpenAI
+        // Generate description using Hugging Face
         String description = '';
         try {
           description = await OpenAIService.generateFishDescription(
@@ -944,7 +1582,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           ),
                         ),
                         const SizedBox(height: 20),
-                        // Diet recommendation and care details via OpenAI
+                        // Diet recommendation and care details via Hugging Face
                         FutureBuilder<Map<String, dynamic>>(
                           future: OpenAIService.generateCareRecommendations(
                             highestPrediction.commonName,
@@ -970,7 +1608,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: const [
                                   SizedBox(height: 8),
-                                  Center(child: CircularProgressIndicator(color: Color(0xFF00ACC1))),
+                                  Center(child: CircularProgressIndicator(color: Color(0xFF00BCD4))),
                                   SizedBox(height: 12),
                                   Text(
                                     'Generating care recommendations...',
@@ -1077,7 +1715,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                   Navigator.of(context).pop();
                                 },
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF00ACC1),
+                                  backgroundColor: const Color(0xFF00BCD4),
                                   foregroundColor: Colors.white,
                                   padding: const EdgeInsets.symmetric(vertical: 16),
                                   shape: RoundedRectangleBorder(
@@ -1215,6 +1853,18 @@ class _SyncScreenState extends State<SyncScreen> {
   }
 
   bool _canCheckCompatibility() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      showDialog(
+        context: context,
+        builder: (BuildContext context) => const AuthRequiredDialog(
+          title: 'Sign In Required',
+          message: 'You need to sign in to check fish compatibility and access premium features.',
+        ),
+      );
+      return false;
+    }
+    
     if (_userPlan == 'free' && _compatibilityChecksCount >= 2) {
       _showUpgradeDialog('You have reached the limit of 2 compatibility checks for the free plan. Upgrade to Pro for unlimited checks with detailed breakdown and advanced deep compatibility analysis!');
       return false;
@@ -1223,34 +1873,23 @@ class _SyncScreenState extends State<SyncScreen> {
   }
 
   void _showUpgradeDialog(String message) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Upgrade to Pro'),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SubscriptionPage()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00ACC1),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Upgrade to Pro'),
-            ),
-          ],
-        );
-      },
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      // Show auth required dialog instead
+      showDialog(
+        context: context,
+        builder: (BuildContext context) => const AuthRequiredDialog(
+          title: 'Sign In Required',
+          message: 'You need to sign in to access premium features and compatibility checks.',
+        ),
+      );
+      return;
+    }
+    
+    // User is authenticated, directly navigate to subscription page
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const SubscriptionPage()),
     );
   }
 
@@ -1282,8 +1921,18 @@ class _SyncScreenState extends State<SyncScreen> {
         
         if (results.isNotEmpty) {
           final firstResult = results[0];
-          final isCompatible = firstResult['compatibility'] == 'Compatible';
-          final baseReasons = List<String>.from(firstResult['reasons']);
+          
+          // Parse enhanced compatibility response
+          final String compatibility = firstResult['compatibility'] ?? 'Incompatible';
+          final String compatibilityLevel = firstResult['compatibility_level'] ?? 
+              (compatibility == 'Compatible' ? 'compatible' : 'incompatible');
+          
+          // Extract reasons and conditions
+          final List<String> baseReasons = List<String>.from(firstResult['reasons'] ?? []);
+          final List<String> conditions = List<String>.from(firstResult['conditions'] ?? []);
+          
+          // Handle backward compatibility with simple boolean check
+          final bool isCompatible = compatibility == 'Compatible' || compatibilityLevel == 'compatible';
 
           String? fish1Base64 = firstResult['fish1_image'];
           String? fish2Base64 = firstResult['fish2_image'];
@@ -1319,7 +1968,7 @@ class _SyncScreenState extends State<SyncScreen> {
           }
           
           if (mounted) {
-            _showCompatibilityDialog(isCompatible, baseReasons);
+            _showCompatibilityDialog(isCompatible, baseReasons, compatibilityLevel, conditions);
           }
         }
       } else {
@@ -1339,11 +1988,14 @@ class _SyncScreenState extends State<SyncScreen> {
     }
   }
 
-  void _showCompatibilityDialog(bool isCompatible, List<String> baseReasons) {
+  void _showCompatibilityDialog(bool isCompatible, List<String> baseReasons, String compatibilityLevel, List<String> conditions) {
+    // Enhanced compatibility dialog with full support for conditional compatibility
     List<String> currentReasons = baseReasons;
     bool isLoadingDetails = false;
     bool hasFetched = false;
     bool showAllReasons = false; // UI toggle: show all vs top 3
+    Map<String, Map<String, dynamic>> tankmates = {}; // Store tankmate recommendations for each fish
+    bool isLoadingTankmates = false;
 
     // Normalize plan string for robust comparison
     String normalizedPlan = _userPlan.trim().toLowerCase().replaceAll(' ', '_');
@@ -1354,15 +2006,15 @@ class _SyncScreenState extends State<SyncScreen> {
       builder: (BuildContext dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            // Only fetch detailed reasons for Pro
-            if (!hasFetched && !isCompatible && normalizedPlan == 'pro') {
-              hasFetched = true;
-              isLoadingDetails = true;
-              OpenAIService.explainIncompatibilityReasons(
-                _fish1Name,
-                _fish2Name,
-                baseReasons,
-              ).then((detailedReasons) {
+                          // Only fetch detailed reasons for Pro users and incompatible fish
+              if (!hasFetched && compatibilityLevel == 'incompatible' && normalizedPlan == 'pro') {
+                hasFetched = true;
+                isLoadingDetails = true;
+                OpenAIService.explainIncompatibilityReasons(
+                  _fish1Name,
+                  _fish2Name,
+                  baseReasons,
+                ).then((detailedReasons) {
                 if (mounted) {
                   setDialogState(() {
                     currentReasons = detailedReasons;
@@ -1378,67 +2030,231 @@ class _SyncScreenState extends State<SyncScreen> {
                 }
               });
             }
+            
+            // Load tankmate recommendations (for all users)
+            if (tankmates.isEmpty && !isLoadingTankmates) {
+              isLoadingTankmates = true;
+              _loadTankmateRecommendations(_fish1Name, _fish2Name).then((recommendations) {
+                if (mounted) {
+                  setDialogState(() {
+                    tankmates = recommendations;
+                    isLoadingTankmates = false;
+                  });
+                }
+              }).catchError((e) {
+                print('Error loading tankmate recommendations: $e');
+                if (mounted) {
+                  setDialogState(() {
+                    isLoadingTankmates = false;
+                  });
+                }
+              });
+            }
 
             return Dialog(
-              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              insetPadding: EdgeInsets.zero,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.zero,
               ),
-              child: Container(
-                width: MediaQuery.of(dialogContext).size.width,
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(dialogContext).size.height * 0.9,
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  flex: 2,
-                                  child: _buildFishResultImageWithBase64(_capturedImage1, _fish1Base64Image, _fish1ImagePath),
+                                                           child: Container(
+                                width: MediaQuery.of(dialogContext).size.width,
+                                height: MediaQuery.of(dialogContext).size.height,
+                                                                 decoration: const BoxDecoration(
+                                   color: Colors.white,
+                                 ),
+                                child: SingleChildScrollView(
+                   child: Column(
+                     mainAxisSize: MainAxisSize.min,
+                     children: [
+                                               // Back button at the top left
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.only(top: 16, left: 16),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.start,
+                            children: [
+                              IconButton(
+                                onPressed: () => Navigator.of(dialogContext).pop(),
+                                icon: const Icon(
+                                  Icons.arrow_back,
+                                  color: Color(0xFF006064),
+                                  size: 28,
                                 ),
-                                Container(
-                                  height: 2,
-                                  width: 40,
-                                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                                  color: const Color(0xFF006064),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Colors.white.withOpacity(0.9),
+                                  shape: const CircleBorder(),
+                                  padding: const EdgeInsets.all(8),
                                 ),
-                                Expanded(
-                                  flex: 2,
-                                  child: _buildFishResultImageWithBase64(_capturedImage2, _fish2Base64Image, _fish2ImagePath),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 24),
-                            Text(
-                              '$_fish1Name & $_fish2Name',
-                              style: const TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF006064),
                               ),
-                              textAlign: TextAlign.center,
+                            ],
+                          ),
+                        ),
+                       Container(
+                         padding: const EdgeInsets.all(24),
+                         child: Column(
+                           children: [
+                             Row(
+                               children: [
+                                 Expanded(
+                                   flex: 2,
+                                   child: _buildFishResultImageWithBase64(_capturedImage1, _fish1Base64Image, _fish1ImagePath),
+                                 ),
+                                 Container(
+                                   height: 2,
+                                   width: 40,
+                                   margin: const EdgeInsets.symmetric(horizontal: 8),
+                                   color: const Color(0xFF006064),
+                                 ),
+                                 Expanded(
+                                   flex: 2,
+                                   child: _buildFishResultImageWithBase64(_capturedImage2, _fish2Base64Image, _fish2ImagePath),
+                                 ),
+                               ],
+                             ),
+                            const SizedBox(height: 24),
+                            Column(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      // Use smaller font on smaller screens
+                                      double fontSize = constraints.maxWidth < 400 ? 18 : 24;
+                                      return Column(
+                                        children: [
+                                          // Individual fish names with responsive layout
+                                          if (constraints.maxWidth < 400) ...[
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Flexible(
+                                                  child: Text(
+                                                    _fish1Name,
+                                                    style: TextStyle(
+                                                      fontSize: fontSize,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: const Color(0xFF006064),
+                                                    ),
+                                                    textAlign: TextAlign.center,
+                                                    maxLines: 2,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 2),
+                                                IconButton(
+                                                  icon: const Icon(Icons.remove_red_eye, color: Color(0xFF006064), size: 18),
+                                                  padding: EdgeInsets.zero,
+                                                  constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                                                  onPressed: () {
+                                                    showDialog(
+                                                      context: context,
+                                                      builder: (context) => FishInfoDialog(fishName: _fish1Name),
+                                                    );
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Icon(
+                                              Icons.add,
+                                              color: Colors.grey[600],
+                                              size: 20,
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Flexible(
+                                                  child: Text(
+                                                    _fish2Name,
+                                                    style: TextStyle(
+                                                      fontSize: fontSize,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: const Color(0xFF006064),
+                                                    ),
+                                                    textAlign: TextAlign.center,
+                                                    maxLines: 2,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 2),
+                                                IconButton(
+                                                  icon: const Icon(Icons.remove_red_eye, color: Color(0xFF006064), size: 18),
+                                                  padding: EdgeInsets.zero,
+                                                  constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                                                  onPressed: () {
+                                                    showDialog(
+                                                      context: context,
+                                                      builder: (context) => FishInfoDialog(fishName: _fish2Name),
+                                                    );
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          ] else
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Flexible(
+                                                  child: Text(
+                                                    '$_fish1Name & $_fish2Name',
+                                                    style: TextStyle(
+                                                      fontSize: fontSize,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: const Color(0xFF006064),
+                                                    ),
+                                                    textAlign: TextAlign.center,
+                                                    maxLines: 2,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                IconButton(
+                                                  icon: const Icon(Icons.remove_red_eye, color: Color(0xFF006064)),
+                                                  tooltip: 'View ${'_fish1Name'} info',
+                                                  onPressed: () {
+                                                    showDialog(
+                                                      context: context,
+                                                      builder: (context) => FishInfoDialog(fishName: _fish1Name),
+                                                    );
+                                                  },
+                                                ),
+                                                IconButton(
+                                                  icon: const Icon(Icons.remove_red_eye, color: Color(0xFF006064)),
+                                                  tooltip: 'View ${'_fish2Name'} info',
+                                                  onPressed: () {
+                                                    showDialog(
+                                                      context: context,
+                                                      builder: (context) => FishInfoDialog(fishName: _fish2Name),
+                                                    );
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                              ],
                             ),
                             const SizedBox(height: 16),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(
-                                  isCompatible ? Icons.check_circle : Icons.cancel,
-                                  color: isCompatible ? Colors.green : Colors.red,
+                                  _getCompatibilityIcon(compatibilityLevel),
+                                  color: _getCompatibilityColor(compatibilityLevel),
                                   size: 24,
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
-                                  isCompatible ? 'Compatible' : 'Not Compatible',
+                                  _getCompatibilityText(compatibilityLevel),
                                   style: TextStyle(
-                                    color: isCompatible ? Colors.green : Colors.red,
+                                    color: _getCompatibilityColor(compatibilityLevel),
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -1447,15 +2263,146 @@ class _SyncScreenState extends State<SyncScreen> {
                             ),
                           ],
                         ),
-                      ),
-                      if (_userPlan != 'free')
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(24),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFF5F5F5),
-                            borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+                                              ),
+                                             // Tankmate Recommendations (for all users)
+                                               if (tankmates.isNotEmpty || isLoadingTankmates)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(FontAwesomeIcons.fish, color: Color(0xFF006064), size: 18),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    'Tankmate Recommendations',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF006064),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              if (isLoadingTankmates)
+                                const Center(
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF006064)),
+                                    ),
+                                  ),
+                                )
+                              else if (tankmates.isNotEmpty && _hasTankmateData(tankmates))
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // First Fish Recommendations
+                                    if (_hasFishTankmates(tankmates[_fish1Name]))
+                                      _buildFishTankmateSection(_fish1Name, tankmates[_fish1Name]!),
+                                    
+                                    // Add spacing between fish sections
+                                    if (_hasFishTankmates(tankmates[_fish1Name]) && _hasFishTankmates(tankmates[_fish2Name]))
+                                      const SizedBox(height: 12),
+                                    
+                                    // Second Fish Recommendations
+                                    if (_hasFishTankmates(tankmates[_fish2Name]))
+                                      _buildFishTankmateSection(_fish2Name, tankmates[_fish2Name]!),
+                                    
+                                    // Show message if no recommendations for either fish
+                                    if (!_hasFishTankmates(tankmates[_fish1Name]) && !_hasFishTankmates(tankmates[_fish2Name]))
+                                      Text(
+                                        'No recommendations available for either fish.',
+                                        style: const TextStyle(
+                                          color: Color(0xFF00BCD4),
+                                          fontSize: 12,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                  ],
+                                )
+                              else
+                                Text(
+                                  'No tankmate recommendations available at this time.',
+                                  style: const TextStyle(
+                                    color: Color(0xFF00BCD4),
+                                    fontSize: 14,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                            ],
                           ),
+                        ),
+                      // AI Requirements Section (for all compatibility levels)
+                      _buildAIRequirementsSection(_fish1Name, _fish2Name, compatibilityLevel),
+                                             // Free User Upgrade Prompt (only show if incompatible)
+                                               if (_userPlan == 'free' && compatibilityLevel == 'incompatible')
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                                                             Row(
+                                 children: [
+                                   const Icon(Icons.star, color: Color(0xFF006064), size: 20),
+                                   const SizedBox(width: 8),
+                                   const Text(
+                                     'Want Detailed Analysis?',
+                                     style: TextStyle(
+                                       fontSize: 16,
+                                       fontWeight: FontWeight.bold,
+                                       color: Color(0xFF006064),
+                                     ),
+                                   ),
+                                 ],
+                               ),
+                               const SizedBox(height: 12),
+                               const Text(
+                                 'Upgrade to Pro to get detailed AI-powered explanations for incompatibility reasons and advanced compatibility analysis.',
+                                 style: TextStyle(
+                                   fontSize: 14,
+                                   color: Color(0xFF006064),
+                                 ),
+                               ),
+                               const SizedBox(height: 16),
+                               SizedBox(
+                                 width: double.infinity,
+                                 child: ElevatedButton(
+                                   onPressed: () {
+                                     Navigator.of(dialogContext).pop();
+                                     Navigator.push(
+                                       context,
+                                       MaterialPageRoute(builder: (context) => const SubscriptionPage()),
+                                     );
+                                   },
+                                   style: ElevatedButton.styleFrom(
+                                     backgroundColor: const Color(0xFF00BCD4),
+                                     foregroundColor: Colors.white,
+                                     padding: const EdgeInsets.symmetric(vertical: 12),
+                                     shape: RoundedRectangleBorder(
+                                       borderRadius: BorderRadius.circular(8),
+                                     ),
+                                   ),
+                                   child: const Text(
+                                     'Upgrade to Pro',
+                                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                                   ),
+                                 ),
+                               ),
+                            ],
+                          ),
+                        ),
+                                                                                           // Pro Features Section
+                                                 if (_userPlan != 'free')
+                           Container(
+                             width: double.infinity,
+                             padding: const EdgeInsets.all(24),
                           child: isLoadingDetails
                               ? Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -1497,7 +2444,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                         ),
                                       ],
                                     ),
-                                    const SizedBox(height: 12),
+                                    // Removed extra top whitespace
                                     // Show a concise list by default (top 3). Allow user to expand/collapse.
                                     Builder(
                                       builder: (context) {
@@ -1516,7 +2463,8 @@ class _SyncScreenState extends State<SyncScreen> {
                                                     Icon(
                                                       Icons.info,
                                                       size: 20,
-                                                      color: isCompatible ? Colors.green : Colors.red,
+                                                      color: compatibilityLevel == 'compatible' ? Colors.green :
+                                                             compatibilityLevel == 'conditional' ? Colors.orange : Colors.red,
                                                     ),
                                                     const SizedBox(width: 12),
                                                     Expanded(
@@ -1524,7 +2472,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                                         crossAxisAlignment: CrossAxisAlignment.start,
                                                         children: [
                                                           ExpandableReason(
-                                                            text: isCompatible && index == 0 && !showAllReasons
+                                                            text: compatibilityLevel == 'compatible' && index == 0 && !showAllReasons
                                                                 ? "Both can be kept together in the same aquarium"
                                                                 : reasonsToShow[index],
                                                             textStyle: const TextStyle(
@@ -1599,13 +2547,26 @@ class _SyncScreenState extends State<SyncScreen> {
                                           Expanded(
                                             child: ElevatedButton(
                                               onPressed: () {
+                                                final user = Supabase.instance.client.auth.currentUser;
+                                                if (user == null) {
+                                                  // Show auth required dialog
+                                                  showDialog(
+                                                    context: context,
+                                                    builder: (BuildContext context) => const AuthRequiredDialog(
+                                                      title: 'Sign In Required',
+                                                      message: 'You need to sign in to save compatibility results to your collection.',
+                                                    ),
+                                                  );
+                                                  return;
+                                                }
+                                                
                                                 final logbookProvider = Provider.of<LogBookProvider>(context, listen: false);
                                                 final newResult = CompatibilityResult(
                                                   fish1Name: _fish1Name,
                                                   fish1ImagePath: _fish1ImagePath,
                                                   fish2Name: _fish2Name,
                                                   fish2ImagePath: _fish2ImagePath,
-                                                  isCompatible: isCompatible,
+                                                  isCompatible: compatibilityLevel == 'compatible',
                                                   reasons: currentReasons,
                                                   dateChecked: DateTime.now(),
                                                   savedPlan: _userPlan,
@@ -1615,7 +2576,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                                 showCustomNotification(context, 'Result saved to History');
                                               },
                                               style: ElevatedButton.styleFrom(
-                                                backgroundColor: const Color(0xFF00ACC1),
+                                                backgroundColor: const Color(0xFF00BCD4),
                                                 foregroundColor: Colors.white,
                                                 padding: const EdgeInsets.symmetric(vertical: 12),
                                                 shape: RoundedRectangleBorder(
@@ -1880,7 +2841,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                 child: ElevatedButton(
                                   onPressed: _onClearPressed,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.grey[300],
+                                    backgroundColor: const Color(0xFFF5F5F5),
                                     foregroundColor: Colors.black87,
                                     padding: const EdgeInsets.symmetric(vertical: 12),
                                     shape: RoundedRectangleBorder(
@@ -1899,7 +2860,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                 child: ElevatedButton(
                                   onPressed: _isLoading ? null : _checkCompatibility,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF00ACC1),
+                                    backgroundColor: const Color(0xFF00BCD4),
                                     foregroundColor: Colors.white,
                                     padding: const EdgeInsets.symmetric(vertical: 12),
                                     shape: RoundedRectangleBorder(
@@ -2118,7 +3079,7 @@ class _SyncScreenState extends State<SyncScreen> {
     return ElevatedButton(
       onPressed: () => _showCaptureOptions(isFirstFish),
       style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF00ACC1),
+        backgroundColor: const Color(0xFF00BCD4),
         foregroundColor: Colors.white,
         padding: const EdgeInsets.all(8),
         shape: RoundedRectangleBorder(
@@ -2169,7 +3130,7 @@ class _SyncScreenState extends State<SyncScreen> {
                   Column(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.camera, size: 40, color: Color(0xFF00ACC1)),
+                        icon: const Icon(Icons.camera, size: 40, color: Color(0xFF00BCD4)),
                         onPressed: () {
                           Navigator.pop(context);
                           _captureImageForIdentification(isFirstFish);
@@ -2181,7 +3142,7 @@ class _SyncScreenState extends State<SyncScreen> {
                   Column(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.photo_library, size: 40, color: Color(0xFF00ACC1)),
+                        icon: const Icon(Icons.photo_library, size: 40, color: Color(0xFF00BCD4)),
                         onPressed: () {
                           Navigator.pop(context);
                           _pickImageForIdentification(isFirstFish);
@@ -2454,5 +3415,394 @@ class _SyncScreenState extends State<SyncScreen> {
         isError: true,
       );
     }
+  }
+
+  // Helper methods for tankmate data checking
+  bool _hasTankmateData(Map<String, Map<String, dynamic>> tankmates) {
+    return tankmates.values.any((fishData) => _hasFishTankmates(fishData));
+  }
+
+  bool _hasFishTankmates(Map<String, dynamic>? fishData) {
+    if (fishData == null) return false;
+    final fullyCompatible = fishData['fully_compatible'] as List<String>?;
+    final conditional = fishData['conditional'] as List<Map<String, dynamic>>?;
+    return (fullyCompatible?.isNotEmpty == true) || 
+           (conditional?.isNotEmpty == true);
+  }
+
+  Widget _buildFishTankmateSection(String fishName, Map<String, dynamic> fishTankmates) {
+    final fullyCompatible = (fishTankmates['fully_compatible'] as List<String>?) ?? [];
+    final conditional = (fishTankmates['conditional'] as List<Map<String, dynamic>>?) ?? [];
+    final totalCount = fullyCompatible.length + conditional.length;
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE0F7FA),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+      ),
+      child: ExpansionTile(
+        initiallyExpanded: false,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        leading: const Icon(FontAwesomeIcons.fish, color: Color(0xFF006064), size: 18),
+        title: Text(
+          fishName,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF006064),
+          ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          '$totalCount compatible tankmates',
+          style: const TextStyle(
+            fontSize: 12,
+            color: Color(0xFF00BCD4),
+          ),
+        ),
+        children: [
+          // Fully Compatible Section
+          if (fullyCompatible.isNotEmpty) ...[
+            Row(
+              children: [
+                const Icon(Icons.check_circle, color: Color(0xFF00BCD4), size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  'Fully Compatible (${fullyCompatible.length})',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF006064),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: fullyCompatible.map((fish) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0F7FA),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+                ),
+                child: Text(
+                  fish,
+                  style: const TextStyle(
+                    color: Color(0xFF006064),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              )).toList(),
+            ),
+          ],
+          
+          // Add spacing if both sections exist
+          if (fullyCompatible.isNotEmpty && conditional.isNotEmpty)
+            const SizedBox(height: 16),
+          
+          // Conditional Section
+          if (conditional.isNotEmpty) ...[
+            Row(
+              children: [
+                const Icon(Icons.warning_amber, color: Color(0xFF006064), size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  'Compatible with Conditions (${conditional.length})',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF006064),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: conditional.map((fishData) => GestureDetector(
+                onTap: () => _showFishConditionsDialog(
+                  fishName, 
+                  fishData['name'] as String, 
+                  List<String>.from(fishData['conditions'] ?? [])
+                ),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE0F7FA),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        fishData['name'] as String,
+                        style: const TextStyle(
+                          color: Color(0xFF006064),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.info_outline,
+                        size: 12,
+                        color: Color(0xFF006064),
+                      ),
+                    ],
+                  ),
+                ),
+              )).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // Helper methods for conditional compatibility display
+  IconData _getCompatibilityIcon(String level) {
+    switch (level) {
+      case 'compatible':
+        return Icons.check_circle;
+      case 'conditional':
+        return Icons.warning;
+      case 'incompatible':
+      default:
+        return Icons.cancel;
+    }
+  }
+
+  Color _getCompatibilityColor(String level) {
+    switch (level) {
+      case 'compatible':
+        return Colors.green;
+      case 'conditional':
+        return Colors.orange;
+      case 'incompatible':
+      default:
+        return Colors.red;
+    }
+  }
+
+  String _getCompatibilityText(String level) {
+    switch (level) {
+      case 'compatible':
+        return 'Compatible';
+      case 'conditional':
+        return 'Compatible with Conditions';
+      case 'incompatible':
+      default:
+        return 'Not Compatible';
+    }
+  }
+
+  void _showFishConditionsDialog(String baseFishName, String tankmateName, List<String> conditions) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              color: Colors.white,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE0F7FA),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.warning_amber,
+                        color: Color(0xFF006064),
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Conditional Compatibility',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '$baseFishName + $tankmateName',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // Conditions section
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE0F7FA),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.checklist,
+                            color: Color(0xFF006064),
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Required Conditions',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (conditions.isNotEmpty)
+                        ...conditions.map((condition) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                margin: const EdgeInsets.only(top: 6),
+                                width: 6,
+                                height: 6,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF00BCD4),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  condition,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Color(0xFF006064),
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ))
+                      else
+                        Text(
+                          'No specific conditions available.',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // Info section
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE0F7FA),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.lightbulb_outline,
+                        color: Color(0xFF006064),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'These fish can coexist if the above conditions are met. Monitor their behavior closely when introducing them to the same tank.',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF006064),
+                            height: 1.3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // Close button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF00BCD4),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text(
+                      'Got it',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }

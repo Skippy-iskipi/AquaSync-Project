@@ -28,158 +28,209 @@ class _CalculatorState extends State<Calculator> with SingleTickerProviderStateM
   }
 
   Widget _buildFishCalculatorOptions() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'How would you like to provide your aquarium size?',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF006064),
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Option 1: Tank Volume
-          InkWell(
-            onTap: () {
-              setState(() {
-                _currentFishCalculator = const FishCalculatorVolume();
-              });
-            },
-            child: Container(
-              padding: const EdgeInsets.all(16),
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 24),
+            
+            // Option 1: Tank Volume
+            Container(
+              width: double.infinity,
               decoration: BoxDecoration(
-                color: const Color(0xFFE0F7FA),
-                borderRadius: BorderRadius.circular(12),
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.grey.withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 4,
+                    spreadRadius: 2,
+                    blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
                 ],
               ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.water_drop,
-                      color: Color(0xFF006064),
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text(
-                          'I know my tank volume',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF006064),
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    _currentFishCalculator = const FishCalculatorVolume();
+                  });
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF00BCD4), Color(0xFF006064)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF00BCD4).withOpacity(0.3),
+                              spreadRadius: 1,
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Enter volume in liters or gallons',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.black54,
-                          ),
+                        child: const Icon(
+                          Icons.water_drop,
+                          color: Colors.white,
+                          size: 28,
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 20),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'I know my tank volume',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Perfect if you already know your tank\'s volume in liters or gallons. Quick and easy calculation.',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.black54,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE0F7FA),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.arrow_forward_ios,
+                          color: Color(0xFF006064),
+                          size: 20,
+                        ),
+                      ),
+                    ],
                   ),
-                  const Icon(
-                    Icons.arrow_forward_ios,
-                    color: Color(0xFF006064),
-                    size: 16,
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 16),
-          // Option 2: Tank Dimensions
-          InkWell(
-            onTap: () {
-              setState(() {
-                _currentFishCalculator = const FishCalculatorDimensions();
-              });
-            },
-            child: Container(
-              padding: const EdgeInsets.all(16),
+            
+            const SizedBox(height: 20),
+            
+            // Option 2: Tank Dimensions
+            Container(
+              width: double.infinity,
               decoration: BoxDecoration(
-                color: const Color(0xFFE0F7FA),
-                borderRadius: BorderRadius.circular(12),
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.grey.withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 4,
+                    spreadRadius: 2,
+                    blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
                 ],
               ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.straighten,
-                      color: Color(0xFF006064),
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text(
-                          'I will enter tank dimensions',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF006064),
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    _currentFishCalculator = const FishCalculatorDimensions();
+                  });
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF4CAF50).withOpacity(0.3),
+                              spreadRadius: 1,
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Enter length, width, and height',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.black54,
-                          ),
+                        child: const Icon(
+                          Icons.straighten,
+                          color: Colors.white,
+                          size: 28,
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 20),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'I will measure my tank dimensions',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Great for new tanks or when you need to measure. Enter length, width, and height for accurate volume calculation.',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.black54,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE0F7FA),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.arrow_forward_ios,
+                          color: Color(0xFF006064),
+                          size: 20,
+                        ),
+                      ),
+                    ],
                   ),
-                  const Icon(
-                    Icons.arrow_forward_ios,
-                    color: Color(0xFF006064),
-                    size: 16,
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        ],
+            
+            const SizedBox(height: 24),
+            
+            // Help Section
+          ],
+        ),
       ),
     );
   }

@@ -1,0 +1,94 @@
+{
+  "summary": {
+    "total_fish_species": 109,
+    "total_compatibility_pairs": 5995,
+    "compatible_pairs": 2289,
+    "incompatible_pairs": 3706,
+    "compatibility_percentage": 38.18181818181819
+  },
+  "most_compatible_fish": [
+    {
+      "name": "Dwarf Gourami",
+      "compatible_count": 71
+    },
+    {
+      "name": "Apistogramma",
+      "compatible_count": 70
+    },
+    {
+      "name": "Bolivian Ram",
+      "compatible_count": 70
+    },
+    {
+      "name": "Pearl Gourami",
+      "compatible_count": 68
+    },
+    {
+      "name": "Boesemani Rainbow",
+      "compatible_count": 68
+    },
+    {
+      "name": "Keyhole Cichlid",
+      "compatible_count": 68
+    },
+    {
+      "name": "Cardinal Tetra",
+      "compatible_count": 68
+    },
+    {
+      "name": "Platy",
+      "compatible_count": 68
+    },
+    {
+      "name": "Swordtail",
+      "compatible_count": 68
+    },
+    {
+      "name": "Buenos Aires Tetra",
+      "compatible_count": 68
+    }
+  ],
+  "least_compatible_fish": [
+    {
+      "name": "Green Terror",
+      "compatible_count": 0
+    },
+    {
+      "name": "African Cichlid",
+      "compatible_count": 0
+    },
+    {
+      "name": "Flowerhorn",
+      "compatible_count": 0
+    },
+    {
+      "name": "Electric Blue Jack Dempsey",
+      "compatible_count": 0
+    },
+    {
+      "name": "Oscar",
+      "compatible_count": 0
+    },
+    {
+      "name": "Betta",
+      "compatible_count": 0
+    },
+    {
+      "name": "Dottyback",
+      "compatible_count": 0
+    },
+    {
+      "name": "Convict Cichlid",
+      "compatible_count": 0
+    },
+    {
+      "name": "Hammerhead Shark",
+      "compatible_count": 0
+    },
+    {
+      "name": "Albino Convict",
+      "compatible_count": 0
+    }
+  ],
+  "generated_at": "2025-08-30T07:44:46.784190+00:00"
+}

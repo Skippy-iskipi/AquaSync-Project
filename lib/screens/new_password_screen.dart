@@ -41,7 +41,7 @@ class _NewPasswordScreenState extends State<NewPasswordScreen> {
       print('NewPasswordScreen: No valid session found, redirecting to login'); // Debug log
       // No valid session, go back to login
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const AuthScreen()),
+        MaterialPageRoute(builder: (context) => const AuthScreen(showBackButton: false)),
       );
     } else {
       print('NewPasswordScreen: Valid session found, ready for password reset'); // Debug log
@@ -88,7 +88,7 @@ class _NewPasswordScreenState extends State<NewPasswordScreen> {
           if (mounted) {
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
+              MaterialPageRoute(builder: (context) => const AuthScreen(showBackButton: false)),
               (route) => false,
             );
           }
@@ -105,7 +105,7 @@ class _NewPasswordScreenState extends State<NewPasswordScreen> {
           if (mounted) {
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
+              MaterialPageRoute(builder: (context) => const AuthScreen(showBackButton: false)),
               (route) => false,
             );
           }

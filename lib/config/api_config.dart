@@ -8,7 +8,8 @@ class ApiConfig {
   // List of available server URLs to try in order
   static const List<String> serverUrls = [
     //'https://aquasync.onrender.com',
-    'http://192.168.7.114:8000',
+    //'http://192.168.7.114:8000',
+    //'http://192.168.7.114:8000',
     'http://172.20.10.2:8000',
   ];
   
@@ -48,37 +49,57 @@ class ApiConfig {
   static String get saveFishCalculationEndpoint => '$baseUrl/save-fish-calculation/';
   static String get saveDietCalculationEndpoint => '$baseUrl/save-diet-calculation/';
 
-  // Get fish image URL - ensures proper encoding
+  // Get fish image URL - ensures proper encoding for local images
   static String getFishImageUrl(String fishName) {
     // Encode the name properly to handle special characters
     String encodedName = Uri.encodeComponent(fishName);
 
-    // Return the full URL to database-powered endpoint
-    print('Getting image for fish: $fishName -> $encodedName');
-    print('Full image URL: $baseUrl/fish-image/$encodedName');
+    // Return the full URL to local image endpoint
+    print('Getting local image for fish: $fishName -> $encodedName');
+    print('Full local image URL: $baseUrl/fish-image/$encodedName');
     return '$baseUrl/fish-image/$encodedName';
   }
 
-  // Get multiple images for a specific fish from the database
-  static List<String> getFishImagesFromDb(String fishName, {bool forceRefresh = false}) {
-    // Generate a list of URLs by adding random parameters to force different cache entries
+  // Get fish image base64 URL - for when you need base64 data
+  static String getFishImageBase64Url(String fishName) {
+    // Encode the name properly to handle special characters
+    String encodedName = Uri.encodeComponent(fishName);
+
+    // Return the full URL to local base64 image endpoint
+    print('Getting local base64 image for fish: $fishName -> $encodedName');
+    print('Full local base64 image URL: $baseUrl/fish-image-base64/$encodedName');
+    return '$baseUrl/fish-image-base64/$encodedName';
+  }
+
+  // Get fish images grid URL - for getting multiple different images
+  static String getFishImagesGridUrl(String fishName, {int count = 4}) {
+    // Encode the name properly to handle special characters
+    String encodedName = Uri.encodeComponent(fishName);
+
+    // Return the full URL to local images grid endpoint
+    print('Getting local images grid for fish: $fishName -> $encodedName, count: $count');
+    print('Full local images grid URL: $baseUrl/fish-images-grid/$encodedName?count=$count');
+    return '$baseUrl/fish-images-grid/$encodedName?count=$count';
+  }
+
+  // Get multiple images for a specific fish from local dataset
+  static List<String> getFishImagesFromLocal(String fishName, {bool forceRefresh = false}) {
+    // Use the new grid endpoint that ensures different images
     final List<String> urls = [];
     
-    // Get the base URL for this fish
-    String baseImageUrl = getFishImageUrl(fishName);
+    // Get the grid URL for this fish
+    String gridUrl = getFishImagesGridUrl(fishName, count: 4);
     
-    // Use a timestamp shared across all images but with different indices
-    // This helps with cache consistency while still allowing cache busting
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    
-    // Generate 4 image URLs with unique cache busters
-    // Each request will fetch a random image from the database's fish_images table
-    // The backend uses "ORDER BY RANDOM() LIMIT 1" to select a different image each time
-    for (int i = 0; i < 4; i++) {
-      urls.add('$baseImageUrl?timestamp=$timestamp&index=$i');
-    }
+    // For now, we'll return the grid endpoint URL
+    // The actual image URLs will be resolved when the grid is fetched
+    urls.add(gridUrl);
     
     return urls;
+  }
+
+  // Legacy method for backward compatibility
+  static List<String> getFishImagesFromDb(String fishName, {bool forceRefresh = false}) {
+    return getFishImagesFromLocal(fishName, forceRefresh: forceRefresh);
   }
 
   // Check server connection with failover support
