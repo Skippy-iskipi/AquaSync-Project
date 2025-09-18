@@ -2,15 +2,14 @@ class DietCalculation {
   final String? id;
   final Map<String, int> fishSelections;
   final int totalPortion;
-  final String? totalPortionRange;
   final Map<String, dynamic> portionDetails;
   final List<String>? compatibilityIssues;
   final String? feedingNotes;
+  final String? feedingSchedule;
+  final String? totalFoodPerFeeding;
+  final Map<String, dynamic>? perFishBreakdown;
+  final List<String>? recommendedFoodTypes;
   final String? feedingTips;
-  final int? feedingsPerDay;
-  final String? feedingTimes;
-  final List<String>? aiFoodTypes;
-  final Map<String, dynamic>? tankTotalsByFood;
   final DateTime dateCalculated;
   final DateTime? createdAt;
   final String savedPlan;
@@ -19,15 +18,14 @@ class DietCalculation {
     this.id,
     required this.fishSelections,
     required this.totalPortion,
-    this.totalPortionRange,
     required this.portionDetails,
     this.compatibilityIssues,
     this.feedingNotes,
+    this.feedingSchedule,
+    this.totalFoodPerFeeding,
+    this.perFishBreakdown,
+    this.recommendedFoodTypes,
     this.feedingTips,
-    this.feedingsPerDay,
-    this.feedingTimes,
-    this.aiFoodTypes,
-    this.tankTotalsByFood,
     required this.dateCalculated,
     this.createdAt,
     this.savedPlan = 'free',
@@ -38,15 +36,14 @@ class DietCalculation {
       'id': id,
       'fish_selections': fishSelections,
       'total_portion': totalPortion,
-      if (totalPortionRange != null) 'total_portion_range': totalPortionRange,
       'portion_details': portionDetails,
       'compatibility_issues': compatibilityIssues,
       'feeding_notes': feedingNotes,
+      'feeding_schedule': feedingSchedule,
+      'total_food_per_feeding': totalFoodPerFeeding,
+      'per_fish_breakdown': perFishBreakdown,
+      'recommended_food_types': recommendedFoodTypes,
       'feeding_tips': feedingTips,
-      'feedings_per_day': feedingsPerDay,
-      'feeding_times': feedingTimes,
-      'ai_food_types': aiFoodTypes,
-      'tank_totals_by_food': tankTotalsByFood,
       'date_calculated': dateCalculated.toIso8601String(),
       'created_at': createdAt?.toIso8601String(),
       'saved_plan': savedPlan,
@@ -57,24 +54,21 @@ class DietCalculation {
     return DietCalculation(
       id: json['id']?.toString(),
       fishSelections: Map<String, int>.from(json['fish_selections'] ?? {}),
-      totalPortion: json['total_portion'] ?? 0,
-      totalPortionRange: json['total_portion_range']?.toString(),
+      totalPortion: (json['total_portion'] ?? 0).toInt(),
       portionDetails: Map<String, dynamic>.from(json['portion_details'] ?? {}),
       compatibilityIssues: json['compatibility_issues'] != null 
           ? List<String>.from(json['compatibility_issues']) 
           : null,
       feedingNotes: json['feeding_notes']?.toString(),
+      feedingSchedule: json['feeding_schedule']?.toString(),
+      totalFoodPerFeeding: json['total_food_per_feeding']?.toString(),
+      perFishBreakdown: json['per_fish_breakdown'] != null 
+          ? Map<String, dynamic>.from(json['per_fish_breakdown']) 
+          : null,
+      recommendedFoodTypes: json['recommended_food_types'] != null 
+          ? List<String>.from(json['recommended_food_types']) 
+          : null,
       feedingTips: json['feeding_tips']?.toString(),
-      feedingsPerDay: json['feedings_per_day'] is int
-          ? json['feedings_per_day'] as int
-          : int.tryParse(json['feedings_per_day']?.toString() ?? ''),
-      feedingTimes: json['feeding_times']?.toString(),
-      aiFoodTypes: json['ai_food_types'] != null 
-          ? List<String>.from(json['ai_food_types']) 
-          : null,
-      tankTotalsByFood: json['tank_totals_by_food'] != null 
-          ? Map<String, dynamic>.from(json['tank_totals_by_food']) 
-          : null,
       dateCalculated: DateTime.parse(json['date_calculated']),
       createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
       savedPlan: json['saved_plan']?.toString() ?? 'free',

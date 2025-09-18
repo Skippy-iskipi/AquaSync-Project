@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io' as io;
-import 'dart:io' show File;
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -10,20 +9,18 @@ import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
-import 'package:flutter/services.dart';  // Add this import for PlatformException
+import 'package:flutter/services.dart';  // Add this import for PlatformException and HapticFeedback
 import 'logbook_provider.dart';
 import '../models/fish_prediction.dart';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import '../screens/homepage.dart';
 import '../widgets/snap_tips_dialog.dart';
-import '../services/openai_service.dart'; // OpenAI AI service
 import '../widgets/description_widget.dart';
 import '../widgets/fish_images_grid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../screens/subscription_page.dart';
-import 'package:lottie/lottie.dart';
 import '../widgets/auth_required_dialog.dart';
+import '../screens/auth_screen.dart';
 
 // Widget for displaying grouped recommendation fields in an ExpansionTile
 class _RecommendationExpansionGroup extends StatefulWidget {
@@ -48,14 +45,14 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
       initiallyExpanded: false,
       title: Row(
         children: [
-          Icon(firstField['icon'] as IconData, size: 22, color: Color(0xFF006064)),
+          Icon(firstField['icon'] as IconData, size: 22, color: Color(0xFF00ACC1)),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               firstField['label'],
               style: const TextStyle(
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF006064),
+                color: Color(0xFF00ACC1),
                 overflow: TextOverflow.ellipsis,
               ),
               maxLines: 1,
@@ -92,7 +89,7 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(field['icon'] as IconData, color: Color(0xFF006064), size: 22),
+                  Icon(field['icon'] as IconData, color: Color(0xFF00ACC1), size: 22),
                   const SizedBox(width: 20),
                   Expanded(
                     child: Column(
@@ -100,7 +97,7 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
                       children: [
                         Text(
                           field['label'],
-                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16, color: Color(0xFF006064)),
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16, color: Color(0xFF00ACC1)),
                         ),
                         const SizedBox(height: 4),
                         value is List
@@ -152,7 +149,9 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
 }
 
 class CaptureScreen extends StatefulWidget {
-  const CaptureScreen({super.key});
+  final bool isForSelection; // New parameter to indicate if this is for fish selection
+  
+  const CaptureScreen({super.key, this.isForSelection = false});
 
   @override
   CaptureScreenState createState() => CaptureScreenState();
@@ -167,26 +166,13 @@ class CaptureScreenState extends State<CaptureScreen> {
 
 
 
-  // Plan-based state
-  String _userPlan = 'free';
+  // State
   int _savedCapturesCount = 0;
 
-  // Cache for AI-generated results to avoid re-calling APIs
-  static final Map<String, String> _descriptionCache = {};
-  static final Map<String, Map<String, dynamic>> _careRecommendationsCache = {};
+  // Cache for image paths to avoid re-fetching
   static final Map<String, String> _imagePathCache = {};
 
   // Static methods to access cached data from other screens
-  static String? getCachedDescription(String commonName, String scientificName) {
-    final cacheKey = '$commonName-$scientificName';
-    return _descriptionCache[cacheKey];
-  }
-
-  static Map<String, dynamic>? getCachedCareRecommendations(String commonName, String scientificName) {
-    final cacheKey = '$commonName-$scientificName';
-    return _careRecommendationsCache[cacheKey];
-  }
-
   static String? getCachedImagePath(String commonName, String scientificName) {
     final cacheKey = '$commonName-$scientificName';
     return _imagePathCache[cacheKey];
@@ -206,90 +192,26 @@ class CaptureScreenState extends State<CaptureScreen> {
   Future<void> _loadUserPlanAndCount() async {
     if (!mounted) return;
     final user = Supabase.instance.client.auth.currentUser;
-    String plan = 'free';
     int count = 0;
     if (user != null) {
-      try {
-        final data = await Supabase.instance.client
-            .from('profiles')
-            .select('tier_plan')
-            .eq('id', user.id)
-            .single();
-        plan = (data['tier_plan'] ?? 'free').toString().toLowerCase().replaceAll(' ', '_');
-      } catch (_) {}
       try {
         // Count saved captures from logbook provider
         if (!mounted) return; // context not valid if unmounted
         final provider = Provider.of<LogBookProvider>(context, listen: false);
         count = provider.savedPredictions.length;
       } catch (_) {}
-    } else {
-      // For unauthenticated users, set plan to 'free' and count to 0
-      plan = 'free';
-      count = 0;
     }
     if (!mounted) return;
     setState(() {
-      _userPlan = plan;
       _savedCapturesCount = count;
     });
   }
 
   bool _canSave() {
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      return false; // Don't show dialog here, let the calling method handle it
-    }
-    if (_userPlan == 'free' && _savedCapturesCount >= 5) return false;
-    // Pro tier has unlimited captures
-    if (_userPlan == 'pro') return true;
-    return true;
+    return user != null; // Only check if user is logged in
   }
 
-  void _showUpgradeDialog(String message) {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      // Show auth required dialog instead
-      showDialog(
-        context: context,
-        builder: (BuildContext context) => const AuthRequiredDialog(
-          title: 'Sign In Required',
-          message: 'You need to sign in to access premium features and save more captures.',
-        ),
-      );
-      return;
-    }
-    
-    // User is authenticated, show upgrade dialog
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Upgrade to Pro'),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.maybePop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.maybePop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SubscriptionPage()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00ACC1),
-              ),
-              child: const Text('Upgrade to Pro'),
-            ),
-          ],
-        );
-      },
-    );
-  }
 
   // Safely pop the current route/dialog if possible
   void _safePop() {
@@ -370,24 +292,6 @@ class CaptureScreenState extends State<CaptureScreen> {
     return savedImage.path;
   }
 
-  // Normalize temperature range from backend into a clean display string
-  String _cleanTempRange(dynamic raw) {
-    String s = (raw ?? '').toString().trim();
-    if (s.isEmpty) return '';
-    // Fix encoding artifacts
-    s = s.replaceAll('Â°', '°').replaceAll(' ', ' ');
-    // If it doesn't contain °C, append unit for clarity
-    final lower = s.toLowerCase();
-    if (!lower.contains('°c')) {
-      // Avoid duplicating unit if value already ends with a degree symbol
-      if (s.contains('°')) {
-        s = s.replaceAll('°', '°C');
-      } else {
-        s = '$s °C';
-      }
-    }
-    return s;
-  }
 
   Future<void> _analyzeFishImage(XFile imageFile, String savedImagePath, {required bool fromCamera}) async {
     setState(() {
@@ -402,16 +306,16 @@ class CaptureScreenState extends State<CaptureScreen> {
           barrierDismissible: false,
           useRootNavigator: true,
           builder: (context) => Dialog.fullscreen(
-            backgroundColor: const Color(0xFF006064),
+            backgroundColor: const Color(0xFF00ACC1),
             child: Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Color(0xFF006064),
                     Color(0xFF00ACC1),
-                    Color(0xFF006064),
+                    Color(0xFF4DD0E1),
+                    Color(0xFF00ACC1),
                   ],
                 ),
               ),
@@ -699,6 +603,9 @@ class CaptureScreenState extends State<CaptureScreen> {
           print('Response status code: ${streamedResponse.statusCode}');
           final response = await http.Response.fromStream(streamedResponse);
           print('Response body: ${response.body}');
+          
+          // Store the response for potential error handling
+          lastResponse = response;
 
           // Success
           if (response.statusCode == 200) {
@@ -726,18 +633,23 @@ class CaptureScreenState extends State<CaptureScreen> {
                   imagePath: savedImagePath,
                   probability: '${((decodedResponse['classification_confidence'] ?? 0) * 100).toStringAsFixed(2)}%',
                   minimumTankSize: decodedResponse['minimum_tank_size_l'] != null
-                      ? '${decodedResponse['minimum_tank_size_l']} L'
+                      ? '${decodedResponse['minimum_tank_size_l'].toString()} L'
                       : (decodedResponse['minimum_tank_size']?.toString() ?? ''),
                 );
 
             print('Created prediction object: ${prediction.toJson()}');
 
             if (mounted) {
-              _safePop();
-              // Small delay to ensure scanning dialog closes before showing description dialog
-              await Future.delayed(const Duration(milliseconds: 200));
-              if (mounted) {
-                _loadDescriptionAndShowResults(imageFile, prediction, prediction.commonName, prediction.scientificName);
+              // If this is for fish selection, show results immediately without additional processing
+              if (widget.isForSelection) {
+                _safePop(); // Close the loading animation
+                await Future.delayed(const Duration(milliseconds: 200));
+                if (mounted) {
+                  _showPredictionResults(imageFile, [prediction]);
+                }
+              } else {
+                // Don't close the animation yet - let _loadDescriptionAndShowResults handle it
+                await _loadDescriptionAndShowResults(imageFile, prediction, prediction.commonName, prediction.scientificName);
               }
             }
             return; // Done
@@ -866,29 +778,100 @@ class CaptureScreenState extends State<CaptureScreen> {
   void _savePredictions(List<FishPrediction> predictions) async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
-      // Show auth required dialog
+      // Show auth required dialog with redirect to homepage after login
       showDialog(
         context: context,
-        builder: (BuildContext context) => const AuthRequiredDialog(
+        builder: (BuildContext context) => AuthRequiredDialog(
           title: 'Sign In Required',
           message: 'You need to sign in to save fish captures to your collection.',
+          onActionPressed: () async {
+            // Close the dialog first
+            Navigator.of(context).pop();
+            // Navigate to auth screen
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AuthScreen(showBackButton: true),
+              ),
+            );
+            // After returning from auth screen, redirect to homepage
+            if (mounted) {
+              await _loadUserPlanAndCount();
+              // Redirect to homepage/explore after authentication
+              Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                MaterialPageRoute(
+                  builder: (context) => const HomePage(initialTabIndex: 0),
+                ),
+                (route) => false,
+              );
+            }
+          },
         ),
       );
       return;
     }
     
     if (!_canSave()) {
-      _showUpgradeDialog(_userPlan == 'free'
-        ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro for unlimited captures!'
-        : 'You have reached the limit of 20 saved captures for the Pro plan. Upgrade to Pro for unlimited captures!');
+      // Show auth required dialog
+      showDialog(
+        context: context,
+        builder: (BuildContext context) => AuthRequiredDialog(
+          title: 'Sign In Required',
+          message: 'You need to sign in to save fish captures to your collection.',
+        ),
+      );
       return;
     }
     final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+    
+    // Check for duplicates
+    final existingFishNames = logBookProvider.savedPredictions
+        .map((p) => p.commonName.toLowerCase().trim())
+        .toSet();
+    
+    final newPredictions = predictions.where((prediction) {
+      final fishName = prediction.commonName.toLowerCase().trim();
+      return !existingFishNames.contains(fishName);
+    }).toList();
+    
+    if (newPredictions.isEmpty) {
+      if (mounted) {
+        showCustomNotification(context, 'This fish is already in your collection!');
+        await Future.delayed(const Duration(milliseconds: 1500));
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+            MaterialPageRoute(
+              builder: (context) => const HomePage(initialTabIndex: 3),
+            ),
+            (route) => false,
+          );
+        }
+      }
+      return;
+    }
+    
+    if (newPredictions.length < predictions.length) {
+      final duplicateCount = predictions.length - newPredictions.length;
+      if (mounted) {
+        showCustomNotification(context, '$duplicateCount duplicate fish skipped. ${newPredictions.length} new fish saved!');
+        await Future.delayed(const Duration(milliseconds: 1500));
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+            MaterialPageRoute(
+              builder: (context) => const HomePage(initialTabIndex: 3),
+            ),
+            (route) => false,
+          );
+        }
+        return;
+      }
+    }
+    
     try {
-      final bool saved = await logBookProvider.addPredictions(predictions);
+      final bool saved = await logBookProvider.addPredictions(newPredictions);
       if (saved) {
         if (mounted) {
-          showCustomNotification(context, 'Fish saved to collection');
+          showCustomNotification(context, 'Fish saved to collection!');
           await Future.delayed(const Duration(milliseconds: 1500));
           if (mounted) {
             // Ensure any transient dialogs are closed
@@ -900,19 +883,6 @@ class CaptureScreenState extends State<CaptureScreen> {
               (route) => false,
             );
             return; // Stop further execution; widget will likely be disposed
-          }
-        }
-      } else {
-        if (mounted) {
-          showCustomNotification(context, 'Fish already exists in collection');
-          await Future.delayed(const Duration(milliseconds: 1500));
-          if (mounted) {
-            Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-              MaterialPageRoute(
-                builder: (context) => const HomePage(initialTabIndex: 3),
-              ),
-              (route) => false,
-            );
           }
         }
       }
@@ -935,6 +905,16 @@ class CaptureScreenState extends State<CaptureScreen> {
       return currProb > nextProb ? curr : next;
     });
 
+    // If this is for fish selection, return the data instead of showing full results
+    if (widget.isForSelection) {
+      print('DEBUG: Returning fish data for selection: ${highestPrediction.commonName}');
+      Navigator.of(context).pop({
+        'fishName': highestPrediction.commonName,
+        'imageFile': io.File(imageFile.path),
+      });
+      return;
+    }
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (BuildContext context) {
@@ -955,7 +935,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                 backgroundColor: Colors.white,
                 elevation: 0,
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
+                  icon: const Icon(Icons.arrow_back, color: Color(0xFF00ACC1)),
                   onPressed: () {
                     // Redirect to homepage initial state instead of going back
                     Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
@@ -969,7 +949,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                 title: const Text(
                   'Fish Identification Results',
                   style: TextStyle(
-                    color: Color(0xFF006064),
+                    color: Color(0xFF00ACC1),
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
@@ -1106,7 +1086,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                             style: TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
+                              color: Color(0xFF00ACC1),
                             ),
                           ),
                           const SizedBox(height: 20),
@@ -1121,7 +1101,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                             style: TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
+                              color: Color(0xFF00ACC1),
                             ),
                           ),
                           const SizedBox(height: 20),
@@ -1144,11 +1124,11 @@ class CaptureScreenState extends State<CaptureScreen> {
                             style: TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
+                              color: Color(0xFF00ACC1),
                             ),
                           ),
                           const SizedBox(height: 20),
-                          // Diet recommendation with expandable groups like fish_list_screen
+                          // Diet recommendation with expandable groups using Supabase data
                           if (careData?.containsKey('error') == true)
                             Text(careData!['error'], style: const TextStyle(color: Colors.red)),
                           if (careData?.containsKey('error') != true) ...[
@@ -1158,26 +1138,22 @@ class CaptureScreenState extends State<CaptureScreen> {
                                   'diet_type': highestPrediction.diet,
                                   'preferred_foods': highestPrediction.preferredFood,
                                   'feeding_frequency': highestPrediction.feedingFrequency,
-                                  'portion_size': 'N/A',
-                                  'fasting_schedule': 'N/A',
-                                  'overfeeding_risks': 'N/A',
-                                  'behavioral_notes': 'N/A',
-                                  'tankmate_feeding_conflict': 'N/A',
+                                  'portion_size': 'Small amounts that can be consumed in 2-3 minutes',
+                                  'overfeeding_risks': 'Can lead to water quality issues and health problems',
+                                  'feeding_notes': 'Follow standard feeding guidelines for this species',
                                 };
                                 final fields = [
                                   {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
                                   {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
                                   {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
                                   {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
-                                  {'label': 'Fasting Schedule', 'key': 'fasting_schedule', 'icon': Icons.calendar_today},
                                   {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
-                                  {'label': 'Behavioral Notes', 'key': 'behavioral_notes', 'icon': Icons.psychology},
-                                  {'label': 'Tankmate Feeding Conflict', 'key': 'tankmate_feeding_conflict', 'icon': Icons.warning},
+                                  {'label': 'Feeding Notes', 'key': 'feeding_notes', 'icon': Icons.psychology},
                                 ];
                                 final List<List<Map<String, dynamic>>> fieldGroups = [
                                   fields.sublist(0, 2),
-                                  fields.sublist(2, 5),
-                                  fields.sublist(5, 8),
+                                  fields.sublist(2, 4),
+                                  fields.sublist(4, 6),
                                 ];
                                 return Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1193,79 +1169,154 @@ class CaptureScreenState extends State<CaptureScreen> {
                           // Action buttons
                           Row(
                             children: [
-                              if (_canSave()) ...[
-                                Expanded(
-                                  child: ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF006064),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(vertical: 16),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      elevation: 2,
-                                    ),
-                                    onPressed: () {
-                                      _savePredictions([highestPrediction]);
-                                    },
-                                    child: const Text(
-                                      'Save to Collection',
-                                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                              if (!_canSave()) ...[
-                                Expanded(
-                                  child: ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.grey[400],
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(vertical: 16),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                    onPressed: () {
-                                      _showUpgradeDialog(_userPlan == 'free'
-                                        ? 'You have reached the limit of 5 saved captures for the Free plan. Upgrade to Pro for unlimited captures!'
-                                        : 'You have reached the limit of 20 saved captures for the Pro plan. Upgrade to Pro for unlimited captures!');
-                                    },
-                                    child: const Text(
-                                      'Upgrade to Save',
-                                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(width: 16),
                               Expanded(
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF00ACC1),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(vertical: 16),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
+                                child: Container(
+                                  height: 56,
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: [
+                                        Color(0xFF00ACC1),
+                                        Color(0xFF26C6DA),
+                                        Color(0xFF4DD0E1),
+                                      ],
+                                      stops: [0.0, 0.5, 1.0],
                                     ),
-                                    elevation: 2,
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 6),
+                                        spreadRadius: 0,
+                                      ),
+                                      BoxShadow(
+                                        color: const Color(0xFF4DD0E1).withOpacity(0.2),
+                                        blurRadius: 20,
+                                        offset: const Offset(0, 8),
+                                        spreadRadius: -2,
+                                      ),
+                                    ],
                                   ),
-                                  onPressed: () {
-                                    // Navigate to sync screen directly without saving
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => HomePage(
-                                          initialTabIndex: 1,
-                                          initialFish: highestPrediction.commonName,
-                                          initialFishImage: io.File(imageFile.path),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () {
+                                        HapticFeedback.mediumImpact();
+                                        if (_canSave()) {
+                                          _savePredictions([highestPrediction]);
+                                        } else {
+                                          // Show auth required dialog
+                                          showDialog(
+                                            context: context,
+                                            builder: (BuildContext context) => AuthRequiredDialog(
+                                              title: 'Sign In Required',
+                                              message: 'You need to sign in to save fish captures to your collection.',
+                                            ),
+                                          );
+                                        }
+                                      },
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            const Text(
+                                              'Save to Collection',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                                color: Colors.white,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                    );
-                                  },
-                                  child: const Text(
-                                    'Sync',
-                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Container(
+                                  height: 56,
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: [
+                                        Color(0xFF00ACC1),
+                                        Color(0xFF26C6DA),
+                                        Color(0xFF4DD0E1),
+                                      ],
+                                      stops: [0.0, 0.5, 1.0],
+                                    ),
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 6),
+                                        spreadRadius: 0,
+                                      ),
+                                      BoxShadow(
+                                        color: const Color(0xFF4DD0E1).withOpacity(0.2),
+                                        blurRadius: 20,
+                                        offset: const Offset(0, 8),
+                                        spreadRadius: -2,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () {
+                                        HapticFeedback.mediumImpact();
+                                        if (_canSave()) {
+                                          // Navigate to sync screen directly without saving
+                                          Navigator.pushReplacement(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) => HomePage(
+                                                initialTabIndex: 1,
+                                                initialFish: highestPrediction.commonName,
+                                                initialFishImage: io.File(imageFile.path),
+                                              ),
+                                            ),
+                                          );
+                                        } else {
+                                          // Show auth required dialog
+                                          showDialog(
+                                            context: context,
+                                            builder: (BuildContext context) => AuthRequiredDialog(
+                                              title: 'Sign In Required',
+                                              message: 'You need to sign in to access fish compatibility checking.',
+                                            ),
+                                          );
+                                        }
+                                      },
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            const Text(
+                                              'Check Compatibility',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                                color: Colors.white,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1285,12 +1336,20 @@ class CaptureScreenState extends State<CaptureScreen> {
     );
   }
 
+
+  // Method to generate local description when database description is not available
+  String _generateLocalDescription(String commonName, String scientificName) {
+    return 'The $commonName${scientificName.isNotEmpty ? ' ($scientificName)' : ''} is an aquarium fish species. '
+        'This fish is known for its unique characteristics and makes an interesting addition to aquariums. '
+        'For detailed care information, please consult aquarium care guides or speak with aquarium professionals.';
+  }
+
   // Method to fetch fish species data from Supabase
   Future<Map<String, dynamic>?> _fetchFishSpeciesData(String commonName, String scientificName) async {
     try {
       final response = await Supabase.instance.client
           .from('fish_species')
-          .select('*')
+          .select('*, description, diet, preferred_food, feeding_frequency, portion_grams, overfeeding_risks, feeding_notes')
           .or('common_name.ilike.%$commonName%,scientific_name.ilike.%$scientificName%')
           .limit(1)
           .single();
@@ -1305,76 +1364,64 @@ class CaptureScreenState extends State<CaptureScreen> {
   // Method to load the description and care recommendations, then show results
   Future<void> _loadDescriptionAndShowResults(XFile imageFile, FishPrediction prediction, String commonName, String scientificName) async {
     try {
-      print('Attempting to generate description and care recommendations for $commonName ($scientificName)');
-      
-      // Create cache key
-      final cacheKey = '$commonName-$scientificName';
-      
-      // Check cache first
-      String description;
-      Map<String, dynamic> careRecommendations;
-      
-      if (_descriptionCache.containsKey(cacheKey) && _careRecommendationsCache.containsKey(cacheKey)) {
-        print('Using cached results for $commonName');
-        description = _descriptionCache[cacheKey]!;
-        careRecommendations = _careRecommendationsCache[cacheKey]!;
-      } else {
-        print('Generating new results for $commonName');
-        // Generate both description and care recommendations in parallel
-        final results = await Future.wait([
-                  OpenAIService.generateFishDescription(commonName, scientificName),
-        OpenAIService.generateCareRecommendations(commonName, scientificName),
-        ]);
-        
-        description = results[0] as String;
-        careRecommendations = results[1] as Map<String, dynamic>;
-        
-        // Cache the results
-        _descriptionCache[cacheKey] = description;
-        _careRecommendationsCache[cacheKey] = careRecommendations;
-      }
+      print('Loading fish data from Supabase for $commonName ($scientificName)');
       
       // Fetch fish species data from Supabase
       final fishSpeciesData = await _fetchFishSpeciesData(commonName, scientificName);
       
-      // Cache the image path for this fish
-      _imagePathCache[cacheKey] = imageFile.path;
+      // Get description from database or use fallback
+      String description = fishSpeciesData?['description'] ?? 
+          _generateLocalDescription(commonName, scientificName);
       
-              // Update the prediction with the description, care recommendations, and fish species data
-        final updatedPrediction = FishPrediction(
-          commonName: prediction.commonName,
-          scientificName: prediction.scientificName,
-          waterType: prediction.waterType,
-          probability: prediction.probability,
-          imagePath: prediction.imagePath,
-          maxSize: prediction.maxSize,
-          temperament: prediction.temperament,
-          careLevel: prediction.careLevel,
-          lifespan: prediction.lifespan,
-          diet: prediction.diet,
-          preferredFood: prediction.preferredFood,
-          feedingFrequency: prediction.feedingFrequency,
-          description: description,
-          temperatureRange: fishSpeciesData?['temperature_range'] ?? prediction.temperatureRange, 
-          phRange: fishSpeciesData?['ph_range'] ?? prediction.phRange,
-          socialBehavior: fishSpeciesData?['social_behavior'] ?? prediction.socialBehavior,
-          minimumTankSize: fishSpeciesData?['minimum_tank_size_(l)'] != null 
-              ? '${fishSpeciesData!['minimum_tank_size_(l)']} L' 
-              : prediction.minimumTankSize,
-          compatibilityNotes: fishSpeciesData?['compatibility_notes'] ?? 'No compatibility notes available',
-          tankLevel: fishSpeciesData?['tank_level'] ?? prediction.tankLevel,
-        );
+      // Create diet data from Supabase
+      final dietData = {
+        'diet_type': fishSpeciesData?['diet'] ?? prediction.diet,
+        'preferred_foods': fishSpeciesData?['preferred_food'] ?? prediction.preferredFood,
+        'feeding_frequency': fishSpeciesData?['feeding_frequency'] ?? prediction.feedingFrequency,
+        'portion_size': fishSpeciesData?['portion_grams'] != null 
+            ? '${fishSpeciesData!['portion_grams']}g per feeding' 
+            : 'Small amounts that can be consumed in 2-3 minutes',
+        'overfeeding_risks': fishSpeciesData?['overfeeding_risks'] ?? 'Can lead to water quality issues and health problems',
+        'feeding_notes': fishSpeciesData?['feeding_notes'] ?? 'Follow standard feeding guidelines for this species',
+      };
+      
+      // Update the prediction with the description and fish species data
+      final updatedPrediction = FishPrediction(
+        commonName: prediction.commonName,
+        scientificName: prediction.scientificName,
+        waterType: prediction.waterType,
+        probability: prediction.probability,
+        imagePath: prediction.imagePath,
+        maxSize: prediction.maxSize,
+        temperament: prediction.temperament,
+        careLevel: prediction.careLevel,
+        lifespan: prediction.lifespan,
+        diet: fishSpeciesData?['diet'] ?? prediction.diet,
+        preferredFood: fishSpeciesData?['preferred_food'] ?? prediction.preferredFood,
+        feedingFrequency: fishSpeciesData?['feeding_frequency'] ?? prediction.feedingFrequency,
+        description: description,
+        temperatureRange: fishSpeciesData?['temperature_range'] ?? prediction.temperatureRange, 
+        phRange: fishSpeciesData?['ph_range'] ?? prediction.phRange,
+        socialBehavior: fishSpeciesData?['social_behavior'] ?? prediction.socialBehavior,
+        minimumTankSize: fishSpeciesData?['minimum_tank_size_(l)'] != null 
+            ? '${fishSpeciesData!['minimum_tank_size_(l)'].toString()} L' 
+            : prediction.minimumTankSize,
+        compatibilityNotes: fishSpeciesData?['compatibility_notes'] ?? 'No compatibility notes available',
+        tankLevel: fishSpeciesData?['tank_level'] ?? prediction.tankLevel,
+      );
       
       if (mounted) {
-        _showPredictionResults(imageFile, [updatedPrediction], careRecommendations);
+        _safePop(); // Close the loading animation
+        // Small delay to ensure scanning dialog closes before showing results
+        await Future.delayed(const Duration(milliseconds: 200));
+        if (mounted) {
+          _showPredictionResults(imageFile, [updatedPrediction], dietData);
+        }
       }
     } catch (e) {
-      print('Error loading description and care recommendations: $e');
+      print('Error loading fish data: $e');
       if (mounted) {
-        // Even if AI generation fails, still try to fetch Supabase data
-        final fishSpeciesData = await _fetchFishSpeciesData(commonName, scientificName);
-        
-        // Still show results but with error messages
+        // Fallback to basic prediction data
         final fallbackPrediction = FishPrediction(
           commonName: prediction.commonName,
           scientificName: prediction.scientificName,
@@ -1388,18 +1435,21 @@ class CaptureScreenState extends State<CaptureScreen> {
           diet: prediction.diet,
           preferredFood: prediction.preferredFood,
           feedingFrequency: prediction.feedingFrequency,
-          description: 'Failed to generate description. Try again later.',
-          temperatureRange: fishSpeciesData?['temperature_range'] ?? prediction.temperatureRange, 
-          phRange: fishSpeciesData?['ph_range'] ?? prediction.phRange,
-          socialBehavior: fishSpeciesData?['social_behavior'] ?? prediction.socialBehavior,
-          minimumTankSize: fishSpeciesData?['minimum_tank_size_(l)'] != null 
-              ? '${fishSpeciesData!['minimum_tank_size_(l)']} L' 
-              : prediction.minimumTankSize,
-          compatibilityNotes: fishSpeciesData?['compatibility_notes'] ?? 'No compatibility notes available',
-          tankLevel: fishSpeciesData?['tank_level'] ?? prediction.tankLevel,
+          description: 'Failed to load fish data. Try again later.',
+          temperatureRange: prediction.temperatureRange, 
+          phRange: prediction.phRange,
+          socialBehavior: prediction.socialBehavior,
+          minimumTankSize: prediction.minimumTankSize,
+          compatibilityNotes: 'No compatibility notes available',
+          tankLevel: prediction.tankLevel,
         );
-        final errorCareData = {'error': 'Failed to load diet/care recommendations.'};
-        _showPredictionResults(imageFile, [fallbackPrediction], errorCareData);
+        final errorDietData = {'error': 'Failed to load fish data from database.'};
+        _safePop(); // Close the loading animation
+        // Small delay to ensure scanning dialog closes before showing results
+        await Future.delayed(const Duration(milliseconds: 200));
+        if (mounted) {
+          _showPredictionResults(imageFile, [fallbackPrediction], errorDietData);
+        }
       }
     }
   }
@@ -1419,7 +1469,7 @@ class CaptureScreenState extends State<CaptureScreen> {
           style: const TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.bold,
-            color: Color(0xFF006064),
+            color: Color(0xFF00ACC1),
           ),
           textAlign: TextAlign.center,
         ),
@@ -1470,7 +1520,7 @@ class CaptureScreenState extends State<CaptureScreen> {
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF006064),
+                    color: Color(0xFF00ACC1),
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -1489,73 +1539,6 @@ class CaptureScreenState extends State<CaptureScreen> {
     );
   }
 
-  Widget _buildDetailRow(String label, String value) {
-    // Special handling for care level to include explanation
-    if (label == 'Care Level') {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w500,
-                    color: Color(0xFF006064),
-                  ),
-                ),
-                const Spacer(),
-                Expanded(
-                  child: Text(
-                    value,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      color: Colors.black87,
-                    ),
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-          ],
-        ),
-      );
-    }
-
-    // Default row layout for other details
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF006064),
-            ),
-          ),
-          const Spacer(),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontSize: 18,
-                color: Colors.black87,
-              ),
-              textAlign: TextAlign.right,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<void> _captureImage() async {
     if (_controller == null || !_isCameraAvailable) {
@@ -1645,20 +1628,33 @@ class CaptureScreenState extends State<CaptureScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Colors.black,
       resizeToAvoidBottomInset: false,
-      appBar: AppBar(
-        backgroundColor: const Color.fromARGB(255, 221, 233,235),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          color: const Color(0xFF006064),
-          onPressed: _handleBack,
-        ),
-        title: const Text('Fish Identifier', style: TextStyle(color: Color(0xFF006064))),
-      ),
-      body: Material(
-        color: Colors.white,
-        child: _buildBody(),
+      body: Stack(
+        children: [
+          // Full screen camera preview
+          Material(
+            color: Colors.black,
+            child: _buildBody(),
+          ),
+          // Floating back button
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 16,
+            left: 16,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back_ios_rounded),
+                color: Colors.white,
+                onPressed: _handleBack,
+                iconSize: 24,
+              ),
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: _buildBottomBar(),
     );
@@ -1751,327 +1747,146 @@ class CaptureScreenState extends State<CaptureScreen> {
   }
 
   Widget _buildBottomBar() {
-    return BottomAppBar(
-      color: Colors.grey[200],
-      height: 100, // Increased height to accommodate labels
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.photo_library, color: Colors.teal),
-                onPressed: () => _pickImage(ImageSource.gallery),
-                tooltip: 'Photos',
-              ),
-              const Text(
-                'Gallery',
-                style: TextStyle(
-                  color: Colors.teal,
-                  fontSize: 12,
-                ),
-              ),
-            ],
+    return Material(
+      elevation: 8,
+      child: Container(
+        height: 80,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF00ACC1), Color(0xFF26C6DA)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
           ),
-          GestureDetector(
-            onTap: _captureImage,
-            child: const CircleAvatar(
-              radius: 30,
-              backgroundColor: Colors.teal,
-              child: Icon(
-                Icons.camera,
-                color: Colors.white,
-                size: 35,
+        ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // Main navigation row with spacer for capture button
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  _buildNavItem('Gallery', Icons.photo_library_rounded, () => _pickImage(ImageSource.gallery)),
+                  const SizedBox(width: 60), // Space for floating capture button
+                  _buildNavItem('Tips', Icons.help_rounded, () {
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (context) => const SnapTipsDialog(),
+                    );
+                  }),
+                ],
               ),
             ),
-          ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: const Icon(Icons.help, color: Colors.teal),
-                onPressed: () {
-                  showDialog(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (context) => const SnapTipsDialog(),
-                  );
-                },
-                tooltip: 'Photo Tips',
+            // Floating capture button
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 40,
+              child: Center(
+                child: _buildFloatingCaptureButton(),
               ),
-              const Text(
-                'Tips',
-                style: TextStyle(
-                  color: Colors.teal,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // Special method to show AI-assisted results with visual indicator
-  void _showAiAssistedResults(XFile imageFile, FishPrediction prediction) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (BuildContext context) {
-          return WillPopScope(
-            onWillPop: () async {
-              final nav = Navigator.of(context);
-              if (nav.canPop()) {
-                nav.pop();
-                return false;
-              } else {
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 0)),
-                );
-                return false;
-              }
-            },
-            child: Scaffold(
-              backgroundColor: Colors.white,
-              appBar: AppBar(
-                backgroundColor: Colors.white,
-                elevation: 0,
-                leading: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
-                  onPressed: () {
-                    final nav = Navigator.of(context);
-                    if (nav.canPop()) {
-                      nav.pop();
-                    } else {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 0)),
-                      );
-                    }
-                  },
-                ),
-                title: const Text(
-                  'AI-Assisted Analysis',
-                  style: TextStyle(
-                    color: Color(0xFF006064),
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              body: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: double.infinity,
-                      height: 300,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          kIsWeb
-                            ? Image.network(
-                                imageFile.path,
-                                fit: BoxFit.cover,
-                              )
-                            : Image.file(
-                                io.File(imageFile.path),
-                                fit: BoxFit.cover,
-                              ),
-                          Positioned(
-                            top: 10,
-                            right: 10,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.auto_awesome,
-                                    color: Colors.yellow,
-                                    size: 16,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  const Text(
-                                    'AI Assisted',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  prediction.commonName,
-                                  style: const TextStyle(
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF006064),
-                                  ),
-                                ),
-                              ),
-                              const Icon(
-                                Icons.auto_awesome,
-                                color: Colors.amber,
-                                size: 24,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            prediction.scientificName,
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontStyle: FontStyle.italic,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          
-                          // Description section
-                          if (prediction.description.isNotEmpty) ...[
-                            const Text(
-                              'Analysis & Care Notes',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              prediction.description,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                color: Colors.black87,
-                                height: 1.5,
-                              ),
-                            ),
-                            const SizedBox(height: 20),
-                          ],
-                          
-                          // Basic information
-                          const Text(
-                            'Basic Information',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          
-                          _buildInfoItem('Water Type', prediction.waterType),
-                          _buildInfoItem('Confidence', prediction.probability),
-                          
-                          const SizedBox(height: 30),
-                          
-                          // Call to action buttons  
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () => Navigator.maybePop(context),
-                                  style: OutlinedButton.styleFrom(
-                                    side: const BorderSide(color: Color(0xFF006064)),
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                  ),
-                                  child: const Text(
-                                    'Try Again',
-                                    style: TextStyle(
-                                      color: Color(0xFF006064),
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: () => _savePredictions([prediction]),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF006064),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                  ),
-                                  child: const Text(
-                                    'Save to Collection',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+  Widget _buildNavItem(String label, IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.lightImpact();
+        onTap();
+      },
+      child: Container(
+        width: 60,
+        height: 55,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 26,
+              color: Colors.white,
             ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildInfoItem(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF006064),
-            ),
-          ),
-          const Spacer(),
-          SizedBox(
-            width: MediaQuery.of(context).size.width * 0.4,
-            child: Text(
-              value,
+            const SizedBox(height: 3),
+            Text(
+              label,
               style: const TextStyle(
-                fontSize: 18,
-                color: Colors.black87,
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
               ),
-              textAlign: TextAlign.left,
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+
+  Widget _buildFloatingCaptureButton() {
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.mediumImpact();
+        _captureImage();
+      },
+      child: Container(
+        width: 60,
+        height: 60, // Make height same as width for perfect circle
+        decoration: const BoxDecoration(
+          color: Color(0x33FFFFFF), // Fixed color instead of withValues
+          shape: BoxShape.circle, // Perfect circle
+          boxShadow: [
+            BoxShadow(
+              color: Color(0x33000000), // Fixed shadow color
+              blurRadius: 10,
+              offset: Offset(0, 4),
+            ),
+            // White outer border effect
+            BoxShadow(
+              color: Colors.white,
+              blurRadius: 0,
+              offset: Offset(0, 0),
+              spreadRadius: 5,
+            ),
+          ],
+        ),
+        child: ClipOval( // Use ClipOval for perfect circle
+          child: Container(
+            width: 60,
+            height: 60,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+            ),
+            child: Image.asset(
+              'lib/icons/capture_icon.png',
+              width: 60,
+              height: 60,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  width: 60,
+                  height: 60,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Color(0x33FFFFFF),
+                  ),
+                  child: const Icon(
+                    Icons.camera_alt_rounded,
+                    color: Colors.white,
+                    size: 30,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+
 }

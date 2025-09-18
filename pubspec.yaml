@@ -85,16 +85,7 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
-    - lib/icons/explore_icon.png
-    - lib/icons/logbook_icon.png
-    - lib/icons/capture_icon.png
-    - lib/icons/calculator_icon.png
-    - lib/icons/sync_icon.png
-    - lib/icons/saltwater_fish.png
-    - lib/icons/freshwater_fish.png
-    - lib/icons/AquaSync_Logo.png
-    - lib/icons/approve.png
-    - lib/icons/tooclose.png
+    - lib/icons/
     - lib/icons/toofardark.png
     - .env
     - lib/icons/multi.png

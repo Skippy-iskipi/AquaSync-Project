@@ -14,7 +14,7 @@ class GuideOverlay extends StatefulWidget {
   static final syncKey = GlobalKey();
 
   @override
-  _GuideOverlayState createState() => _GuideOverlayState();
+  State<GuideOverlay> createState() => _GuideOverlayState();
 }
 
 class _GuideOverlayState extends State<GuideOverlay> {
@@ -65,6 +65,7 @@ class _GuideOverlayState extends State<GuideOverlay> {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
+      elevation: 1000, // High elevation to ensure it appears above everything
       child: LayoutBuilder(
         builder: (context, constraints) {
           final step = _guideSteps[_currentStep];
@@ -82,11 +83,17 @@ class _GuideOverlayState extends State<GuideOverlay> {
             targetSize.height + step.padding.vertical,
           );
 
+          // Check if the target is in the bottom navigation area (last 25% of screen)
+          final isBottomNav = targetPosition.dy > constraints.maxHeight * 0.75;
+          
+          // Calculate available space above the highlight
+          final availableSpaceAbove = highlightRect.top;
+
           return Stack(
             children: [
               ColorFiltered(
                 colorFilter: ColorFilter.mode(
-                  Colors.black.withOpacity(0.7),
+                  Colors.black.withValues(alpha: 0.7),
                   BlendMode.srcOut,
                 ),
                 child: Stack(
@@ -113,9 +120,12 @@ class _GuideOverlayState extends State<GuideOverlay> {
                   ],
                 ),
               ),
+              // Position tooltip based on available space and target location
               Positioned(
-                top: 0,
-                bottom: constraints.maxHeight - highlightRect.top - 490, // Position in area above highlight
+                top: isBottomNav || availableSpaceAbove < 200 ? null : 0,
+                bottom: isBottomNav || availableSpaceAbove < 200 
+                    ? constraints.maxHeight - highlightRect.top + 60 
+                    : null,
                 left: 20,
                 right: 20,
                 child: Center(
@@ -124,9 +134,16 @@ class _GuideOverlayState extends State<GuideOverlay> {
                     decoration: BoxDecoration(
                       color: const Color.fromARGB(255, 255, 255, 255),
                       borderRadius: BorderRadius.circular(12.0),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, 5),
+                        ),
+                      ],
                     ),
                     child: Column(
-                      mainAxisSize: MainAxisSize.min, // Wrap content
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           step.description,

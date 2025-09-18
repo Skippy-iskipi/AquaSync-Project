@@ -61,7 +61,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
           insetPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
           child: SafeArea(
             child: Scaffold(
-              backgroundColor: const Color(0xFF1E1E1E),
+              backgroundColor: const Color(0xFF00ACC1),
               body: Center(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
@@ -76,15 +76,15 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                             width: double.infinity,
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: Colors.red.withOpacity(0.2),
+                              color: Colors.white.withOpacity(0.2),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.red.withOpacity(0.5)),
+                              border: Border.all(color: Colors.white.withOpacity(0.5)),
                             ),
                             child: Row(
                               children: [
                                 Icon(
                                   Icons.warning_amber_rounded,
-                                  color: Colors.red[300],
+                                  color: Colors.white,
                                   size: 24,
                                 ),
                                 const SizedBox(width: 12),
@@ -92,7 +92,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                                   child: Text(
                                     widget.message!,
                                     style: TextStyle(
-                                      color: Colors.red[100],
+                                      color: Colors.white,
                                       fontSize: 16,
                                       fontWeight: FontWeight.w500,
                                     ),
@@ -140,7 +140,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                               ),
                               child: const Icon(
                                 Icons.check,
-                                color: Color(0xFF1E1E1E),
+                                color: Color(0xFF00ACC1),
                                 size: 20,
                               ),
                             ),
@@ -226,7 +226,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                             child: const Text(
                               'Close',
                               style: TextStyle(
-                                color: Color(0xFF1E1E1E),
+                                color: Color(0xFF00ACC1),
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -272,11 +272,11 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                 color: Colors.white,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.close,
-                color: Color(0xFF1E1E1E),
-                size: 16,
-              ),
+                              child: const Icon(
+                                Icons.close,
+                                color: Color(0xFF00ACC1),
+                                size: 16,
+                              ),
             ),
           ],
         ),

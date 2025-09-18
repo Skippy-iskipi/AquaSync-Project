@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class GeminiService {
   // You can get a free API key from: https://makersuite.google.com/app/apikey
@@ -37,17 +38,52 @@ Keep it under 100 words and make it engaging for aquarium enthusiasts.
   /// Generate care recommendations using Gemini AI
   static Future<Map<String, dynamic>> generateCareRecommendations(String commonName, String scientificName) async {
     try {
+      // Fetch portion_grams from fish_species table
+      double? portionGrams;
+      try {
+        final response = await Supabase.instance.client
+            .from('fish_species')
+            .select('portion_grams')
+            .or('common_name.ilike.%$commonName%,scientific_name.ilike.%$scientificName%')
+            .limit(1)
+            .single();
+        
+        portionGrams = response['portion_grams']?.toDouble();
+      } catch (e) {
+        print('Error fetching portion_grams for $commonName: $e');
+      }
+
+      // Format portion size from database or use fallback
+      String portionSizeText;
+      if (portionGrams != null && portionGrams > 0) {
+        if (portionGrams >= 1.0) {
+          portionSizeText = "${portionGrams.toStringAsFixed(1)}g per feeding";
+        } else {
+          portionSizeText = "${(portionGrams * 1000).toStringAsFixed(0)}mg per feeding";
+        }
+      } else {
+        portionSizeText = "Use database portion_grams value";
+      }
+
       final prompt = '''
 Generate care recommendations for $commonName fish (scientific name: $scientificName).
-Provide practical advice for:
-- Diet type and feeding schedule
-- Tank size requirements
-- Water parameters (temperature, pH)
-- Social behavior and tankmates
-- Care difficulty level
-- Common health issues to watch for
+Portion Size: $portionSizeText
 
-Format as structured information suitable for aquarium care.
+Return structured JSON:
+{
+  "diet_type": "e.g. Omnivore, Carnivore, Herbivore",
+  "preferred_foods": ["Specific foods for this fish species"],
+  "feeding_frequency": "e.g. 2 times per day",
+  "portion_size": "$portionSizeText",
+  "fasting_schedule": "e.g. Skip feeding on Wednesday and Sunday",
+  "oxygen_needs": "e.g. High - requires air pump",
+  "filtration_needs": "e.g. Moderate - sponge filter recommended",
+  "overfeeding_risks": "e.g. Can cause bloating and water fouling",
+  "behavioral_notes": "e.g. May compete with others during feeding",
+  "tankmate_feeding_conflict": "e.g. Avoid slow eaters in same tank"
+}
+
+CRITICAL: Use the exact portion_size provided above from the database. Do NOT generate or modify the portion amount.
 ''';
 
       final response = await _makeGeminiRequest(prompt);

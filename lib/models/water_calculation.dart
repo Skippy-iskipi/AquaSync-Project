@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class WaterCalculation {
   final String? id;
   final String minimumTankVolume;
@@ -7,15 +9,16 @@ class WaterCalculation {
   final String phRange;
   final String temperatureRange;
   final String tankStatus;
-  final Map<String, String>? oxygenNeeds; // new
-  final Map<String, String>? filtrationNeeds; // new
+  final String? tankShape; // new field for tank shape
+  final Map<String, dynamic>? waterRequirements; // new field for water requirements
+  final List<String>? tankmateRecommendations; // moved from AI content
+  final Map<String, dynamic>? feedingInformation; // new field for feeding info
   final DateTime? createdAt;
-  // AI-generated content fields
+  // Removed AI-generated content fields that are no longer used
   final String? waterParametersResponse;
   final String? tankAnalysisResponse;
   final String? filtrationResponse;
   final String? dietCareResponse;
-  final List<String>? tankmateRecommendations;
 
   WaterCalculation({
     this.id,
@@ -26,14 +29,15 @@ class WaterCalculation {
     required this.phRange,
     required this.temperatureRange,
     required this.tankStatus,
-    this.oxygenNeeds,
-    this.filtrationNeeds,
+    this.tankShape,
+    this.waterRequirements,
+    this.tankmateRecommendations,
+    this.feedingInformation,
     this.createdAt,
     this.waterParametersResponse,
     this.tankAnalysisResponse,
     this.filtrationResponse,
     this.dietCareResponse,
-    this.tankmateRecommendations,
   });
 
   Map<String, dynamic> toJson() {
@@ -46,14 +50,15 @@ class WaterCalculation {
       'ph_range': phRange,
       'temperature_range': temperatureRange,
       'tank_status': tankStatus,
-      'oxygen_needs': oxygenNeeds,
-      'filtration_needs': filtrationNeeds,
+      'tank_shape': tankShape,
+      'water_requirements': waterRequirements,
+      'tankmate_recommendations': tankmateRecommendations,
+      'feeding_information': feedingInformation,
       'created_at': createdAt?.toIso8601String(),
       'water_parameters_response': waterParametersResponse,
       'tank_analysis_response': tankAnalysisResponse,
       'filtration_response': filtrationResponse,
       'diet_care_response': dietCareResponse,
-      'tankmate_recommendations': tankmateRecommendations,
     };
   }
 
@@ -67,16 +72,25 @@ class WaterCalculation {
       phRange: json['ph_range'] ?? json['phRange'],
       temperatureRange: json['temperature_range'] ?? json['temperatureRange'],
       tankStatus: json['tank_status'] ?? json['tankStatus'] ?? 'Unknown',
-      oxygenNeeds: json['oxygen_needs'] != null ? Map<String, String>.from(json['oxygen_needs']) : null,
-      filtrationNeeds: json['filtration_needs'] != null ? Map<String, String>.from(json['filtration_needs']) : null,
+      tankShape: json['tank_shape'],
+      waterRequirements: json['water_requirements'] != null 
+          ? (json['water_requirements'] is String 
+              ? Map<String, dynamic>.from(jsonDecode(json['water_requirements']))
+              : Map<String, dynamic>.from(json['water_requirements']))
+          : null,
+      tankmateRecommendations: json['tankmate_recommendations'] != null 
+          ? List<String>.from(json['tankmate_recommendations']) 
+          : null,
+      feedingInformation: json['feeding_information'] != null 
+          ? (json['feeding_information'] is String 
+              ? Map<String, dynamic>.from(jsonDecode(json['feeding_information']))
+              : Map<String, dynamic>.from(json['feeding_information']))
+          : null,
       createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
       waterParametersResponse: json['water_parameters_response'],
       tankAnalysisResponse: json['tank_analysis_response'],
       filtrationResponse: json['filtration_response'],
       dietCareResponse: json['diet_care_response'],
-      tankmateRecommendations: json['tankmate_recommendations'] != null 
-          ? List<String>.from(json['tankmate_recommendations']) 
-          : null,
     );
   }
 } 

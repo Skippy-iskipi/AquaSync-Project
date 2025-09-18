@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class BottomNavigation extends StatelessWidget {
   final int selectedIndex;
@@ -7,6 +8,8 @@ class BottomNavigation extends StatelessWidget {
   final GlobalKey? logbookKey;
   final GlobalKey? calculatorKey;
   final GlobalKey? syncKey;
+  final bool isKeyboardVisible;
+  final VoidCallback? onCapturePressed;
 
   const BottomNavigation({
     super.key,
@@ -16,94 +19,62 @@ class BottomNavigation extends StatelessWidget {
     this.logbookKey,
     this.calculatorKey,
     this.syncKey,
+    this.isKeyboardVisible = false,
+    this.onCapturePressed,
   });
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isSmallScreen = screenWidth < 360;
-    
-    return BottomAppBar(
-      shape: const CircularNotchedRectangle(),
-      notchMargin: 8.0,
-      color: const Color(0xFF006064),
-      height: isSmallScreen ? 70 : 75,
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: isSmallScreen ? 2.0 : 4.0,
-          vertical: isSmallScreen ? 2.0 : 3.0,
+    return Container(
+      height: 65,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(
+            color: Color(0xFFE0E0E0),
+            width: 1,
+          ),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: <Widget>[
-            Expanded(
-              child: _buildNavItem(context, 0, 'Explore', 'lib/icons/explore_icon.png', exploreKey, isSmallScreen),
-            ),
-            Expanded(
-              child: _buildNavItem(context, 1, 'Sync', 'lib/icons/sync_icon.png', syncKey, isSmallScreen),
-            ),
-            SizedBox(width: isSmallScreen ? 50 : 60), // Space for FAB (center camera button)
-            Expanded(
-              child: _buildNavItem(context, 2, 'Calculator', 'lib/icons/calculator_icon.png', calculatorKey, isSmallScreen),
-            ),
-            Expanded(
-              child: _buildNavItem(context, 3, 'History', 'lib/icons/logbook_icon.png', logbookKey, isSmallScreen),
-            ),
-          ],
-        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(flex: 20, child: _buildNavItem(0, 'Home', Icons.explore_outlined)),
+          Expanded(flex: 20, child: _buildNavItem(1, 'Sync', Icons.sync_outlined)),
+          Expanded(flex: 20, child: _buildCaptureButton()),
+          Expanded(flex: 20, child: _buildNavItem(2, 'Calculator', Icons.calculate_outlined)),
+          Expanded(flex: 20, child: _buildNavItem(3, 'Profile', Icons.person_outlined)),
+        ],
       ),
     );
   }
 
-  Widget _buildNavItem(BuildContext context, int index, String label, String iconPath, GlobalKey? key, bool isSmallScreen) {
+  Widget _buildNavItem(int index, String label, IconData icon) {
     final bool isSelected = selectedIndex == index;
-    final double iconSize = isSmallScreen ? 20 : 24;
-    final double fontSize = isSmallScreen ? 10 : 11;
-    
-    return InkWell(
-      key: key,
-      onTap: () => onItemTapped(index),
-      borderRadius: BorderRadius.circular(8),
-      splashColor: Colors.white.withOpacity(0.1),
-      highlightColor: Colors.white.withOpacity(0.05),
-      child: Padding(
-        padding: EdgeInsets.symmetric(
-          vertical: isSmallScreen ? 2.0 : 3.0,
-          horizontal: isSmallScreen ? 2.0 : 4.0,
-        ),
+
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.lightImpact();
+        onItemTapped(index);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // Icon with proper error handling
-            Image.asset(
-              iconPath,
-              width: iconSize,
-              height: iconSize,
-              color: isSelected ? Colors.white : Colors.white70,
-              errorBuilder: (context, error, stackTrace) {
-                return Icon(
-                  _getIconFallback(index),
-                  size: iconSize,
-                  color: isSelected ? Colors.white : Colors.white70,
-                );
-              },
+            Icon(
+              icon,
+              size: 24,
+              color: isSelected ? const Color(0xFF00BCD4) : Colors.grey,
             ),
-            SizedBox(height: isSmallScreen ? 2 : 3),
-            // Label with proper constraints
+            const SizedBox(height: 4),
             Text(
               label,
               style: TextStyle(
-                color: isSelected ? Colors.white : Colors.white70,
-                fontSize: fontSize,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                letterSpacing: 0.1,
-                height: 1.0,
+                color: isSelected ? const Color(0xFF00BCD4) : Colors.grey,
+                fontSize: 10,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
               ),
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -111,18 +82,38 @@ class BottomNavigation extends StatelessWidget {
     );
   }
 
-  IconData _getIconFallback(int index) {
-    switch (index) {
-      case 0:
-        return Icons.explore_outlined;
-      case 1:
-        return Icons.sync;
-      case 2:
-        return Icons.calculate_outlined;
-      case 3:
-        return Icons.history;
-      default:
-        return Icons.home;
-    }
+  Widget _buildCaptureButton() {
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.mediumImpact();
+        onCapturePressed?.call();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Center(
+            child: Container(
+              width: 70,
+              height: 70,
+              decoration: const BoxDecoration(
+                color: Color(0xFF00BCD4),
+                shape: BoxShape.circle,
+              ),
+              child: Image.asset(
+                'lib/icons/capture_icon.png',
+                width: 55,
+                height: 55,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return const Icon(
+                    Icons.camera_alt_rounded,
+                    color: Colors.white,
+                    size: 32,
+                  );
+                },
+              ),
+            ),
+          ),
+      ),
+    );
   }
 }

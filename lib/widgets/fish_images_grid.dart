@@ -51,10 +51,6 @@ class _FishImagesGridState extends State<FishImagesGrid> with TickerProviderStat
     super.dispose();
   }
 
-  String _folderFromName(String name) {
-    final noSpaces = name.replaceAll(' ', '');
-    return noSpaces.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
-  }
 
   Future<void> _loadFishImages() async {
     setState(() {
@@ -519,14 +515,7 @@ class _FishImagesGridState extends State<FishImagesGrid> with TickerProviderStat
       child: Center(
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.1),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
+            borderRadius: BorderRadius.circular(6),
           ),
           child: ElevatedButton.icon(
             onPressed: () {
@@ -550,10 +539,6 @@ class _FishImagesGridState extends State<FishImagesGrid> with TickerProviderStat
               foregroundColor: const Color(0xFF006064),
               elevation: 0,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                side: BorderSide(color: const Color(0xFF006064).withOpacity(0.3)),
-              ),
             ),
           ),
         ),

@@ -45,6 +45,7 @@ from .enhanced_compatibility_integration import (
     get_enhanced_tankmate_compatibility_info
 )
 from .ai_compatibility_generator import ai_generator
+from .bm25_search_service import bm25_service, initialize_bm25_service, search_fish, get_autocomplete_suggestions
 from supabase import Client
 
 # Set up logging
@@ -99,6 +100,8 @@ transform = transforms.Compose([
 
 class FishGroup(BaseModel):
     fish_names: List[str]
+    tank_volume: Optional[float] = None
+    tank_shape: Optional[str] = None
 
 class CreatePaymentIntentRequest(BaseModel):
     user_id: str
@@ -216,7 +219,12 @@ def load_classifier_model_sync(model_path: str) -> Tuple[torch.nn.Module, List[s
         log_memory_usage("before classifier load")
 
         with torch.no_grad():
-            checkpoint = torch.load(model_path, map_location="cpu")
+            # Handle PyTorch 2.6+ compatibility where weights_only defaults to True
+            try:
+                checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+            except TypeError:
+                # Fallback for older PyTorch versions that don't support weights_only
+                checkpoint = torch.load(model_path, map_location="cpu")
 
         # Determine if we were given a raw state_dict or a full checkpoint
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
@@ -454,6 +462,8 @@ async def health_check():
         "status": "healthy",
         "models_loaded": models_loaded,
         "model_load_error": model_load_error,
+        "bm25_initialized": bm25_service.doc_count > 0,
+        "bm25_doc_count": bm25_service.doc_count,
         "memory_usage_mb": round(memory_mb, 2),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
@@ -672,6 +682,19 @@ async def predict(
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
+@app.get("/debug-fish")
+async def debug_fish_data(db: Client = Depends(get_supabase_client)):
+    """Debug endpoint to check what data we're getting from Supabase"""
+    try:
+        response = db.table('fish_species').select('id, common_name, temperature_range').limit(5).execute()
+        return {
+            "total_records": len(response.data),
+            "sample_records": response.data
+        }
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/fish-list")
 async def get_fish_list(db: Client = Depends(get_supabase_client)):
     try:
@@ -681,12 +704,73 @@ async def get_fish_list(db: Client = Depends(get_supabase_client)):
             fish_copy = dict(fish)
             # Alias for frontend
             fish_copy['max_size'] = fish.get('max_size_(cm)')
-            fish_copy['temperature_range'] = fish.get('temperature_range_(Â°c)')
+            
+            # Debug: Log the first few fish records to see what we're getting
+            if len(fish_list) < 3:
+                logger.info(f"DEBUG: Fish #{len(fish_list)+1} - Name: {fish.get('common_name')}")
+                logger.info(f"DEBUG: Fish #{len(fish_list)+1} - temperature_range: '{fish.get('temperature_range')}'")
+                logger.info(f"DEBUG: Fish #{len(fish_list)+1} - temperature_range type: {type(fish.get('temperature_range'))}")
+                
+                # Check if there are other temperature-related fields
+                temp_fields = [k for k in fish.keys() if 'temp' in k.lower()]
+                if temp_fields:
+                    logger.info(f"DEBUG: Fish #{len(fish_list)+1} - Found temp fields: {temp_fields}")
+                    for field in temp_fields:
+                        logger.info(f"DEBUG: Fish #{len(fish_list)+1} - {field}: '{fish.get(field)}'")
+                else:
+                    logger.info(f"DEBUG: Fish #{len(fish_list)+1} - No temperature fields found")
+            
+            # Get temperature_range directly from database
+            temp_range = fish.get('temperature_range')
+            fish_copy['temperature_range'] = temp_range
             fish_list.append(fish_copy)
+        
+        # Initialize BM25 service with fresh data
+        await initialize_bm25_service(fish_list)
+        logger.info(f"BM25 service initialized with {len(fish_list)} fish")
+        
         return fish_list
     except Exception as e:
         logger.error(f"Error fetching fish list: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching fish list")
+
+@app.get("/search/fish")
+async def search_fish_endpoint(
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(100, description="Maximum number of results"),
+    min_score: float = Query(0.01, description="Minimum relevance score")
+):
+    """Fast BM25 search for fish species"""
+    try:
+        logger.info(f"BM25 search request: query='{q}', limit={limit}, min_score={min_score}")
+        results = await search_fish(q, limit, min_score)
+        logger.info(f"BM25 search returned {len(results)} results")
+        return {
+            "query": q,
+            "results": results,
+            "total": len(results)
+        }
+    except Exception as e:
+        logger.error(f"Error in fish search: {e}")
+        raise HTTPException(status_code=500, detail="Search failed")
+
+@app.get("/search/autocomplete")
+async def get_autocomplete_endpoint(
+    q: str = Query(..., description="Search query for autocomplete"),
+    limit: int = Query(8, description="Maximum number of suggestions")
+):
+    """Get autocomplete suggestions"""
+    try:
+        logger.info(f"Autocomplete request: query='{q}', limit={limit}")
+        suggestions = await get_autocomplete_suggestions(q, limit)
+        logger.info(f"Autocomplete returned {len(suggestions)} suggestions")
+        return {
+            "query": q,
+            "suggestions": suggestions
+        }
+    except Exception as e:
+        logger.error(f"Error in autocomplete: {e}")
+        raise HTTPException(status_code=500, detail="Autocomplete failed")
 
 @app.get("/fish-image/{fish_name}")
 async def get_fish_image(
@@ -771,6 +855,11 @@ async def get_all_fish_species(db: Client = Depends(get_supabase_client)):
 
 @app.post("/check-group")
 async def check_group_compatibility(payload: FishGroup, db: Client = Depends(get_supabase_client)):
+    print(f"Received payload: {payload}")
+    print(f"Fish names: {payload.fish_names}")
+    print(f"Tank volume: {payload.tank_volume}")
+    print(f"Tank shape: {payload.tank_shape}")
+    
     # Cache for fish data and images to avoid redundant DB calls
     fish_data_cache = {}
     fish_image_cache = {}
@@ -1046,6 +1135,13 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                 status_code=400,
                 content={"error": "No fish selected"}
             )
+        
+        # Validate tank volume is greater than zero
+        if tank_volume <= 0:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Tank volume must be greater than 0 liters. Please enter valid tank dimensions."}
+            )
 
         # Initialize variables
         min_temp = float('-inf')
@@ -1070,6 +1166,51 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                 )
             fish_info_map[fish_name] = fish_info
             species_notes.setdefault(fish_name, [])
+            
+            # Check tank volume and shape compatibility for each fish
+            if payload.tank_volume is not None:
+                # Check minimum tank size requirement
+                min_tank_size = None
+                for key in ['minimum_tank_size_l', 'minimum_tank_size_(l)', 'minimum_tank_size']:
+                    val = fish_info.get(key)
+                    if val is not None:
+                        try:
+                            min_tank_size = float(val)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                
+                if min_tank_size is not None and min_tank_size > 0:
+                    if payload.tank_volume < min_tank_size:
+                        compatibility_issues.append({
+                            "pair": [fish_name, fish_name],
+                            "reasons": [
+                                f"Tank volume {payload.tank_volume}L is below minimum required size of {min_tank_size}L for {fish_name}"
+                            ]
+                        })
+                        species_notes[fish_name].append(
+                            f"Tank volume is insufficient for this species (needs at least {min_tank_size}L)."
+                        )
+                
+                # Check tank shape compatibility
+                if payload.tank_shape == 'bowl':
+                    max_size = fish_info.get('max_size_(cm)')
+                    if max_size is not None:
+                        try:
+                            max_size_float = float(max_size)
+                            # Large fish (>10cm) are generally not suitable for bowls
+                            if max_size_float > 10:
+                                compatibility_issues.append({
+                                    "pair": [fish_name, fish_name],
+                                    "reasons": [
+                                        f"{fish_name} grows to {max_size_float}cm and is too large for a bowl tank"
+                                    ]
+                                })
+                                species_notes[fish_name].append(
+                                    f"This fish grows too large for a bowl tank (max size: {max_size_float}cm)."
+                                )
+                        except (ValueError, TypeError):
+                            pass
             
             # Parse temperature range (try all possible fields)
             temp_min, temp_max = parse_range(
@@ -1175,27 +1316,63 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
 
         # Calculate optimal fish distribution if compatible
         if are_compatible:
-            # Calculate the minimum tank size required per fish
-            min_sizes = {}
-            for name, info in fish_info_map.items():
-                min_tank_size = None
+            # Use bioload values from database
+            def calculate_bioload_per_fish(fish_info):
+                """Calculate bioload per fish using database values"""
+                # First, try to get bioload directly from database
+                bioload_value = fish_info.get('bioload')
+                if bioload_value is not None:
+                    try:
+                        bioload = float(bioload_value)
+                        if bioload > 0:
+                            return bioload
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Fallback: try to get from database minimum tank size
                 for key in ['minimum_tank_size_l', 'minimum_tank_size_(l)', 'minimum_tank_size']:
-                    val = info.get(key)
+                    val = fish_info.get(key)
                     if val is not None:
                         try:
-                            min_tank_size = float(val)
+                            # Use database value but apply conservative factor
+                            db_value = float(val)
+                            return max(db_value * 0.8, 10.0)  # Conservative but not too restrictive
+                        except (ValueError, TypeError):
+                            continue
+                
+                # Final fallback: estimate based on adult size if available
+                adult_size = None
+                for key in ['adult_size_cm', 'adult_size_(cm)', 'max_size_cm', 'size_cm']:
+                    val = fish_info.get(key)
+                    if val is not None:
+                        try:
+                            adult_size = float(val)
                             break
                         except (ValueError, TypeError):
                             continue
-                if min_tank_size is None or min_tank_size <= 0:
+                
+                if adult_size and adult_size > 0:
+                    # Conservative estimate: 3L per cm of fish length
+                    return max(adult_size * 3.0, 10.0)
+                
+                # Absolute fallback
+                return 15.0  # Conservative default
+            
+            # Calculate bioload requirements per fish
+            min_sizes = {}
+            for name, info in fish_info_map.items():
+                bioload = calculate_bioload_per_fish(info)
+                
+                if bioload is None or bioload <= 0:
                     return JSONResponse(
                         status_code=400,
-                        content={"error": f"Fish '{name}' has invalid or missing minimum tank size in the database."}
+                        content={"error": f"Fish '{name}' has invalid size data for bioload calculation."}
                     )
-                min_sizes[name] = min_tank_size
+                min_sizes[name] = bioload
 
-            # Calculate maximum fish quantities while maintaining balance
-            total_space = tank_volume
+            # Apply conservative safety margin - only use 70% of tank capacity
+            usable_volume = tank_volume * 0.7  # 30% safety margin
+            total_space = usable_volume
             base_quantities = {}
             max_quantities = {}
             
@@ -1213,43 +1390,100 @@ def calculate_fish_capacity(request: TankCapacityRequest, db: Client = Depends(g
                     max_q = min(max_q, 1)
                 max_quantities[fish_name] = max_q
             
-            # First, allocate minimum quantities (1 for each species)
-            for fish_name, min_size in min_sizes.items():
-                base_quantities[fish_name] = 1
-                total_space -= min_size
-
-            # Priority phase: bring schooling species up to their minimum group size
+            # IMPROVED: Balanced constraint-solving algorithm
+            # Step 1: Check if schooling minimums can be met for ALL species
+            schooling_requirements = {}
+            total_schooling_space = 0
+            warnings = []
+            
             for fish_name, min_size in min_sizes.items():
                 rules = species_rules.get(fish_name, {})
                 if rules.get("schooling"):
-                    target = max(1, rules.get("min_group", 6))
-                    while (
-                        base_quantities[fish_name] < target and
-                        base_quantities[fish_name] < max_quantities[fish_name] and
-                        total_space >= min_size
-                    ):
-                        base_quantities[fish_name] += 1
-                        total_space -= min_size
-                    if base_quantities[fish_name] < target:
-                        needed = target - base_quantities[fish_name]
-                        species_notes[fish_name].append(
-                            f"Could not reach minimum schooling group of {target}. Short by {needed} due to tank volume."
-                        )
-                        compatibility_issues.append({
-                            "pair": [fish_name, fish_name],
-                            "reasons": [f"Minimum group size for schooling species is {target}; tank volume limits this to {base_quantities[fish_name]}."]
-                        })
-
-            # Then distribute remaining space proportionally
-            while total_space > 0:
-                can_add_more = False
+                    min_group = max(1, rules.get("min_group", 6))
+                    schooling_requirements[fish_name] = min_group
+                    total_schooling_space += min_size * min_group
+                else:
+                    schooling_requirements[fish_name] = 1
+                    total_schooling_space += min_size
+            
+            # Step 2: Check total capacity against schooling requirements
+            if total_schooling_space > usable_volume:
+                # Cannot meet all schooling requirements - use balanced approach
+                print(f"⚠️ Cannot meet all schooling requirements. Need {total_schooling_space:.1f}L, have {usable_volume:.1f}L")
+                
+                # Allocate 1 fish per species first (minimum viable)
                 for fish_name, min_size in min_sizes.items():
-                    if total_space >= min_size and base_quantities[fish_name] < max_quantities[fish_name]:
-                        base_quantities[fish_name] += 1
-                        total_space -= min_size
-                        can_add_more = True
-                if not can_add_more:
-                    break
+                    base_quantities[fish_name] = 1
+                    total_space -= min_size
+                
+                # Add warnings for schooling species
+                for fish_name, min_size in min_sizes.items():
+                    rules = species_rules.get(fish_name, {})
+                    if rules.get("schooling"):
+                        min_group = rules.get("min_group", 6)
+                        required_volume = min_size * min_group
+                        species_notes[fish_name].append(
+                            f"Schooling species needs minimum {min_group} fish ({required_volume:.1f}L). Consider a {required_volume + 20:.0f}L+ tank or fewer species."
+                        )
+                        warnings.append(f"{fish_name} schooling requirements cannot be met in this tank size")
+                
+                # Distribute remaining space proportionally among all species
+                remaining_cycles = 0
+                while total_space > 0 and remaining_cycles < 20:  # Prevent infinite loops
+                    added_fish = False
+                    for fish_name, min_size in min_sizes.items():
+                        if total_space >= min_size and base_quantities[fish_name] < max_quantities[fish_name]:
+                            base_quantities[fish_name] += 1
+                            total_space -= min_size
+                            added_fish = True
+                    if not added_fish:
+                        break
+                    remaining_cycles += 1
+                        
+            else:
+                # Can meet schooling requirements - use constraint solving
+                print(f"✅ Can meet schooling requirements. Using {total_schooling_space:.1f}L of {usable_volume:.1f}L")
+                
+                # Allocate schooling minimums
+                for fish_name, min_group in schooling_requirements.items():
+                    base_quantities[fish_name] = min_group
+                    total_space -= min_sizes[fish_name] * min_group
+                
+                # Distribute remaining space using constraint optimization
+                # Priority: balance species rather than maximize one
+                remaining_cycles = 0
+                while total_space > 0 and remaining_cycles < 20:
+                    added_fish = False
+                    # Sort by current quantity to prioritize species with fewer fish
+                    sorted_species = sorted(min_sizes.keys(), key=lambda x: base_quantities[x])
+                    
+                    for fish_name in sorted_species:
+                        min_size = min_sizes[fish_name]
+                        if total_space >= min_size and base_quantities[fish_name] < max_quantities[fish_name]:
+                            base_quantities[fish_name] += 1
+                            total_space -= min_size
+                            added_fish = True
+                            break  # Only add one fish per cycle for balance
+                    
+                    if not added_fish:
+                        break
+                    remaining_cycles += 1
+            
+            # Step 3: Add capacity warnings and suggestions
+            total_used_space = usable_volume - total_space
+            capacity_percentage = (total_used_space / usable_volume) * 100
+            
+            if capacity_percentage > 90:
+                warnings.append(f"Tank is {capacity_percentage:.0f}% full - consider fewer fish or larger tank")
+            
+            if warnings:
+                # Calculate suggested tank size
+                ideal_volume = sum(min_sizes[name] * schooling_requirements[name] for name in min_sizes.keys())
+                suggested_size = int((ideal_volume / 0.7) + 20)  # Add 20L buffer
+                species_notes["general"] = [
+                    f"For optimal stocking with all selected species, consider a {suggested_size}L+ tank",
+                    f"Current stocking uses {capacity_percentage:.0f}% of safe capacity"
+                ] + warnings
 
             # Calculate actual bioload and prepare fish details
             total_bioload = 0
@@ -1956,9 +2190,12 @@ class DietCalculationRequest(BaseModel):
     fish_selections: Dict[str, int]
     total_portion: int
     total_portion_range: Optional[str] = None
-    portion_details: Dict[str, Any]
-    compatibility_issues: Optional[List[str]] = None
-    feeding_notes: Optional[str] = None
+
+class FeedInventoryRequest(BaseModel):
+    fish_selections: Dict[str, int]  # fish name -> quantity
+    available_feeds: Dict[str, Dict[str, Any]]  # feed name -> {"amount": float, "unit": "pieces"|"grams"}
+    feeding_frequency: int = 2  # times per day
+    user_preferences: Dict[str, Any] = {}  # user feeding preferences
 
 @app.post("/save-diet-calculation/")
 async def save_diet_calculation(
@@ -2042,90 +2279,941 @@ async def save_diet_calculation(
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error saving diet calculation: {str(e)}")
 
+# Feed conversion factors: pieces to grams
+FEED_CONVERSIONS = {
+    'tropical flakes': 0.003,      # ~3mg per flake
+    'flakes': 0.003,               # ~3mg per flake
+    'pellets': 0.015,              # ~15mg per standard pellet
+    'small pellets': 0.008,        # ~8mg per small pellet
+    'medium pellets': 0.025,       # ~25mg per medium pellet
+    'large pellets': 0.050,        # ~50mg per large pellet
+    'community pellets': 0.015,    # ~15mg per community pellet
+    'carnivore pellets': 0.020,    # ~20mg per carnivore pellet
+    'vegetable pellets': 0.012,    # ~12mg per veggie pellet
+    'bloodworms': 0.002,           # ~2mg per frozen bloodworm
+    'brine shrimp': 0.001,         # ~1mg per brine shrimp
+    'spirulina flakes': 0.004,     # ~4mg per spirulina flake
+    'algae wafers': 0.500,         # ~500mg per algae wafer
+    'frozen food': 0.005,          # ~5mg per piece of frozen food
+    'mixed diet': 0.010,           # ~10mg per piece (average)
+    'variety pack': 0.012,         # ~12mg per piece (average)
+}
+
+def convert_feed_to_grams(amount: float, unit: str, feed_name: str) -> float:
+    """Convert feed amount to grams based on unit and feed type"""
+    if unit.lower() == 'grams':
+        return amount
+    elif unit.lower() in ['pieces', 'pellets', 'flakes']:
+        # Find matching conversion factor
+        feed_lower = feed_name.lower()
+        conversion_factor = 0.015  # Default 15mg per piece
+        
+        for feed_type, factor in FEED_CONVERSIONS.items():
+            if feed_type in feed_lower or feed_lower in feed_type:
+                conversion_factor = factor
+                break
+        
+        grams = amount * conversion_factor
+        print(f"Converting {feed_name}: {amount} {unit} × {conversion_factor}g/piece = {grams:.3f}g")
+        return grams
+    else:
+        # Unknown unit, assume pieces with default conversion
+        print(f"Warning: Unknown unit '{unit}' for {feed_name}, assuming pieces")
+        return amount * 0.015
+
+@app.post("/calculate-feed-inventory-recommendations/")
+async def calculate_feed_inventory_recommendations(
+    request: FeedInventoryRequest,
+    db: Client = Depends(get_supabase_client)
+):
+    """Calculate intelligent feed inventory recommendations based on fish consumption patterns"""
+    try:
+        fish_selections = request.fish_selections
+        available_feeds_raw = request.available_feeds
+        feeding_frequency = request.feeding_frequency
+        user_preferences = request.user_preferences
+        
+        # Convert all feed amounts to grams
+        available_feeds = {}
+        for feed_name, feed_data in available_feeds_raw.items():
+            if isinstance(feed_data, dict) and 'amount' in feed_data and 'unit' in feed_data:
+                # New format: {"amount": 50, "unit": "pieces"}
+                amount_grams = convert_feed_to_grams(
+                    feed_data['amount'], 
+                    feed_data['unit'], 
+                    feed_name
+                )
+                available_feeds[feed_name] = amount_grams
+            elif isinstance(feed_data, (int, float)):
+                # Legacy format: assume grams
+                print(f"Legacy format detected for {feed_name}: {feed_data} (assuming grams)")
+                available_feeds[feed_name] = float(feed_data)
+            else:
+                print(f"Invalid feed data format for {feed_name}: {feed_data}")
+                continue
+        
+        # Get fish data for consumption calculations
+        fish_consumption_data = {}
+        total_daily_consumption = {}
+        
+        for fish_name, quantity in fish_selections.items():
+            # Get fish data from database
+            fish_response = db.table('fish_species').select('*').ilike('common_name', fish_name).execute()
+            if fish_response.data:
+                fish_data = fish_response.data[0]
+                
+                # Calculate per-fish consumption based on size and activity
+                max_size_cm = float(fish_data.get('max_size_(cm)', 5) or 5)
+                activity_level = fish_data.get('activity_level', 'moderate')
+                
+                # Base consumption formula: size-based with activity multiplier
+                base_consumption_per_fish = max(0.02, max_size_cm * 0.008)  # g/day per fish
+                
+                # Activity level multipliers
+                activity_multipliers = {
+                    'low': 0.8,
+                    'moderate': 1.0,
+                    'high': 1.3,
+                    'very_high': 1.5
+                }
+                
+                multiplier = activity_multipliers.get(activity_level.lower(), 1.0)
+                daily_consumption_per_fish = base_consumption_per_fish * multiplier
+                
+                # Total consumption for this fish species
+                total_fish_consumption = daily_consumption_per_fish * quantity
+                
+                fish_consumption_data[fish_name] = {
+                    'per_fish_consumption': daily_consumption_per_fish,
+                    'total_consumption': total_fish_consumption,
+                    'quantity': quantity,
+                    'size_cm': max_size_cm,
+                    'activity_level': activity_level
+                }
+                
+                # Determine preferred feed types based on fish characteristics
+                diet_type = fish_data.get('diet', 'omnivore').lower()
+                preferred_feeds = []
+                
+                if 'carnivore' in diet_type or 'predator' in diet_type:
+                    preferred_feeds = ['bloodworms', 'brine shrimp', 'carnivore pellets', 'frozen food']
+                elif 'herbivore' in diet_type or 'plant' in diet_type:
+                    preferred_feeds = ['spirulina flakes', 'algae wafers', 'vegetable pellets', 'blanched vegetables']
+                else:  # omnivore
+                    preferred_feeds = ['tropical flakes', 'community pellets', 'mixed diet', 'variety pack']
+                
+                # Distribute consumption across available feeds
+                for feed_name in available_feeds.keys():
+                    feed_name_lower = feed_name.lower()
+                    
+                    # Check if this feed is suitable for this fish
+                    is_suitable = any(pref in feed_name_lower for pref in preferred_feeds) or \
+                                 any(feed_name_lower in pref for pref in preferred_feeds) or \
+                                 'flake' in feed_name_lower or 'pellet' in feed_name_lower
+                    
+                    if is_suitable:
+                        if feed_name not in total_daily_consumption:
+                            total_daily_consumption[feed_name] = 0
+                        total_daily_consumption[feed_name] += total_fish_consumption
+        
+        # Calculate inventory duration and recommendations
+        inventory_analysis = {}
+        recommendations = []
+        
+        for feed_name, available_grams in available_feeds.items():
+            daily_consumption = total_daily_consumption.get(feed_name, 0)
+            
+            if daily_consumption > 0:
+                days_until_empty = int(available_grams / daily_consumption)
+                weeks_until_empty = days_until_empty // 7
+                
+                # Determine status and recommendations
+                if days_until_empty < 7:
+                    status = "critical"
+                    priority = "high"
+                    recommendation = f"Urgent: Only {days_until_empty} days remaining. Order immediately."
+                elif days_until_empty < 21:
+                    status = "low"
+                    priority = "medium"
+                    recommendation = f"Low stock: {weeks_until_empty} weeks remaining. Consider reordering soon."
+                elif days_until_empty > 180:  # 6 months
+                    status = "excess"
+                    priority = "low"
+                    # Calculate optimal purchase amount (3-month supply)
+                    optimal_amount = daily_consumption * 90
+                    recommendation = f"Excess stock: Lasts {days_until_empty // 30} months. For freshness, consider {optimal_amount:.0f}g portions."
+                else:
+                    status = "adequate"
+                    priority = "low"
+                    recommendation = f"Good stock: {weeks_until_empty} weeks remaining."
+                
+                inventory_analysis[feed_name] = {
+                    "available_grams": available_grams,
+                    "daily_consumption_grams": round(daily_consumption, 2),
+                    "days_until_empty": days_until_empty,
+                    "weeks_until_empty": weeks_until_empty,
+                    "months_until_empty": round(days_until_empty / 30, 1),
+                    "status": status,
+                    "priority": priority,
+                    "recommendation": recommendation,
+                    "optimal_purchase_amount": round(daily_consumption * 90, 0),  # 3-month supply
+                    "minimum_reorder_amount": round(daily_consumption * 30, 0),  # 1-month supply
+                }
+            else:
+                inventory_analysis[feed_name] = {
+                    "available_grams": available_grams,
+                    "daily_consumption_grams": 0,
+                    "days_until_empty": None,
+                    "status": "unused",
+                    "priority": "low",
+                    "recommendation": "This feed is not being consumed by your current fish selection.",
+                    "optimal_purchase_amount": 0,
+                    "minimum_reorder_amount": 0,
+                }
+        
+        # Generate overall recommendations
+        critical_feeds = [name for name, data in inventory_analysis.items() if data["status"] == "critical"]
+        low_feeds = [name for name, data in inventory_analysis.items() if data["status"] == "low"]
+        excess_feeds = [name for name, data in inventory_analysis.items() if data["status"] == "excess"]
+        
+        overall_recommendations = []
+        
+        if critical_feeds:
+            overall_recommendations.append({
+                "type": "urgent",
+                "message": f"Critical: {', '.join(critical_feeds)} running out within a week!",
+                "action": "Order immediately"
+            })
+        
+        if low_feeds:
+            overall_recommendations.append({
+                "type": "reorder",
+                "message": f"Low stock: {', '.join(low_feeds)} should be reordered soon.",
+                "action": "Plan to reorder within 1-2 weeks"
+            })
+        
+        if excess_feeds:
+            overall_recommendations.append({
+                "type": "optimization",
+                "message": f"Excess stock: {', '.join(excess_feeds)} may lose freshness.",
+                "action": "Consider smaller portions for future purchases"
+            })
+        
+        # Calculate total daily feeding cost estimate
+        total_daily_cost = sum(data["daily_consumption_grams"] for data in inventory_analysis.values())
+        monthly_cost_estimate = total_daily_cost * 30
+        
+        return {
+            "success": True,
+            "inventory_analysis": inventory_analysis,
+            "fish_consumption_data": fish_consumption_data,
+            "overall_recommendations": overall_recommendations,
+            "feeding_summary": {
+                "total_daily_consumption_grams": round(total_daily_cost, 2),
+                "monthly_consumption_grams": round(monthly_cost_estimate, 2),
+                "feeding_frequency": feeding_frequency,
+                "number_of_fish": sum(fish_selections.values()),
+                "number_of_species": len(fish_selections)
+            },
+            "calculation_timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error calculating feed inventory recommendations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to calculate feed recommendations: {str(e)}")
+
+async def check_same_species_with_sex_consideration(fish_name: str, fish_data: Dict) -> Tuple[str, List[str], List[str]]:
+    """AI-powered same-species compatibility check returning compatibility level, reasons, and conditions"""
+    try:
+        # Get fish attributes from database
+        fish_data_db = await get_fish_attributes(fish_name)
+        temperament = fish_data_db.get('temperament', 'unknown').lower() if fish_data_db else 'unknown'
+        social_behavior = fish_data_db.get('social_behavior', 'unknown').lower() if fish_data_db else 'unknown'
+        size = fish_data_db.get('max_size_(cm)', 0) if fish_data_db else 0
+        
+        # Extract sex information from fish_data parameter
+        sex_data = fish_data.get('sex_data', {}) if isinstance(fish_data, dict) else {}
+        male_count = sex_data.get('male', 0)
+        female_count = sex_data.get('female', 0)
+        total_quantity = fish_data.get('quantity', male_count + female_count) if isinstance(fish_data, dict) else 1
+        
+        # Create detailed prompt for AI analysis
+        prompt = f"""
+        Analyze feeding requirements for the following aquarium fish:
+        
+        Fish in tank:
+        {fish_list}
+        
+        Provide specific feeding recommendations including:
+        1. Daily feeding schedule (times per day)
+        2. Food types for each fish
+        3. Portion sizes (be VERY specific with units - use "2-3 pellets", "1 small pinch of flakes", "1/4 teaspoon of bloodworms", "5-6 pieces of brine shrimp", "1 small scoop", etc.)
+        4. Weekly feeding routine
+        5. Special dietary considerations
+        
+        CRITICAL: For portion sizes, always include specific units:
+        - Pellets: "2-3 pellets", "4-5 pellets"
+        - Flakes: "1 small pinch", "1 medium pinch"
+        - Frozen foods: "2-3 pieces", "1/4 teaspoon"
+        - Live foods: "5-6 pieces", "1 small portion"
+        - Wafers: "1/2 wafer", "1 small wafer"
+        
+        Format response as JSON with:
+        - feeding_schedule: daily schedule
+        - food_recommendations: specific foods per fish
+        - portion_sizes: exact portions per fish per feeding (with specific units)
+        - weekly_routine: 7-day feeding plan
+        - special_notes: any important feeding tips
+        
+        Never use vague terms like "appropriate amount" or "small amount" - always specify units.
+        Response format:
+        - Classification: [FULLY_COMPATIBLE/CONDITIONAL/INCOMPATIBLE]
+        - Brief explanation covering both general keeping and breeding
+        - If CONDITIONAL, specify conditions for both scenarios
+        
+        Focus on: permanent housing vs breeding pairs, male-male aggression, territorial behavior, breeding compatibility.
+        
+        SPECIAL CONSIDERATIONS FOR SEX RATIOS:
+        - For Bettas: Males are extremely aggressive to each other, females can form sororities with 5+ individuals
+        - For Gouramis: Similar to Bettas, males are territorial, breeding pairs possible
+        - For Cichlids: Consider breeding pairs vs community keeping
+        - Multiple males of territorial species usually incompatible
+        
+        IMPORTANT: Include sex ratio information in your response reasons and conditions.
+        """
+        
+        # Use OpenAI for accurate analysis
+        try:
+            import openai
+            import os
+            
+            api_key = os.getenv('OPENAI_API_KEY')
+            if not api_key:
+                logger.info("No OpenAI API key found, using fallback analysis")
+                client = None
+            else:
+                client = openai.OpenAI(api_key=api_key)
+                logger.info("OpenAI client initialized successfully")
+        except ImportError:
+            logger.warning("OpenAI package not installed, using fallback analysis")
+            client = None
+        
+        if client:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an expert aquarium specialist. Respond with clear classification and practical advice."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=250,
+                temperature=0.3
+            )
+            
+            ai_analysis = response.choices[0].message.content.strip()
+            
+            # Parse AI response to determine compatibility level
+            if "FULLY_COMPATIBLE" in ai_analysis.upper():
+                return "compatible", [ai_analysis], []
+            elif "CONDITIONAL" in ai_analysis.upper():
+                # Extract sex ratio and condition information
+                conditions = []
+                sex_ratio_keywords = ["male", "female", "ratio", "1:", "2:", "3:", "males", "females"]
+                condition_keywords = ["gallon", "tank", "plant", "hide", "cave", "territory", "monitor", "separate"]
+                
+                lines = ai_analysis.split('.')
+                for line in lines:
+                    line_lower = line.lower()
+                    # Prioritize sex ratio conditions
+                    if any(keyword in line_lower for keyword in sex_ratio_keywords):
+                        conditions.append(line.strip())
+                    elif any(keyword in line_lower for keyword in condition_keywords):
+                        conditions.append(line.strip())
+                
+                if not conditions:
+                    conditions = ["Consider sex ratios and territorial requirements"]
+                
+                return "conditional", [ai_analysis], conditions
+            elif "INCOMPATIBLE" in ai_analysis.upper():
+                return "incompatible", [ai_analysis], []
+            else:
+                # Enhanced analysis based on sex-related content
+                sex_indicators = ["male", "female", "ratio", "territorial", "aggressive", "harassment"]
+                conditional_indicators = ["condition", "careful", "monitor", "provide", "separate", "territory"]
+                incompatible_indicators = ["cannot", "never", "impossible", "fight", "one per tank"]
+                
+                if any(indicator in ai_analysis.lower() for indicator in incompatible_indicators):
+                    return "incompatible", [ai_analysis], []
+                elif any(indicator in ai_analysis.lower() for indicator in sex_indicators + conditional_indicators):
+                    return "conditional", [ai_analysis], ["Consider sex ratios and species-specific requirements"]
+                else:
+                    return "compatible", [ai_analysis], []
+                
+        else:
+            # Fallback to species-specific analysis if AI is unavailable
+            return await _fallback_same_species_analysis(fish_name, fish_data)
+            
+    except Exception as e:
+        logger.error(f"Error in AI-powered same-species check: {e}")
+        # Fallback to species-specific analysis
+        return await _fallback_same_species_analysis(fish_name, fish_data)
+
+async def _fallback_same_species_analysis(fish_name: str, fish_data: Dict) -> Tuple[str, List[str], List[str]]:
+    """AI-powered fallback analysis using a simple local LLM approach"""
+    
+    # Get fish attributes for context
+    temperament = fish_data.get('temperament', 'Unknown')
+    social_behavior = fish_data.get('social_behavior', 'Unknown')
+    size = fish_data.get('size', 'Unknown')
+    
+    # Create a comprehensive analysis prompt
+    analysis_prompt = f"""
+    Analyze same-species compatibility for {fish_name}:
+    
+    Fish Details:
+    - Species: {fish_name}
+    - Temperament: {temperament}
+    - Social Behavior: {social_behavior}
+    - Size: {size}
+    
+    Determine if multiple individuals can be kept together and classify as:
+    1. COMPATIBLE: Can be kept together without special conditions
+    2. CONDITIONAL: Can be kept together with specific requirements
+    3. INCOMPATIBLE: Cannot be safely kept together
+    
+    Consider species-specific behavior patterns, territorial nature, breeding behavior, and social dynamics.
+    """
+    
+    # Use a knowledge-based approach for common species
+    fish_name_lower = fish_name.lower()
+    
+    # Betta-specific analysis
+    if any(keyword in fish_name_lower for keyword in ['betta', 'fighting fish']):
+        # Check sex ratios for Bettas
+        if male_count > 1:
+            return "incompatible", [
+                f"Multiple male Bettas ({male_count} males) cannot be housed together - extreme aggression will result in injury or death. Sex ratio: {male_count}M:{female_count}F"
+            ], []
+        elif male_count == 1 and female_count == 0:
+            return "fully_compatible", [
+                f"Single male Betta - ideal housing situation for permanent keeping. Sex ratio: 1M:0F"
+            ], []
+        elif male_count == 0 and female_count >= 5:
+            return "conditional", [
+                f"Female Betta sorority ({female_count} females) can work with proper setup and monitoring. Sex ratio: 0M:{female_count}F"
+            ], [
+                "Minimum 20+ gallon tank required",
+                "Provide multiple hiding spots and territories",
+                "Monitor for aggression and separate if needed",
+                "Odd numbers (5, 7, 9) work better than even"
+            ]
+        elif male_count == 1 and female_count >= 1:
+            return "conditional", [
+                f"Male-female Betta pairing ({male_count} male, {female_count} female) possible for breeding purposes only. Sex ratio: {male_count}M:{female_count}F"
+            ], [
+                "Breeding setup only - temporary pairing",
+                "Separate after spawning",
+                "Conditioned breeding tank with bubble nest area",
+                "Remove female after egg laying to prevent aggression"
+            ]
+        else:
+            return "conditional", [
+                f"Betta housing requires careful sex ratio consideration. Current ratio: {male_count}M:{female_count}F"
+            ], [
+                "Solo male: Best option for permanent housing",
+                "Female sorority: 5+ females in 20+ gallon tank",
+                "Never house multiple males together"
+            ]
+    
+    # Gourami analysis
+    elif 'gourami' in fish_name_lower:
+        return "conditional", [
+            f"Gouramis: Males are territorial. Permanent housing needs 1 male with 2-3 females in 30+ gallons. For breeding: pair conditioning, bubble nest building, separate after spawning."
+        ], [
+            "Permanent: 1 male to 2-3 females ratio, 30+ gallons",
+            "Breeding: Condition pair separately, then introduce for spawning",
+            "Add plants for territories and nest sites",
+            "Remove female after spawning to prevent aggression"
+        ]
+    
+    # Cichlid analysis
+    elif 'cichlid' in fish_name_lower:
+        if any(aggressive in fish_name_lower for aggressive in ['flowerhorn', 'jaguar', 'wolf', 'red devil']):
+            return "conditional", [
+                f"{fish_name} are extremely aggressive for permanent housing but can be bred with careful conditioning and temporary pairing."
+            ], [
+                "Breeding only: Condition pair separately for weeks",
+                "Temporary pairing in large breeding tank (75+ gallons)",
+                "Remove weaker fish immediately if aggression occurs",
+                "Never house multiple together permanently"
+            ]
+        else:
+            return "conditional", [
+                f"Cichlids: Territorial but can form pairs. Permanent housing needs established pairs or proper ratios. Breeding requires pair bonding and territory setup."
+            ], [
+                "Permanent: Established pairs or 1 male to 2-3 females",
+                "Breeding: Allow natural pair formation, provide caves",
+                "40+ gallon tank minimum, more for breeding",
+                "Monitor for pair bonding vs aggression"
+            ]
+    
+    # Livebearer analysis
+    elif any(keyword in fish_name_lower for keyword in ['guppy', 'molly', 'platy', 'swordtail']):
+        return "conditional", [
+            f"{fish_name} are peaceful community fish. Males chase females constantly. For breeding: natural spawning occurs readily with proper ratios."
+        ], [
+            "Permanent: 1 male to 2-3 females ratio minimum",
+            "Breeding: Same ratios, provide dense plants for fry hiding",
+            "Add plants for female hiding spots",
+            "Separate pregnant females if breeding intentionally"
+        ]
+    
+    # Schooling fish analysis
+    elif any(keyword in fish_name_lower for keyword in ['tetra', 'rasbora', 'danio', 'barb', 'corydoras']) or 'school' in str(social_behavior).lower():
+        return "compatible", [
+            f"{fish_name} are schooling fish. Keep in groups of 6+ for best behavior."
+        ], []
+    
+    # Temperament-based analysis
+    elif str(temperament).lower() in ['aggressive', 'territorial']:
+        return "conditional", [
+            f"{fish_name} show territorial behavior. Success depends on tank setup."
+        ], [
+            "Adequate tank size required",
+            "Consider sex ratios",
+            "Add territorial boundaries",
+            "Monitor for aggression"
+        ]
+    
+    elif str(temperament).lower() in ['peaceful', 'community']:
+        return "compatible", [
+            f"{fish_name} are peaceful and can be kept together."
+        ], []
+    
+    # Default analysis
+    else:
+        return "conditional", [
+            f"{fish_name} compatibility depends on specific conditions."
+        ], [
+            "Provide adequate space",
+            "Monitor behavior",
+            "Separate if needed"
+        ]
+
 class CompatibilityRequest(BaseModel):
-    fish_names: List[str]
+    fish_names: List[str] = []
+    fish_selections: Dict[str, int] = {}
+    fish_sex_data: Dict[str, Any] = {}
+    tank_volume: Optional[float] = None
+    tank_shape: Optional[str] = None
 
 class CompatibilityAnalysisRequest(BaseModel):
     fish1_name: str
     fish2_name: str
 
-@app.post("/check_compatibility")
-async def check_fish_compatibility(
+@app.post("/check_compatibility_legacy")
+async def check_fish_compatibility_legacy(
     request: CompatibilityRequest,
     db: Client = Depends(get_supabase_client)
 ):
-    """Check compatibility between multiple fish species"""
+    """Legacy compatibility check between multiple fish species"""
+    # Cache for fish data and images to avoid redundant DB calls
+    fish_data_cache = {}
+    fish_image_cache = {}
+    
+    async def fetch_fish_data(fish_name: str):
+        if fish_name in fish_data_cache:
+            return fish_data_cache[fish_name]
+        
+        response = db.table('fish_species').select('*').ilike('common_name', fish_name).execute()
+        fish_data = response.data[0] if response.data else None
+        fish_data_cache[fish_name] = fish_data
+        return fish_data
+
+    async def fetch_fish_image_base64(fish_name: str) -> str:
+        """Fetch fish image from local dataset and convert to base64"""
+        if fish_name in fish_image_cache:
+            return fish_image_cache[fish_name]
+        
+        try:
+            import base64
+            import random
+            from pathlib import Path
+            
+            # Find the fish folder using the utility function
+            fish_folder = find_fish_folder(fish_name)
+            
+            if not fish_folder:
+                logger.warning(f"No local images found for fish: {fish_name}")
+                return None
+
+            # Get list of image files in the folder
+            folder_path = Path(fish_folder)
+            image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+            
+            image_files = []
+            for file_path in folder_path.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+                    image_files.append(file_path)
+            
+            if not image_files:
+                logger.warning(f"No image files found in folder for fish: {fish_name}")
+                return None
+
+            # Select a random image
+            selected_image = random.choice(image_files)
+            
+            # Read the image file and convert to base64
+            with open(selected_image, 'rb') as img_file:
+                img_data = img_file.read()
+                img_base64 = base64.b64encode(img_data).decode('utf-8')
+                
+                # Determine MIME type based on file extension
+                mime_type = f"image/{selected_image.suffix.lower().lstrip('.')}"
+                if mime_type == "image/jpg":
+                    mime_type = "image/jpeg"
+                
+                # Return base64 data URL
+                result = f"data:{mime_type};base64,{img_base64}"
+                fish_image_cache[fish_name] = result
+                return result
+                
+        except Exception as e:
+            logger.warning(f"Error fetching local image for {fish_name}: {e}")
+            return None
+
     try:
         fish_names = request.fish_names
         
         if len(fish_names) < 2:
             return {"compatible": True, "reason": "Single fish species"}
         
-        # Get fish data from database
+        # Pre-fetch all unique fish data and images to reduce DB calls
+        unique_fish_names = list(set(fish_names))
         fish_data = {}
-        for fish_name in fish_names:
-            response = db.table('fish_species').select('*').ilike('common_name', fish_name).execute()
-            if response.data:
-                fish_data[fish_name] = response.data[0]
+        for fish_name in unique_fish_names:
+            data = await fetch_fish_data(fish_name)
+            if data:
+                fish_data[fish_name] = data
+                await fetch_fish_image_base64(fish_name)
             else:
                 return {
                     "compatible": False, 
                     "reason": f"Fish '{fish_name}' not found in database"
                 }
         
-        # Check pairwise compatibility using the new conditional system
-        fish_list = list(fish_data.values())
+        # Create all pairwise combinations from the original fish names list
+        from itertools import combinations
+        pairwise_combinations = list(combinations(fish_names, 2))
+        
         incompatible_pairs = []
         conditional_pairs = []
-        
-        for i in range(len(fish_list)):
-            for j in range(i + 1, len(fish_list)):
-                fish1, fish2 = fish_list[i], fish_list[j]
+        compatible_pairs = []
+
+        for fish1_name, fish2_name in pairwise_combinations:
+            fish1 = fish_data[fish1_name]
+            fish2 = fish_data[fish2_name]
+
+            if fish1['common_name'].lower() == fish2['common_name'].lower():
+                # Check if same species can coexist with sex consideration
+                compatibility_level, reasons, conditions = await check_same_species_with_sex_consideration(fish1['common_name'], fish1)
                 
-                # Check if same species can coexist
-                if fish1['common_name'].lower() == fish2['common_name'].lower():
-                    can_coexist, reason = check_same_species_enhanced(fish1['common_name'], fish1)
-                    if not can_coexist:
-                        incompatible_pairs.append({
-                            "pair": [fish1['common_name'], fish2['common_name']],
-                            "reason": reason,
-                            "compatibility_level": "incompatible"
-                        })
+                if compatibility_level == "incompatible":
+                    incompatible_pairs.append({
+                        "pair": [fish1['common_name'], fish2['common_name']],
+                        "reason": '; '.join(reasons) if reasons else "Cannot be kept together",
+                        "compatibility_level": "incompatible"
+                    })
+                elif compatibility_level == "conditional":
+                    conditional_pairs.append({
+                        "pair": [fish1['common_name'], fish2['common_name']],
+                        "reasons": reasons if reasons else ["Compatible with specific conditions"],
+                        "conditions": conditions if conditions else ["Follow species-specific requirements"],
+                        "compatibility_level": "conditional"
+                    })
+                else:  # compatible
+                    compatible_pairs.append({
+                        "pair": [fish1['common_name'], fish2['common_name']],
+                        "reasons": reasons if reasons else ["Can be kept together"],
+                        "compatibility_level": "compatible"
+                    })
+            else:
+                # Use enhanced compatibility check system
+                compatibility_level, reasons, conditions = check_enhanced_fish_compatibility(fish1, fish2)
+                if compatibility_level == "incompatible":
+                    incompatible_pairs.append({
+                        "pair": [fish1['common_name'], fish2['common_name']],
+                        "reason": '; '.join(reasons) if reasons else "Not compatible based on comprehensive analysis",
+                        "compatibility_level": compatibility_level
+                    })
+                elif compatibility_level == "conditional":
+                    conditional_pairs.append({
+                        "pair": [fish1['common_name'], fish2['common_name']],
+                        "reasons": reasons if reasons else ["May be compatible under specific conditions"],
+                        "conditions": conditions,
+                        "compatibility_level": compatibility_level
+                    })
                 else:
-                    # Use enhanced compatibility check system
-                    compatibility_level, reasons, conditions = check_enhanced_fish_compatibility(fish1, fish2)
-                    if compatibility_level == "incompatible":
-                        incompatible_pairs.append({
-                            "pair": [fish1['common_name'], fish2['common_name']],
-                            "reason": '; '.join(reasons) if reasons else "Not compatible based on comprehensive analysis",
-                            "compatibility_level": compatibility_level
-                        })
-                    elif compatibility_level == "conditional":
-                        conditional_pairs.append({
-                            "pair": [fish1['common_name'], fish2['common_name']],
-                            "reasons": reasons if reasons else ["May be compatible under specific conditions"],
-                            "conditions": conditions,
-                            "compatibility_level": compatibility_level
-                        })
+                    compatible_pairs.append({
+                        "pair": [fish1['common_name'], fish2['common_name']],
+                        "reasons": reasons if reasons else ["Generally compatible"],
+                        "compatibility_level": compatibility_level
+                    })
+        
+        # Get fish images for the first two fish
+        fish1_image = fish_image_cache.get(fish_names[0])
+        fish2_image = fish_image_cache.get(fish_names[1])
         
         if incompatible_pairs:
             return {
                 "compatible": False, 
                 "reason": f"Incompatible pairs found: {incompatible_pairs[0]['reason']}",
-                "incompatible_pairs": incompatible_pairs
+                "incompatible_pairs": incompatible_pairs,
+                "fish1_image": fish1_image,
+                "fish2_image": fish2_image
             }
         elif conditional_pairs:
             return {
                 "compatible": True,
                 "conditional": True,
                 "reason": "All fish are compatible with conditions",
-                "conditional_pairs": conditional_pairs
+                "conditional_pairs": conditional_pairs,
+                "fish1_image": fish1_image,
+                "fish2_image": fish2_image
             }
         else:
-            return {"compatible": True, "reason": "All fish are fully compatible"}
+            # Return detailed reasons for compatible pairs
+            detailed_reason = "Both species can be kept together in the same aquarium"
+            if compatible_pairs and compatible_pairs[0].get('reasons'):
+                detailed_reason = compatible_pairs[0]['reasons'][0]
+            
+            
+            return {
+                "compatible": True, 
+                "reason": detailed_reason,
+                "compatible_pairs": compatible_pairs,
+                "fish1_image": fish1_image,
+                "fish2_image": fish2_image
+            }
         
     except Exception as e:
         logger.error(f"Error checking compatibility: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to check compatibility: {str(e)}")
+
+@app.post("/check_compatibility")
+async def check_compatibility(request: CompatibilityRequest):
+    """Check compatibility between selected fish species with sex consideration"""
+    try:
+        # Handle both old and new request formats
+        fish_selections = request.fish_selections if request.fish_selections else {name: 1 for name in request.fish_names}
+        fish_sex_data = request.fish_sex_data
+        
+        if not fish_selections:
+            raise HTTPException(status_code=400, detail="No fish selections provided")
+        
+        print(f"Checking compatibility for: {fish_selections}")
+        if fish_sex_data:
+            print(f"Sex data provided: {fish_sex_data}")
+        if request.tank_volume:
+            print(f"Tank volume provided: {request.tank_volume}L")
+        if request.tank_shape:
+            print(f"Tank shape provided: {request.tank_shape}")
+        
+        # Get all unique fish combinations
+        fish_names = list(fish_selections.keys())
+        compatibility_results = {}
+        
+        # Check tank volume and shape compatibility for each fish
+        if request.tank_volume is not None:
+            db = get_supabase_client()
+            tank_volume_issues = []
+            
+            for fish_name in fish_names:
+                try:
+                    # Get fish data
+                    fish_response = db.table('fish_species').select('*').ilike('common_name', fish_name).execute()
+                    if fish_response.data:
+                        fish_data = fish_response.data[0]
+                        
+                        # Check minimum tank size requirement
+                        min_tank_size = None
+                        for key in ['minimum_tank_size_l', 'minimum_tank_size_(l)', 'minimum_tank_size']:
+                            val = fish_data.get(key)
+                            if val is not None:
+                                try:
+                                    min_tank_size = float(val)
+                                    break
+                                except (ValueError, TypeError):
+                                    continue
+                        
+                        if min_tank_size is not None and min_tank_size > 0:
+                            if request.tank_volume < min_tank_size:
+                                tank_volume_issues.append({
+                                    "fish": fish_name,
+                                    "required_size": min_tank_size,
+                                    "provided_size": request.tank_volume,
+                                    "reason": f"Tank volume {request.tank_volume}L is below minimum required size of {min_tank_size}L for {fish_name}"
+                                })
+                        
+                        # Check tank shape compatibility
+                        if request.tank_shape == 'bowl':
+                            max_size = fish_data.get('max_size_(cm)')
+                            if max_size is not None:
+                                try:
+                                    max_size_float = float(max_size)
+                                    # Large fish (>10cm) are generally not suitable for bowls
+                                    if max_size_float > 10:
+                                        tank_volume_issues.append({
+                                            "fish": fish_name,
+                                            "max_size": max_size_float,
+                                            "tank_shape": request.tank_shape,
+                                            "reason": f"{fish_name} grows to {max_size_float}cm and is too large for a bowl tank"
+                                        })
+                                except (ValueError, TypeError):
+                                    pass
+                
+                except Exception as e:
+                    print(f"Error checking tank compatibility for {fish_name}: {e}")
+            
+            # If there are tank volume/shape issues, return them as incompatible
+            if tank_volume_issues:
+                return {
+                    "overall_compatibility": "incompatible",
+                    "summary_reasons": [issue["reason"] for issue in tank_volume_issues],
+                    "summary_conditions": [],
+                    "results": [{
+                        "pair": [issue["fish"], issue["fish"]],
+                        "compatibility": "Not Compatible",
+                        "reasons": [issue["reason"]]
+                    } for issue in tank_volume_issues],
+                    "detailed_results": {}
+                }
+        
+        # Check each pair of fish
+        for i, fish1 in enumerate(fish_names):
+            for j, fish2 in enumerate(fish_names):
+                if i < j:  # Avoid duplicate pairs
+                    pair_key = f"{fish1}_{fish2}"
+                    print(f"Checking compatibility: {fish1} <-> {fish2}")
+                    
+                    try:
+                        # Get fish data from database first
+                        db = get_supabase_client()
+                        fish1_response = db.table('fish_species').select('*').ilike('common_name', fish1).execute()
+                        fish2_response = db.table('fish_species').select('*').ilike('common_name', fish2).execute()
+                        
+                        if fish1_response.data and fish2_response.data:
+                            fish1_data = fish1_response.data[0]
+                            fish2_data = fish2_response.data[0]
+                            
+                            # Debug logging
+                            print(f"Fish1 data keys: {list(fish1_data.keys())}")
+                            print(f"Fish2 data keys: {list(fish2_data.keys())}")
+                            print(f"Fish1 temperament: {fish1_data.get('temperament')}")
+                            print(f"Fish2 temperament: {fish2_data.get('temperament')}")
+                            print(f"Fish1 water_type: {fish1_data.get('water_type')}")
+                            print(f"Fish2 water_type: {fish2_data.get('water_type')}")
+                            
+                            # Check if it's the same species
+                            print(f"🔍 Comparing: '{fish1.lower().strip()}' == '{fish2.lower().strip()}'")
+                            if fish1.lower().strip() == fish2.lower().strip():
+                                print("🎯 SAME SPECIES DETECTED - Using conditional compatibility system")
+                                # Use the updated conditional compatibility system for same-species
+                                classification, reasons, conditions = check_conditional_compatibility(fish1_data, fish1_data)
+                                print(f"Same-species compatibility result: {classification}")
+                                print(f"Same-species reasons: {reasons}")
+                            else:
+                                print("🎯 DIFFERENT SPECIES - Using enhanced compatibility system")
+                                # Use the enhanced compatibility system for different species
+                                classification, reasons, conditions = check_enhanced_fish_compatibility(fish1_data, fish2_data)
+                                print(f"Different-species compatibility result: {classification}")
+                            
+                            print(f"Reasons: {reasons}")
+                            print(f"Conditions: {conditions}")
+                        else:
+                            classification, reasons, conditions = "incompatible", ["Fish data not found"], []
+                        
+                        compatibility_results[pair_key] = {
+                            "fish1": fish1,
+                            "fish2": fish2,
+                            "compatibility": classification,
+                            "reasons": reasons,
+                            "conditions": conditions
+                        }
+                        
+                    except Exception as e:
+                        print(f"Error checking {fish1} <-> {fish2}: {e}")
+                        compatibility_results[pair_key] = {
+                            "fish1": fish1,
+                            "fish2": fish2,
+                            "compatibility": "unknown",
+                            "reasons": [f"Error checking compatibility: {str(e)}"],
+                            "conditions": []
+                        }
+        
+        # Determine overall compatibility
+        overall_status = "compatible"
+        all_reasons = []
+        all_conditions = []
+        
+        for result in compatibility_results.values():
+            if result["compatibility"] == "incompatible":
+                overall_status = "incompatible"
+            elif result["compatibility"] == "conditional" and overall_status != "incompatible":
+                overall_status = "conditional"
+            
+            all_reasons.extend(result["reasons"])
+            all_conditions.extend(result["conditions"])
+        
+        # Format response to match what sync.dart expects
+        incompatible_pairs = []
+        conditional_pairs = []
+        compatible_pairs = []
+        
+        for result in compatibility_results.values():
+            pair_info = {
+                "pair": [result["fish1"], result["fish2"]],
+                "reasons": result["reasons"],
+                "compatibility_level": result["compatibility"]
+            }
+            
+            if result["conditions"]:
+                pair_info["conditions"] = result["conditions"]
+            
+            if result["compatibility"] == "incompatible":
+                incompatible_pairs.append(pair_info)
+            elif result["compatibility"] == "conditional":
+                conditional_pairs.append(pair_info)
+            else:
+                compatible_pairs.append(pair_info)
+        
+        # Get fish images for the first two fish
+        fish1_image = None
+        fish2_image = None
+        if len(fish_names) >= 2:
+            try:
+                # Try to get images from the fish-image endpoint
+                fish1_image_response = requests.get(f"{ApiConfig.baseUrl}/fish-image-base64/{fish_names[0]}")
+                if fish1_image_response.status_code == 200:
+                    fish1_image = fish1_image_response.json().get('image_base64')
+                
+                fish2_image_response = requests.get(f"{ApiConfig.baseUrl}/fish-image-base64/{fish_names[1]}")
+                if fish2_image_response.status_code == 200:
+                    fish2_image = fish2_image_response.json().get('image_base64')
+            except Exception as e:
+                print(f"Error getting fish images: {e}")
+        
+        return {
+            "compatible": overall_status == "compatible",
+            "reason": "; ".join(all_reasons) if all_reasons else "Compatibility assessment completed",
+            "incompatible_pairs": incompatible_pairs,
+            "conditional_pairs": conditional_pairs,
+            "compatible_pairs": compatible_pairs,
+            "fish1_image": fish1_image,
+            "fish2_image": fish2_image
+        }
+        
+    except Exception as e:
+        print(f"Error in check_compatibility: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to check compatibility: {str(e)}")
 
 @app.post("/tankmate-recommendations")
@@ -2517,3 +3605,5 @@ async def get_fish_images_grid(
     except Exception as e:
         logger.error(f"Error fetching fish images grid from local dataset: {e}")
         raise HTTPException(status_code=500, detail="Error fetching fish images grid")
+
+

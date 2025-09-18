@@ -15,6 +15,7 @@ class FishCalculation {
   final String? filtrationResponse;
   final String? dietCareResponse;
   final List<String>? tankmateRecommendations;
+  final Map<String, dynamic>? feedingInformation;
 
   FishCalculation({
     this.id,
@@ -32,6 +33,7 @@ class FishCalculation {
     this.filtrationResponse,
     this.dietCareResponse,
     this.tankmateRecommendations,
+    this.feedingInformation,
   });
 
   Map<String, dynamic> toJson() {
@@ -51,6 +53,7 @@ class FishCalculation {
       'filtration_response': filtrationResponse,
       'diet_care_response': dietCareResponse,
       'tankmate_recommendations': tankmateRecommendations,
+      'feeding_information': feedingInformation,
     };
   }
 
@@ -72,6 +75,9 @@ class FishCalculation {
       dietCareResponse: json['diet_care_response'],
       tankmateRecommendations: json['tankmate_recommendations'] != null 
           ? List<String>.from(json['tankmate_recommendations']) 
+          : null,
+      feedingInformation: json['feeding_information'] != null 
+          ? Map<String, dynamic>.from(json['feeding_information']) 
           : null,
     );
   }

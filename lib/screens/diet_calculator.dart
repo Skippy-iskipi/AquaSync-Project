@@ -6,35 +6,17 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import '../screens/logbook_provider.dart';
-import '../services/openai_service.dart'; // OpenAI AI service
+import '../services/fish_species_service.dart'; // Fish species database service
 import '../models/diet_calculation.dart';
 import 'dart:async';
 import '../widgets/expandable_reason.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:lottie/lottie.dart';
 import '../widgets/auth_required_dialog.dart';
+import '../widgets/fish_info_dialog.dart';
+import '../widgets/fish_selection_widget.dart';
+import '../widgets/beginner_guide_dialog.dart';
 
-class DietFishCard {
-  final TextEditingController fishController;
-  final TextEditingController quantityController;
-  final FocusNode fishFocusNode;
-  final FocusNode quantityFocusNode;
-  final int id;
-
-  DietFishCard({
-    required this.id,
-  }) : fishController = TextEditingController(),
-       quantityController = TextEditingController(),
-       fishFocusNode = FocusNode(),
-       quantityFocusNode = FocusNode();
-
-  void dispose() {
-    fishController.dispose();
-    quantityController.dispose();
-    fishFocusNode.dispose();
-    quantityFocusNode.dispose();
-  }
-}
 
 
 class DietCalculator extends StatefulWidget {
@@ -45,67 +27,117 @@ class DietCalculator extends StatefulWidget {
 }
 
 class _DietCalculatorState extends State<DietCalculator> with SingleTickerProviderStateMixin {
-  List<DietFishCard> _fishCards = [];
   final Map<String, int> _fishSelections = {};
-  List<String> _availableFish = [];
+  List<Map<String, dynamic>> _availableFish = [];
   bool _isLoading = false;
   bool _isCalculating = false; // only for diet calculation overlay
   Map<String, dynamic>? _calculationResult;
-  bool _hasCompatibilityIssue = false;
   String _compatibilityReason = '';
   List<Map<String, dynamic>>? _incompatiblePairs;
-  bool _isSaving = false; // disable save button while saving
+  bool _showPerFishBreakdown = false;
+  bool _showFeedingTips = false;
+  bool _showFoodTypes = false;
   late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _addFishCard(); // Add initial card
     _loadFishData();
   }
 
   @override
   void dispose() {
-    for (var card in _fishCards) {
-      card.dispose();
-    }
     _tabController.dispose();
     super.dispose();
   }
 
-  void _addFishCard() {
+  void _onFishSelectionChanged(Map<String, int> newSelections) {
     setState(() {
-      _fishCards.add(DietFishCard(id: _fishCards.length));
+      _fishSelections.clear();
+      _fishSelections.addAll(newSelections);
     });
   }
 
-  void _removeFishCard(int id) {
-    setState(() {
-      // Find the card index
-      final index = _fishCards.indexWhere((card) => card.id == id);
-      if (index != -1) {
-        // Get the fish name before removing
-        final fishName = _fishCards[index].fishController.text;
-        
-        // Remove from selections if it exists
-        if (fishName.isNotEmpty) {
-          _fishSelections.remove(fishName);
-        }
 
-        // Dispose and remove the card
-        _fishCards[index].dispose();
-        _fishCards.removeAt(index);
+  // Real-time compatibility check method
+  Future<Map<String, dynamic>> _getRealTimeCompatibilityResults() async {
+    try {
+      final fishNames = _fishSelections.keys.toList();
+      if (fishNames.length < 2) {
+        return {'incompatible_pairs': [], 'conditional_pairs': []};
       }
-    });
-  }
 
-  void _addFish(String fishName, int index) {
-    if (fishName.isEmpty) return;
-    setState(() {
-      _fishSelections[fishName] = (_fishSelections[fishName] ?? 0) + 1;
-      print("Added fish: $fishName, count: ${_fishSelections[fishName]}");
-    });
+      // Expand fish names by quantity for accurate compatibility checking
+      final expandedFishNames = _fishSelections.entries
+          .expand((e) => List.filled(e.value, e.key))
+          .toList();
+      
+      final response = await http.post(
+        Uri.parse(ApiConfig.checkGroupEndpoint),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: json.encode({'fish_names': expandedFishNames}),
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode != 200) {
+        return {'incompatible_pairs': [], 'conditional_pairs': []};
+      }
+
+      final data = json.decode(response.body);
+      final results = data['results'] as List? ?? [];
+      
+      final List<Map<String, dynamic>> incompatiblePairs = [];
+      final List<Map<String, dynamic>> conditionalPairs = [];
+      final Set<String> seenPairs = {};
+      
+      for (var result in results) {
+        final compatibility = result['compatibility'];
+        
+        if (compatibility == 'Not Compatible' || compatibility == 'Conditional' || compatibility == 'Conditionally Compatible') {
+          final pair = List<String>.from(result['pair'].map((e) => e.toString()));
+          if (pair.length == 2) {
+            final a = pair[0].toLowerCase();
+            final b = pair[1].toLowerCase();
+            final key = ([a, b]..sort()).join('|');
+            if (!seenPairs.contains(key)) {
+              seenPairs.add(key);
+              
+              if (compatibility == 'Not Compatible') {
+                incompatiblePairs.add({
+                  'pair': result['pair'],
+                  'reasons': result['reasons'],
+                  'type': 'incompatible',
+                });
+              } else if (compatibility == 'Conditional' || compatibility == 'Conditionally Compatible') {
+                conditionalPairs.add({
+                  'pair': result['pair'],
+                  'reasons': result['reasons'],
+                  'type': 'conditional',
+                });
+              }
+            }
+          }
+        }
+      }
+
+      return {
+        'has_incompatible_pairs': incompatiblePairs.isNotEmpty,
+        'has_conditional_pairs': conditionalPairs.isNotEmpty,
+        'incompatible_pairs': incompatiblePairs,
+        'conditional_pairs': conditionalPairs,
+      };
+    } catch (e) {
+      print('Error getting real-time compatibility results: $e');
+      return {
+        'has_incompatible_pairs': false,
+        'has_conditional_pairs': false,
+        'incompatible_pairs': [],
+        'conditional_pairs': [],
+      };
+    }
   }
 
   Future<void> _loadFishData() async {
@@ -125,10 +157,9 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
       if (response.statusCode == 200) {
         final List<dynamic> fishList = json.decode(response.body);
         setState(() {
-          _availableFish = fishList
-              .map((fish) => fish['common_name'] as String)
-              .toList();
-          _availableFish.sort(); // Sort alphabetically
+          _availableFish = fishList.cast<Map<String, dynamic>>();
+          // Sort by common name
+          _availableFish.sort((a, b) => (a['common_name'] as String).compareTo(b['common_name'] as String));
         });
       } else {
         throw Exception('Failed to load fish list: ${response.statusCode}');
@@ -146,42 +177,25 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
 
   Future<void> _calculateDiet() async {
     // Validate inputs
-    Map<String, int> fishSelections = {};
-    
-    // Validate that each visible card has a fish name
-    for (final card in _fishCards) {
-      final fishName = card.fishController.text.trim();
-      if (fishName.isEmpty) {
-        _showNotification('Please fill in all fish names', isError: true);
-        return;
-      }
-    }
-    
-    // Build selections from current cards using shared quantities map
-    final Set<String> fishNamesOnCards = _fishCards
-        .map((card) => card.fishController.text.trim())
-        .where((name) => name.isNotEmpty)
-        .toSet();
-        
-    for (final name in fishNamesOnCards) {
-      final qty = _fishSelections[name] ?? 0;
-      if (qty <= 0) {
-        _showNotification('Please set a valid quantity for $name (greater than 0).', isError: true);
-        return;
-      }
-      fishSelections[name] = qty;
-    }
-    
-    if (fishSelections.isEmpty) {
+    if (_fishSelections.isEmpty) {
       _showNotification('Please add at least one fish.', isError: true);
-      return;
+        return;
     }
+    
+    // Validate quantities
+    for (final entry in _fishSelections.entries) {
+      if (entry.value <= 0) {
+        _showNotification('Please set a valid quantity for ${entry.key} (greater than 0).', isError: true);
+        return;
+      }
+    }
+    
+    final fishSelections = Map<String, int>.from(_fishSelections);
 
     setState(() {
       _isLoading = true; // still used to disable buttons
       _isCalculating = true; // drives the Lottie overlay
       _calculationResult = null;
-      _hasCompatibilityIssue = false;
       _compatibilityReason = '';
     });
 
@@ -200,11 +214,8 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
             if (pair.length == 2) {
               final reasons = (item['reasons'] as List).cast<String>();
               try {
-                final detailed = await OpenAIService.explainIncompatibilityReasons(
-                  pair[0].toString(),
-                  pair[1].toString(),
-                  reasons,
-                );
+                // Use base reasons directly from database
+                final detailed = reasons;
                 if (detailed.isNotEmpty) {
                   item['reasons'] = detailed;
                 }
@@ -220,7 +231,6 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
               'incompatibility_reasons': _compatibilityReason,
               'fish_selections': fishSelections,
             };
-            _hasCompatibilityIssue = true;
             _incompatiblePairs = incompatiblePairs;
             _isLoading = false;
             _isCalculating = false;
@@ -376,83 +386,88 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
   Future<void> _calculateDietPortions(Map<String, int> fishSelections) async {
     try {
       Map<String, dynamic> fishPortions = {};
-      final Map<String, Map<String, int>> tankTotalsByFoodType = {};
+      // tankTotalsByFoodType removed as it's no longer saved to database
       
-      // Generate AI-based diet recommendations for the entire tank
-      final dietRecommendations = await _generateAIDietRecommendations(fishSelections);
+      // Fetch fish species data from database
+      final fishData = await FishSpeciesService.getFishSpeciesByNames(fishSelections.keys.toList());
       
-      if (dietRecommendations.containsKey('error')) {
-        throw Exception('Failed to generate AI diet recommendations');
+      if (fishData.isEmpty) {
+        throw Exception('No fish data found in database');
       }
       
-      // Process AI-generated food types and portions
-      final aiFoodTypes = dietRecommendations['food_types'] as List<String>? ?? [];
-      final aiFeedingSchedule = dietRecommendations['feeding_schedule'] as Map<String, dynamic>? ?? {};
-      final aiFeedingNotes = dietRecommendations['feeding_notes'] as String? ?? '';
-      
-      // Generate portion data for each fish type using AI
+      // Process each fish species
       for (String fishName in fishSelections.keys) {
         final quantity = fishSelections[fishName]!;
+        final fishInfo = fishData[fishName];
         
-        // Get AI-generated portion recommendation for this specific fish
-        final fishPortionData = await _generateFishPortionRecommendation(fishName, quantity, aiFoodTypes);
-        
-        if (fishPortionData.containsKey('error')) {
-          throw Exception('Failed to get portion data for $fishName');
+        if (fishInfo == null) {
+          print('No data found for fish: $fishName');
+          continue;
         }
         
-        final portionSize = fishPortionData['portion_size'] as String;
-        final foodType = fishPortionData['food_type'] as String;
-        final (low, high) = _extractPortionRange(portionSize);
-        final fishLow = low * quantity;
-        final fishHigh = high * quantity;
+        // Get portion data from database
+        final portionGrams = FishSpeciesService.parsePortionGrams(fishInfo['portion_grams']);
+        final preferredFoods = FishSpeciesService.parsePreferredFood(fishInfo['preferred_food']);
+        
+        // Calculate total portion for this species
+        final totalPortionGrams = FishSpeciesService.calculateTotalPortion(portionGrams, quantity);
+        final portionDisplay = FishSpeciesService.formatPortionDisplay(totalPortionGrams);
+        
+        // Use the first preferred food as the primary food type
+        final primaryFoodType = preferredFoods.isNotEmpty ? preferredFoods.first : 'fish food';
         
         // Store fish-specific portion info
         fishPortions[fishName] = {
-          'per_fish': portionSize,
+          'portion_grams': FishSpeciesService.formatPortionDisplay(portionGrams),
           'quantity': quantity,
-          'total_low': fishLow,
-          'total_high': fishHigh,
-          'food_type': foodType,
+          'total_portion': FishSpeciesService.formatPortionDisplay(totalPortionGrams),
+          'per_fish': FishSpeciesService.formatPortionDisplay(portionGrams),
+          'total_grams': totalPortionGrams,
+          'total_display': portionDisplay,
+          'food_type': primaryFoodType,
+          'preferred_foods': preferredFoods,
         };
         
-        // Accumulate tank totals by food type
-        if (!tankTotalsByFoodType.containsKey(foodType)) {
-          tankTotalsByFoodType[foodType] = {'low': fishLow, 'high': fishHigh};
-        } else {
-          final current = tankTotalsByFoodType[foodType]!;
-          tankTotalsByFoodType[foodType] = {
-            'low': (current['low'] ?? 0) + fishLow, 
-            'high': (current['high'] ?? 0) + fishHigh
-          };
-        }
+        // Tank totals by food type accumulation removed as it's no longer saved to database
       }
       
-      // Build clear, user-friendly tank totals
-      final List<String> tankTotalStrings = tankTotalsByFoodType.entries.map((e) {
-        final foodType = e.key;
-        final range = e.value;
-        final low = range['low'] ?? 0;
-        final high = range['high'] ?? 0;
-        // If low and high are the same, show just one number to avoid "4-4 pellets"
-        final rangeStr = low == high ? '$low' : '$low–$high';
-        return '$rangeStr $foodType';
-      }).toList();
+      // Calculate total combined portion for all fish
+      double totalPortionGrams = 0.0;
+      
+      for (final fishData in fishPortions.values) {
+        totalPortionGrams += fishData['total_grams'] as double;
+      }
+      
+      // Format as simple portion display (e.g., "60.0g")
+      final totalDisplay = FishSpeciesService.formatPortionDisplay(totalPortionGrams);
+      
+      // Build single total string
+      final List<String> tankTotalStrings = [totalDisplay];
 
-      // Generate AI feeding tips
-      final aiFeedingTips = await _generateAIFeedingTips(fishSelections.keys.toList());
+      // Get feeding frequency display for multiple fish
+      final feedingFrequencyDisplay = _getFeedingFrequencyDisplay(fishData);
+
+      // Generate feeding notes from database data
+      final feedingNotes = FishSpeciesService.generateFeedingNotes(fishData);
+      
+      // Get all unique food types
+      final allFoodTypes = fishData.values
+          .expand((fish) => FishSpeciesService.parsePreferredFood(fish['preferred_food']))
+          .toSet()
+          .toList();
+      
       
       final result = {
         'fish_portions': fishPortions,
-        'tank_totals_by_food': tankTotalsByFoodType,
+        // tank_totals_by_food removed as it's no longer saved to database
         'tank_total_display': tankTotalStrings.join('; '),
-        'total_portion': tankTotalsByFoodType.values.fold<int>(0, (sum, range) => sum + (range['low'] ?? 0)),
+        'total_portion': totalPortionGrams,
         'total_portion_range': tankTotalStrings.join('; '),
-        'feedings_per_day': aiFeedingSchedule['frequency'] ?? 2,
-        'feeding_times': aiFeedingSchedule['times'] ?? 'Morning and evening',
-        'feeding_notes': aiFeedingNotes,
-        'feeding_tips': aiFeedingTips,
-        'ai_food_types': aiFoodTypes,
+        'feedings_per_day': feedingFrequencyDisplay,
+        'feeding_notes': feedingNotes,
+        'feeding_tips': feedingNotes, // Use same as feeding notes
+        'ai_food_types': allFoodTypes,
+        'fish_data': fishData, // Store fish data for header display
         'calculation_date': DateTime.now().toIso8601String()
       };
       setState(() {
@@ -464,83 +479,10 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
     } catch (e) {
       setState(() {
         _isLoading = false;
+        _isCalculating = false;
       });
       _showNotification('Error calculating diet portions: $e', isError: true);
     }
-  }
-  
-  int _extractNumericPortion(String portionText) {
-    // Prefer lower bound when a range is provided (e.g., '2-3 pellets').
-    final text = portionText.toLowerCase();
-    final rangeMatch = RegExp(r'(\d+)\s*[-–]\s*(\d+)').firstMatch(text);
-    if (rangeMatch != null) {
-      final low = int.tryParse(rangeMatch.group(1)!) ?? 2;
-      // final high = int.tryParse(rangeMatch.group(2)!) ?? low; // kept for possible future average logic
-      return low; // safer lower bound to avoid overfeeding
-    }
-    final singleMatch = RegExp(r'(\d+)').firstMatch(text);
-    if (singleMatch != null) {
-      return int.tryParse(singleMatch.group(1)!) ?? 2;
-    }
-    return 2; // Default portion size
-  }
-
-  // Extract a portion range (low, high) from a text like '2-3 small pellets'.
-  // If only a single value exists, returns (n, n).
-  (int low, int high) _extractPortionRange(String portionText) {
-    final text = portionText.toLowerCase();
-    final rangeMatch = RegExp(r'(\d+)\s*[-–]\s*(\d+)').firstMatch(text);
-    if (rangeMatch != null) {
-      final low = int.tryParse(rangeMatch.group(1)!) ?? 2;
-      final high = int.tryParse(rangeMatch.group(2)!) ?? low;
-      // If low and high are the same, return just one value to avoid "4-4 pellets"
-      if (low == high) return (low, low);
-      if (high < low) return (low, low);
-      return (low, high);
-    }
-    final singleMatch = RegExp(r'(\d+)').firstMatch(text);
-    if (singleMatch != null) {
-      final n = int.tryParse(singleMatch.group(1)!) ?? 2;
-      return (n, n);
-    }
-    return (2, 2);
-  }
-
-  // Clean and format portion text for display
-  String _formatPortionForDisplay(String portionText) {
-    final text = portionText.toLowerCase();
-    
-    // Handle ranges like "2-3 small pellets"
-    final rangeMatch = RegExp(r'(\d+)\s*[-–]\s*(\d+)').firstMatch(text);
-    if (rangeMatch != null) {
-      final low = int.tryParse(rangeMatch.group(1)!) ?? 2;
-      final high = int.tryParse(rangeMatch.group(2)!) ?? low;
-      if (high < low) return '${low} ${_extractFoodTypeFromText(text)}';
-      return '${low}-${high} ${_extractFoodTypeFromText(text)}';
-    }
-    
-    // Handle single numbers like "2 small pellets"
-    final singleMatch = RegExp(r'(\d+)').firstMatch(text);
-    if (singleMatch != null) {
-      final n = int.tryParse(singleMatch.group(1)!) ?? 2;
-      return '${n} ${_extractFoodTypeFromText(text)}';
-    }
-    
-    return '2 ${_extractFoodTypeFromText(text)}';
-  }
-
-  // Extract food type from portion text
-  String _extractFoodTypeFromText(String text) {
-    if (text.contains('pellet')) return 'pellets';
-    if (text.contains('flake')) return 'flakes';
-    if (text.contains('algae wafer') || text.contains('wafer')) return 'algae wafers';
-    if (text.contains('bloodworm')) return 'bloodworms';
-    if (text.contains('brine shrimp')) return 'brine shrimp';
-    if (text.contains('daphnia')) return 'daphnia';
-    if (text.contains('pea')) return 'cooked peas';
-    if (text.contains('micropellet')) return 'micro-pellets';
-    if (text.contains('mini pellet')) return 'mini pellets';
-    return 'fish food';
   }
 
   // Format feeding tips for display
@@ -554,107 +496,6 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
     
     // Format as bullet points
     return lines.map((line) => '• ${line.trim()}').join('\n');
-  }
-
-  // Validate and normalize portion text to ensure reasonable values
-  String _validateAndNormalizePortion(String portionText) {
-    final text = portionText.toLowerCase().trim();
-    
-    // Extract numeric values
-    final rangeMatch = RegExp(r'(\d+)\s*[-–]\s*(\d+)').firstMatch(text);
-    if (rangeMatch != null) {
-      final low = int.tryParse(rangeMatch.group(1)!) ?? 2;
-      final high = int.tryParse(rangeMatch.group(2)!) ?? low;
-      
-      // Validate reasonable portion sizes
-      final validatedLow = low.clamp(1, 10);
-      final validatedHigh = high.clamp(validatedLow, 15);
-      
-      // Reconstruct the portion text with validated values
-      final baseText = text.replaceAll(RegExp(r'\d+\s*[-–]\s*\d+'), '$validatedLow-$validatedHigh');
-      return baseText;
-    }
-    
-    final singleMatch = RegExp(r'(\d+)').firstMatch(text);
-    if (singleMatch != null) {
-      final value = int.tryParse(singleMatch.group(1)!) ?? 2;
-      final validatedValue = value.clamp(1, 10);
-      return text.replaceFirst(RegExp(r'\d+'), validatedValue.toString());
-    }
-    
-    return '2-3 small pellets'; // Default fallback
-  }
-
-  // Extract food type from portion text
-  String _extractFoodType(String portionText) {
-    final text = portionText.toLowerCase();
-    
-    // Define common food types with their keywords
-    final foodTypes = {
-      'pellets': ['pellet', 'pellets', 'granule', 'granules', 'micro pellets', 'micropellets'],
-      'flakes': ['flake', 'flakes', 'flake food'],
-      'algae wafers': ['algae wafer', 'algae wafers', 'wafer', 'wafers'],
-      'bloodworms': ['bloodworm', 'bloodworms'],
-      'brine shrimp': ['brine shrimp', 'brine'],
-      'daphnia': ['daphnia'],
-      'tubifex': ['tubifex'],
-      'cooked peas': ['cooked pea', 'cooked peas', 'pea', 'peas'],
-      'frozen food': ['frozen', 'frozen food'],
-      'live food': ['live', 'live food'],
-      'vegetables': ['vegetable', 'vegetables', 'cucumber', 'zucchini'],
-    };
-    
-    for (final entry in foodTypes.entries) {
-      for (final keyword in entry.value) {
-        if (text.contains(keyword)) {
-          return entry.key;
-        }
-      }
-    }
-    
-    // Try to extract more specific food type from the text
-    if (text.contains('pinch')) {
-      if (text.contains('flake')) return 'flakes';
-      if (text.contains('pellet')) return 'pellets';
-      return 'small food portions';
-    }
-    
-    if (text.contains('tablet') || text.contains('wafer')) return 'algae wafers';
-    if (text.contains('worm')) return 'bloodworms';
-    if (text.contains('shrimp')) return 'brine shrimp';
-    
-    return 'fish food'; // More descriptive default fallback
-  }
-
-  // Clean up feeding notes to be more user-friendly
-  String _cleanFeedingNotes(String notes) {
-    if (notes.isEmpty) return notes;
-    
-    // Remove any heading like "Feeding Notes:" that the model might include
-    var cleaned = notes
-        .replaceFirst(RegExp(r'^\s*feeding\s*notes\s*:?', caseSensitive: false), '')
-        .trim();
-    
-    // Split by newlines first; if none, split by sentence endings
-    List<String> parts = cleaned.contains('\n')
-        ? cleaned.split('\n')
-        : cleaned.split(RegExp(r'(?<=[.!?])\s+'));
-    
-    final cleanedLines = parts
-        .map((l) => l
-            .replaceFirst(RegExp(r'^\s*(?:[-–•\u2022]|\d+[\.)])\s*'), '') // Remove bullets/numbering
-            .trim())
-        .where((l) => l.isNotEmpty)
-        .where((l) => !RegExp(r'^feeding\s*frequency', caseSensitive: false).hasMatch(l))
-        .where((l) => !RegExp(r'^food\s*removal', caseSensitive: false).hasMatch(l))
-        .where((l) => !RegExp(r'^any\s*special\s*considerations', caseSensitive: false).hasMatch(l))
-        .toList();
-    
-    if (cleanedLines.isNotEmpty) {
-      return cleanedLines.join('\n');
-    }
-    
-    return 'Feed 2-3 times daily in small amounts. Remove uneaten food after 5 minutes. Adjust portions based on fish activity and appetite.';
   }
 
   void _showNotification(String message, {bool isError = false}) {
@@ -685,523 +526,52 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
   // Build feeding notes as bullet points instead of a single paragraph
 
 
-  // Infer a concise food label (e.g., 'pellets', 'flakes') from portion strings
-  String _inferFoodLabel() {
-    final map = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
-    if (map == null || map.isEmpty) return 'fish food';
-
-    final foods = <String>{};
-    for (final value in map.values) {
-      final s = (value ?? '').toString().trim();
-      if (s.isEmpty) continue;
-
-      // Handle patterns like: '1 portion of pellets', '0.5 portion of flakes per day'
-      final match = RegExp(r'\bof\s+([a-zA-Z ]+?)(?:\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false)
-          .firstMatch(s);
-      if (match != null) {
-        var label = match.group(1)!.trim();
-        label = label.toLowerCase();
-        // Remove generic words
-        label = label.replaceAll(RegExp(r'\b(food|feeds?)\b'), '').trim();
-        if (label.isNotEmpty) foods.add(label);
-      }
-      
-      // Also check for food types in the per_fish field
-      if (value is Map<String, dynamic> && value.containsKey('per_fish')) {
-        final perFishText = (value['per_fish'] ?? '').toString().toLowerCase();
-        if (perFishText.contains('pellet')) foods.add('pellets');
-        if (perFishText.contains('flake')) foods.add('flakes');
-        if (perFishText.contains('algae wafer') || perFishText.contains('wafer')) foods.add('algae wafers');
-        if (perFishText.contains('bloodworm')) foods.add('bloodworms');
-        if (perFishText.contains('brine shrimp')) foods.add('brine shrimp');
-        if (perFishText.contains('daphnia')) foods.add('daphnia');
-        if (perFishText.contains('pea')) foods.add('cooked peas');
-      }
-    }
-
-    if (foods.isEmpty) return 'fish food';
-    if (foods.length == 1) return foods.first;
-    return 'mixed fish food';
-  }
-  
-  // Try to infer a more descriptive phrase, e.g., 'small pinch of flakes' or 'small algae wafers'
-  String? _inferFoodDescriptor() {
-    final map = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
-    if (map == null || map.isEmpty) return null;
-
-    // Primary: match explicit 'of' patterns first
-    final ofPatterns = <RegExp>[
-      RegExp(r'\b(small|medium|large|tiny|big)\s+(pinch|spoon|cube|tablet|sheet)\s+of\s+([a-zA-Z ]+?)(?=\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false),
-      RegExp(r'\b(pinch|spoon|cube|tablet|sheet)\s+of\s+([a-zA-Z ]+?)(?=\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false),
-      RegExp(r'\(([^)]+)\)\s*of\s+([a-zA-Z ]+?)(?=\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false),
-      RegExp(r'\bof\s+([a-zA-Z ]+?)(?=\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false),
-    ];
-
-    final descriptorWords = <String>{'small','medium','large','tiny','big'};
-    final measureWords = <String>{'pinch','spoon','cube','tablet','sheet'};
-    final foodKeywords = <String>{
-      'flakes','flake food','pellet','pellets','sinking pellets','micro pellets','granules',
-      'algae wafer','algae wafers','wafer','wafers','bloodworms','brine shrimp','daphnia','tubifex'
-    };
-
-    for (final raw in map.values) {
-      final s = (raw ?? '').toString();
-      final lower = s.toLowerCase();
-
-      // 1) Try 'of' patterns
-      for (final re in ofPatterns) {
-        final m = re.firstMatch(s);
-        if (m != null) {
-          String phrase;
-          if (re.pattern.contains('(small|medium|large|tiny|big)')) {
-            phrase = '${m.group(1)!.toLowerCase()} ${m.group(2)!.toLowerCase()} of ${m.group(3)!.trim().toLowerCase()}';
-          } else if (re.pattern.contains('(pinch|spoon|cube|tablet|sheet)')) {
-            phrase = '${m.group(1)!.toLowerCase()} of ${m.group(2)!.trim().toLowerCase()}';
-          } else if (re.pattern.contains('\\(([^)]+)\\)')) {
-            phrase = '${m.group(1)!.toLowerCase()} of ${m.group(2)!.trim().toLowerCase()}';
-          } else {
-            phrase = m.group(1)!.trim().toLowerCase();
-          }
-          phrase = phrase.replaceAll(RegExp(r'\b(food|feeds?)\b', caseSensitive: false), '').trim();
-          if (phrase.isNotEmpty) return phrase;
-        }
-      }
-
-      // 2) Heuristic without 'of': find descriptor + measure + food keywords
-      String? foundFood;
-      for (final k in foodKeywords) {
-        if (lower.contains(k)) {
-          foundFood = k;
-          break;
-        }
-      }
-      if (foundFood != null) {
-        String? foundDescriptor;
-        for (final d in descriptorWords) {
-          if (lower.contains(d)) { foundDescriptor = d; break; }
-        }
-        String? foundMeasure;
-        for (final m in measureWords) {
-          if (lower.contains(m)) { foundMeasure = m; break; }
-        }
-        String phrase;
-        if (foundMeasure != null) {
-          phrase = '${foundDescriptor != null ? '$foundDescriptor ' : ''}$foundMeasure of $foundFood';
-        } else {
-          phrase = '${foundDescriptor != null ? '$foundDescriptor ' : ''}$foundFood';
-        }
-        phrase = phrase.replaceAll(RegExp(r'\b(food|feeds?)\b', caseSensitive: false), '').trim();
-        if (phrase.isNotEmpty) return phrase;
-      }
-    }
-
-    // 3) Fallback: parse feeding_notes for a descriptor
-    final notes = (_calculationResult?['feeding_notes'] as String?)?.toLowerCase() ?? '';
-    if (notes.isNotEmpty) {
-      // Try the same 'of' patterns on notes
-      for (final re in ofPatterns) {
-        final m = re.firstMatch(notes);
-        if (m != null) {
-          String phrase;
-          if (re.pattern.contains('(small|medium|large|tiny|big)')) {
-            phrase = '${m.group(1)!.toLowerCase()} ${m.group(2)!.toLowerCase()} of ${m.group(3)!.trim().toLowerCase()}';
-          } else if (re.pattern.contains('(pinch|spoon|cube|tablet|sheet)')) {
-            phrase = '${m.group(1)!.toLowerCase()} of ${m.group(2)!.trim().toLowerCase()}';
-          } else if (re.pattern.contains('\\(([^)]+)\\)')) {
-            phrase = '${m.group(1)!.toLowerCase()} of ${m.group(2)!.trim().toLowerCase()}';
-          } else {
-            phrase = m.group(1)!.trim().toLowerCase();
-          }
-          phrase = phrase.replaceAll(RegExp(r'\b(food|feeds?)\b', caseSensitive: false), '').trim();
-          if (phrase.isNotEmpty) return phrase;
-        }
-      }
-      // Heuristic on notes without 'of'
-      String? foundFood;
-      for (final k in foodKeywords) {
-        if (notes.contains(k)) { foundFood = k; break; }
-      }
-      if (foundFood != null) {
-        String? foundDescriptor;
-        for (final d in descriptorWords) {
-          if (notes.contains(d)) { foundDescriptor = d; break; }
-        }
-        String? foundMeasure;
-        for (final m in measureWords) {
-          if (notes.contains(m)) { foundMeasure = m; break; }
-        }
-        String phrase;
-        if (foundMeasure != null) {
-          phrase = '${foundDescriptor != null ? '$foundDescriptor ' : ''}$foundMeasure of $foundFood';
-        } else {
-          phrase = '${foundDescriptor != null ? '$foundDescriptor ' : ''}$foundFood';
-        }
-        phrase = phrase.replaceAll(RegExp(r'\b(food|feeds?)\b', caseSensitive: false), '').trim();
-        if (phrase.isNotEmpty) return phrase;
-      }
-    }
-    
-    // 4) Last resort: derive from the first portion string by stripping counts and boilerplate
-    for (final raw in map.values) {
-      final s = (raw ?? '').toString().toLowerCase();
-      if (s.isEmpty) continue;
-      // Remove leading counts like '1 portion', '2 portions', '0.5 portion(s)'
-      var cleaned = s
-          .replaceAll(RegExp(r'^\s*\d+[\d\./\s]*\s*portion(?:s)?\s*(of)?\s*'), '')
-          .replaceAll(RegExp(r'\b(grams?|g|ml|mg)\b'), '')
-          .replaceAll(RegExp(r'\b(food|feeds?)\b', caseSensitive: false), '')
-          .trim();
-      // Truncate at end markers
-      final endMatch = RegExp(r'(?=\s*(?:per\s*day|/day|daily|\.|,|$))').firstMatch(cleaned);
-      if (endMatch != null) {
-        cleaned = cleaned.substring(0, endMatch.start).trim();
-      }
-      if (cleaned.isNotEmpty) return cleaned;
-    }
-    return null;
-  }
-
-  // Create a concise phrase for a single portion value string
-  String _concisePortionOption(String raw) {
-    final s = (raw).toString();
-    // Reuse patterns from _inferFoodDescriptor
-    final ofPatterns = <RegExp>[
-      RegExp(r'\b(small|medium|large|tiny|big)\s+(pinch|spoon|cube|tablet|sheet)\s+of\s+([a-zA-Z ]+?)(?=\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false),
-      RegExp(r'\b(pinch|spoon|cube|tablet|sheet)\s+of\s+([a-zA-Z ]+?)(?=\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false),
-      RegExp(r'\(([^)]+)\)\s*of\s+([a-zA-Z ]+?)(?=\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false),
-      RegExp(r'\bof\s+([a-zA-Z ]+?)(?=\s*(?:per\s*day|/day|daily|\.|,|$))', caseSensitive: false),
-    ];
-    for (final re in ofPatterns) {
-      final m = re.firstMatch(s);
-      if (m != null) {
-        String phrase;
-        if (re.pattern.contains('(small|medium|large|tiny|big)')) {
-          phrase = '${m.group(1)!.toLowerCase()} ${m.group(2)!.toLowerCase()} of ${m.group(3)!.trim().toLowerCase()}';
-        } else if (re.pattern.contains('(pinch|spoon|cube|tablet|sheet)')) {
-          phrase = '${m.group(1)!.toLowerCase()} of ${m.group(2)!.trim().toLowerCase()}';
-        } else if (re.pattern.contains('\\(([^)]+)\\)')) {
-          phrase = '${m.group(1)!.toLowerCase()} of ${m.group(2)!.trim().toLowerCase()}';
-        } else {
-          phrase = m.group(1)!.trim().toLowerCase();
-        }
-        phrase = phrase.replaceAll(RegExp(r'\b(food|feeds?)\b', caseSensitive: false), '').trim();
-        return phrase;
-      }
-    }
-    // Last resort: strip counts/boilerplate
-    var cleaned = s.toLowerCase();
-    cleaned = cleaned
-        .replaceAll(RegExp(r'^\s*\d+[\d\./\s]*\s*portion(?:s)?\s*(of)?\s*'), '')
-        .replaceAll(RegExp(r'\b(grams?|g|ml|mg)\b'), '')
-        .replaceAll(RegExp(r'\b(food|feeds?)\b', caseSensitive: false), '')
-        .trim();
-    cleaned = cleaned.replaceAll(RegExp(r'\s*(per\s*day|/day|daily)\s*$', caseSensitive: false), '').trim();
-    return cleaned.isNotEmpty ? cleaned : 'recommended fish food';
-  }
-
-  List<String> _collectPerFeedingOptions() {
-    final map = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
-    if (map == null || map.isEmpty) return [];
-    final set = <String>{};
-    for (final v in map.values) {
-      final opt = _concisePortionOption((v ?? '').toString());
-      if (opt.isNotEmpty) set.add(opt);
-    }
-    return set.toList();
-  }
-
-  Widget _buildPerFeedingOptions() {
-    final options = _collectPerFeedingOptions();
-    if (options.isEmpty) return const SizedBox.shrink();
-    final display = options.take(3).toList();
-    final title = options.length > 1
-        ? 'Per feeding for the whole tank (choose one):'
-        : 'Per feeding for the whole tank:';
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF006064),
-            ),
-          ),
-          const SizedBox(height: 4),
-          ...display.map((o) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 1),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('• ', style: TextStyle(color: Color(0xFF006064))),
-                    Expanded(
-                      child: Text(
-                        o,
-                        style: const TextStyle(fontSize: 14, color: Color(0xFF004D40)),
-                      ),
-                    ),
-                  ],
-                ),
-              )),
-        ],
-      ),
-    );
-  }
-
-  // ===== Tank total helpers (inside _DietCalculatorState) =====
-  Map<String, int> _getFishSelectionsFromCards() {
-    final selections = <String, int>{};
-    for (final card in _fishCards) {
-      final name = card.fishController.text.trim();
-      if (name.isEmpty) continue;
-      final qtyText = card.quantityController.text.trim();
-      final qty = int.tryParse(qtyText.isEmpty ? '1' : qtyText) ?? 1;
-      selections[name] = (selections[name] ?? 0) + qty;
-    }
-    return selections;
-  }
-
-  ({int low, int high}) _parseCountRange(String text) {
-    // The constructed portion text looks like:
-    //   "<qty> × <perFishRange> = <speciesTotalRange> portions (<portionSize> each)"
-    // We must parse the species total AFTER '=' to avoid double multiplying by quantity.
-    final lower = text.toLowerCase();
-    // 1) Prefer an explicit range immediately after '=' and before 'portions'
-    final afterEqRange = RegExp(r"=\s*(\d+)\s*[-–]\s*(\d+)\s*portions").firstMatch(lower);
-    if (afterEqRange != null) {
-      final a = int.tryParse(afterEqRange.group(1)!) ?? 0;
-      final b = int.tryParse(afterEqRange.group(2)!) ?? a;
-      return (low: a, high: b);
-    }
-    // 2) Or a single number after '=' before 'portions'
-    final afterEqSingle = RegExp(r"=\s*(\d+)\s*portions").firstMatch(lower);
-    if (afterEqSingle != null) {
-      final n = int.tryParse(afterEqSingle.group(1)!) ?? 0;
-      return (low: n, high: n);
-    }
-    // 3) Fallback: restrict search to substring before 'portions' to avoid matching numbers in '(portionSize each)'
-    final idx = lower.indexOf('portions');
-    final head = idx > 0 ? lower.substring(0, idx) : lower;
-    final ranges = RegExp(r"(\d+)\s*[-–]\s*(\d+)").allMatches(head).toList();
-    if (ranges.isNotEmpty) {
-      final m = ranges.last; // take the last range before 'portions'
-      final a = int.tryParse(m.group(1)!) ?? 0;
-      final b = int.tryParse(m.group(2)!) ?? a;
-      return (low: a, high: b);
-    }
-    final singles = RegExp(r"(\d+)").allMatches(head).toList();
-    if (singles.isNotEmpty) {
-      final m = singles.last; // last number before 'portions'
-      final n = int.tryParse(m.group(1)!) ?? 0;
-      return (low: n, high: n);
-    }
-    return (low: 0, high: 0);
-  }
-
-  String _normalizeFoodLabelFromText(String text) {
-    final t = text.toLowerCase();
-    // Canonical mapping of synonyms -> label
-    final List<(String label, List<String> synonyms)> canon = [
-      (
-        'micropellets',
-        ['micropellets', 'micro pellets', 'micro-pellets']
-      ),
-      (
-        'mini pellets',
-        ['mini pellets']
-      ),
-      (
-        'small pellets',
-        ['small pellets', 'pellets']
-      ),
-      (
-        'flakes',
-        ['flake food', 'flakes']
-      ),
-      (
-        'algae wafers',
-        ['algae wafers', 'wafers']
-      ),
-      (
-        'bloodworms',
-        ['bloodworms']
-      ),
-      (
-        'brine shrimp',
-        ['brine shrimp']
-      ),
-      (
-        'daphnia',
-        ['daphnia']
-      ),
-      (
-        'cooked peas',
-        ['cooked peas', 'cooked pea', 'pea', 'peas']
-      ),
-    ];
-    for (final entry in canon) {
-      for (final s in entry.$2) {
-        if (t.contains(s)) return entry.$1;
-      }
-    }
-    // Fallback to inferred generic label
-    return _inferFoodLabel() ?? 'fish food';
-  }
-
-  // Extract all species-total segments and their food labels from a constructed text like:
-  //   "3 × 1-2 = 3-6 portions (small flakes each) OR 3 × 1-1 = 3 portions (brine shrimp each)"
-  // Returns a list of entries with canonicalized labels and low/high counts per species.
-  List<({String label, int low, int high})> _extractSpeciesTotalsWithLabels(String text) {
-    final s = text.toLowerCase();
-    final entries = <({String label, int low, int high})>[];
-
-    // Pattern 1: range totals with label inside parentheses before 'each'
-    final rangeRe = RegExp(r"=\s*(\d+)\s*[-–]\s*(\d+)\s*portions\s*\(([^)]*?)\s*each\)");
-    for (final m in rangeRe.allMatches(s)) {
-      final a = int.tryParse(m.group(1)!) ?? 0;
-      final b = int.tryParse(m.group(2)!) ?? a;
-      var rawLabel = (m.group(3) ?? '').trim();
-      // Normalize using existing mapping; feed as a phrase containing 'of <label>' so mapping matches
-      var canonical = _normalizeFoodLabelFromText('of $rawLabel');
-      if ((canonical == 'food' || canonical.isEmpty) && rawLabel.isNotEmpty) {
-        canonical = rawLabel; // fall back to the literal label rather than generic 'fish food'
-      }
-      if (canonical.isEmpty) canonical = 'fish food';
-      entries.add((label: canonical, low: a, high: b));
-    }
-
-    // Pattern 2: single totals with label
-    final singleRe = RegExp(r"=\s*(\d+)\s*portions\s*\(([^)]*?)\s*each\)");
-    for (final m in singleRe.allMatches(s)) {
-      final n = int.tryParse(m.group(1)!) ?? 0;
-      var rawLabel = (m.group(2) ?? '').trim();
-      var canonical = _normalizeFoodLabelFromText('of $rawLabel');
-      if ((canonical == 'food' || canonical.isEmpty) && rawLabel.isNotEmpty) {
-        canonical = rawLabel;
-      }
-      if (canonical.isEmpty) canonical = 'fish food';
-      entries.add((label: canonical, low: n, high: n));
-    }
-
-    return entries;
-  }
-
-  Map<String, Map<String, int>> _aggregateTankPortionsPerFeeding() {
-    final map = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
-    if (map == null || map.isEmpty) return {};
-
-    final totals = <String, Map<String, int>>{};
-
-    map.forEach((fishName, rawVal) {
-      final portionText = (rawVal ?? '').toString();
-      if (portionText.isEmpty) return;
-      final parts = _extractSpeciesTotalsWithLabels(portionText);
-      for (final p in parts) {
-        if (!totals.containsKey(p.label)) {
-          totals[p.label] = {'low': p.low, 'high': p.high};
-        } else {
-          final cur = totals[p.label]!;
-          totals[p.label] = {'low': (cur['low'] ?? 0) + p.low, 'high': (cur['high'] ?? 0) + p.high};
-        }
-      }
-    });
-
-    return totals;
-  }
-
-  Widget _buildTankTotalsPerFeeding() {
-    final totals = _aggregateTankPortionsPerFeeding();
-    if (totals.isEmpty) return const SizedBox.shrink();
-
-    final items = totals.entries.map((e) {
-      final label = e.key;
-      final r = e.value;
-      final low = r['low'] ?? 0;
-      final high = r['high'] ?? 0;
-      final rangeStr = low == high ? '$low' : '$low–$high';
-      const unit = 'pcs';
-      return '$rangeStr $unit of $label';
-    }).toList();
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Tank total per feeding:',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF006064),
-            ),
-          ),
-          const SizedBox(height: 4),
-          ...items.map((t) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 1),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('• ', style: TextStyle(color: Color(0xFF006064))),
-                    Expanded(
-                      child: Text(
-                        t,
-                        style: const TextStyle(fontSize: 14, color: Color(0xFF004D40)),
-                      ),
-                    ),
-                  ],
-                ),
-              )),
-        ],
-      ),
-    );
-  }
   
   Future<void> _saveDietCalculation() async {
     if (_calculationResult == null) return;
-    if (_isSaving) return; // prevent double tap
-    if (mounted) {
-      setState(() {
-        _isSaving = true;
-      });
-    }
     
-    final fishSelections = <String, int>{};
-    final Set<String> fishNamesOnCards = _fishCards
-        .map((card) => card.fishController.text.trim())
-        .where((name) => name.isNotEmpty)
-        .toSet();
-        
-    for (final name in fishNamesOnCards) {
-      final qty = _fishSelections[name] ?? 0;
-      if (qty > 0) {
-        fishSelections[name] = qty;
+    final fishSelections = Map<String, int>.from(_fishSelections);
+    
+    final totalPortion = _calculationResult!['total_portion'] as double;
+    // Process portionDetails to convert any double values to int
+    final rawPortionDetails = _calculationResult!['fish_portions'] as Map<String, dynamic>;
+    final Map<String, dynamic> portionDetails = {};
+    rawPortionDetails.forEach((key, value) {
+      if (value is Map<String, dynamic>) {
+        final processedValue = <String, dynamic>{};
+        value.forEach((subKey, subValue) {
+          if (subValue is double) {
+            processedValue[subKey] = subValue.round();
+          } else {
+            processedValue[subKey] = subValue;
+          }
+        });
+        portionDetails[key] = processedValue;
+      } else {
+        portionDetails[key] = value;
       }
-    }
-    
-    final totalPortion = _calculationResult!['total_portion'] as int;
-    final String? totalPortionRange = _calculationResult!['total_portion_range']?.toString();
-    final feedingsPerDayRaw = _calculationResult!['feedings_per_day'];
-    final int? feedingsPerDay = feedingsPerDayRaw is int
-        ? feedingsPerDayRaw
-        : int.tryParse(feedingsPerDayRaw?.toString() ?? '');
-    final portionDetails = _calculationResult!['fish_portions'] as Map<String, dynamic>;
+    });
     try {
+      // tankTotalsByFood processing removed as it's no longer saved to database
+
+      // Prepare the data for the new structure
+      final feedingSchedule = _calculationResult!['feedings_per_day']?.toString() ?? '2 times per day';
+      final totalFoodPerFeeding = _calculationResult!['tank_total_display'] as String;
+      final perFishBreakdown = _calculationResult!['fish_portions'] as Map<String, dynamic>;
+      final recommendedFoodTypes = _calculationResult!['ai_food_types'] as List<String>?;
+      final feedingTips = _calculationResult!['feeding_tips'] as String?;
+
       final dietCalculation = DietCalculation(
         fishSelections: fishSelections,
-        totalPortion: totalPortion,
-        totalPortionRange: totalPortionRange,
+        totalPortion: totalPortion.round(),
         portionDetails: portionDetails,
         compatibilityIssues: _compatibilityReason.isNotEmpty ? [_compatibilityReason] : null,
         feedingNotes: _calculationResult!['feeding_notes'] as String,
-        feedingTips: _calculationResult!['feeding_tips'] as String?,
-        feedingsPerDay: feedingsPerDay,
-        feedingTimes: _calculationResult!['feeding_times'] as String?,
-        aiFoodTypes: _calculationResult!['ai_food_types'] as List<String>?,
-        tankTotalsByFood: _calculationResult!['tank_totals_by_food'] as Map<String, dynamic>?,
+        feedingSchedule: feedingSchedule,
+        totalFoodPerFeeding: totalFoodPerFeeding,
+        perFishBreakdown: perFishBreakdown,
+        recommendedFoodTypes: recommendedFoodTypes,
+        feedingTips: feedingTips,
         dateCalculated: DateTime.now(),
       );
 
@@ -1221,255 +591,88 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
         return;
       }
 
-      final response = await http.post(
-        Uri.parse(ApiConfig.saveDietCalculationEndpoint),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${session.accessToken}',
-        },
-        body: json.encode(dietCalculation.toJson()),
-      );
+      // Save directly to Supabase with only the fields that exist in the database
+      try {
+        final response = await supabase.from('diet_calculations').insert({
+          'user_id': session.user.id,
+          'fish_selections': dietCalculation.fishSelections,
+          'total_portion': dietCalculation.totalPortion,
+          'portion_details': dietCalculation.portionDetails,
+          'compatibility_issues': dietCalculation.compatibilityIssues,
+          'feeding_notes': dietCalculation.feedingNotes,
+          'feeding_schedule': dietCalculation.feedingSchedule,
+          'total_food_per_feeding': dietCalculation.totalFoodPerFeeding,
+          'per_fish_breakdown': dietCalculation.perFishBreakdown,
+          'recommended_food_types': dietCalculation.recommendedFoodTypes,
+          'feeding_tips': dietCalculation.feedingTips,
+          'date_calculated': dietCalculation.dateCalculated.toIso8601String(),
+          'created_at': DateTime.now().toIso8601String(),
+          'saved_plan': dietCalculation.savedPlan,
+        }).select();
 
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        print('Diet calculation save response: $responseData');
-        
-        // Add to logbook provider for recent activity
-        if (mounted) {
-          final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
-          logBookProvider.addDietCalculation(dietCalculation);
-          print('Added diet calculation to logbook provider');
+        if (response.isNotEmpty) {
+          print('Diet calculation saved directly to Supabase: ${response.first}');
           
-          // Force reload data from database to ensure consistency
-          await logBookProvider.init();
+          // Update the diet calculation with the ID from Supabase response
+          final savedCalculation = DietCalculation(
+            id: response.first['id']?.toString(),
+            fishSelections: dietCalculation.fishSelections,
+            totalPortion: dietCalculation.totalPortion,
+            portionDetails: dietCalculation.portionDetails,
+            compatibilityIssues: dietCalculation.compatibilityIssues,
+            feedingNotes: dietCalculation.feedingNotes,
+            feedingSchedule: dietCalculation.feedingSchedule,
+            totalFoodPerFeeding: dietCalculation.totalFoodPerFeeding,
+            perFishBreakdown: dietCalculation.perFishBreakdown,
+            recommendedFoodTypes: dietCalculation.recommendedFoodTypes,
+            feedingTips: dietCalculation.feedingTips,
+            dateCalculated: dietCalculation.dateCalculated,
+            createdAt: DateTime.now(),
+            savedPlan: dietCalculation.savedPlan,
+          );
+          
+          // Add to logbook provider for recent activity (without saving to Supabase again)
+          if (mounted) {
+            final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+            logBookProvider.addDietCalculationLocally(savedCalculation);
+            print('Added diet calculation to logbook provider');
+          }
+          
+          _showNotification('Diet calculation saved successfully!');
+          
+          // Clear inputs and results after successful save
+          await Future.delayed(const Duration(milliseconds: 1500));
+          if (mounted) {
+            _tryAgain();
+            _tabController.animateTo(0);
+          }
+        } else {
+          throw Exception('Failed to save: No response from Supabase');
         }
-        
-        _showNotification('Diet calculation saved successfully!');
-        
-        // Clear inputs and results after successful save
-        await Future.delayed(const Duration(milliseconds: 1500));
-        if (mounted) {
-          _tryAgain();
-          _tabController.animateTo(0);
-        }
-      } else {
-        print('Save failed with status: ${response.statusCode}');
-        print('Response body: ${response.body}');
-        throw Exception('Failed to save: ${response.statusCode} - ${response.body}');
+      } catch (e) {
+        print('Error saving to Supabase: $e');
+        throw Exception('Failed to save: $e');
       }
     } catch (e) {
       print('Error saving diet calculation: $e');
       _showNotification('Error saving calculation: $e', isError: true);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
     }
   }
 
   void _tryAgain() {
     setState(() {
-      _hasCompatibilityIssue = false;
       _compatibilityReason = '';
       _incompatiblePairs = null;
       _calculationResult = null;
-      
-      // Clear all fish input cards
-      for (var card in _fishCards) {
-        card.dispose();
-      }
-      
-      // Reset to single fish card
-      _fishCards = [DietFishCard(id: 0)];
       _fishSelections.clear();
     });
   }
 
-  Widget _buildFishInputCard(DietFishCard card, int index) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              color: Color(0xFFE0F7FA),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      FontAwesomeIcons.fish,
-                      color: Color(0xFF006064),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Fish Species ${index + 1}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_fishCards.length > 1)
-                  IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      color: Color(0xFF006064),
-                    ),
-                    onPressed: () => _removeFishCard(card.id),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    splashRadius: 24,
-                  ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: Autocomplete<String>(
-                    optionsBuilder: (TextEditingValue textEditingValue) {
-                      if (textEditingValue.text.isEmpty) {
-                        return const Iterable<String>.empty();
-                      }
-                      return _availableFish.where((String option) {
-                        return option.toLowerCase().contains(textEditingValue.text.toLowerCase());
-                      });
-                    },
-                    onSelected: (String selection) {
-                      setState(() {
-                        card.fishController.text = selection;
-                        // Initialize with 1 if not already in selections
-                        if (!_fishSelections.containsKey(selection)) {
-                          _fishSelections[selection] = 1;
-                        }
-                      });
-                    },
-                    fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {
-                      // Sync the card's controller with the autocomplete controller
-                      textEditingController.text = card.fishController.text;
-                      
-                      return TextFormField(
-                        controller: textEditingController,
-                        focusNode: focusNode,
-                        decoration: InputDecoration(
-                          hintText: 'Search fish spe...',
-                          prefixIcon: const Icon(Icons.search, color: Color(0xFF006064)),
-                          filled: true,
-                          fillColor: const Color(0xFFF5F5F5),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8.0),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8.0),
-                            borderSide: BorderSide.none,
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8.0),
-                            borderSide: const BorderSide(color: Color(0xFF00BCD4)),
-                          ),
-                        ),
-                        onChanged: (value) {
-                          // Keep the card's controller in sync
-                          card.fishController.text = value;
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE0F7FA),
-                    borderRadius: BorderRadius.circular(8.0),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.remove, color: Color(0xFF006064)),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                        onPressed: () {
-                          final fishName = card.fishController.text;
-                          if (fishName.isEmpty) return;
 
-                          setState(() {
-                            final currentCount = _fishSelections[fishName] ?? 0;
-                            if (currentCount <= 1) {
-                              // Check if this is the only card with this fish name
-                              final cardsWithSameFish = _fishCards.where((c) => c.fishController.text == fishName).length;
-                              if (cardsWithSameFish <= 1) {
-                                _fishSelections.remove(fishName);
-                              }
-                              _removeFishCard(card.id);
-                            } else {
-                              _fishSelections[fishName] = currentCount - 1;
-                            }
-                          });
-                        },
-                      ),
-                      Container(
-                        width: 40,
-                        height: 40,
-                        alignment: Alignment.center,
-                        decoration: const BoxDecoration(
-                          border: Border.symmetric(
-                            vertical: BorderSide(
-                              color: Color(0xFF006064),
-                              width: 0.5,
-                            ),
-                          ),
-                        ),
-                        child: Text(
-                          _fishSelections[card.fishController.text]?.toString() ?? '0',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF006064),
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.add, color: Color(0xFF006064)),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                        onPressed: () => _addFish(card.fishController.text, card.id),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+
+
+
+
 
   Widget _buildCompatibilityTab() {
     if (_incompatiblePairs == null || _incompatiblePairs!.isEmpty) {
@@ -1482,7 +685,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
               width: double.infinity,
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: const Color(0xFF00BCD4)),
               ),
               child: const Row(
@@ -1519,7 +722,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
                   Color(0xFFFF8585),
                 ],
               ),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.2),
@@ -1537,7 +740,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(6),
                     ),
                     child: const Icon(
                       Icons.warning_rounded,
@@ -1567,7 +770,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
             width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.1),
@@ -1658,7 +861,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                 ),
               ),
               child: const Text(
@@ -1679,507 +882,559 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
   Widget _buildResults() {
     if (_calculationResult == null) return const SizedBox();
 
-    return Container(
-      margin: EdgeInsets.zero,
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      decoration: const BoxDecoration(
-        color: Color(0xFFE0F7FA),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.set_meal, color: Color(0xFF00BCD4), size: 24),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Diet Recommendation',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF00BCD4),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
+          // Fish Header Section
+          _buildFishHeader(),
           
-          // Feeding Schedule Section
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Color(0xFF00BCD4).withOpacity(0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 16),
+
+          // Key Information Cards - Always in same row with equal height
+          IntrinsicHeight(
+            child: Row(
               children: [
-                const Row(
-                  children: [
-                    Icon(Icons.schedule, color: Color(0xFF006064), size: 20),
-                    SizedBox(width: 8),
-                    Text(
-                      'Feeding Schedule',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if ((_calculationResult?['feedings_per_day'] is int) && (_calculationResult!['feedings_per_day'] as int) > 0)
-                  Text(
-                    'Feed ${_calculationResult!['feedings_per_day']} time${_calculationResult!['feedings_per_day'] == 1 ? '' : 's'} per day',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF004D40),
-                    ),
+                // Feeding Schedule
+                Expanded(
+                  flex: 1,
+                  child: _buildSimpleCard(
+                    'Feeding Schedule',
+                    _calculationResult!['feedings_per_day']?.toString() ?? '2 times per day',
+                    FontAwesomeIcons.clock,
+                    const Color(0xFF00BCD4),
                   ),
-                if ((_calculationResult?['feedings_per_day'] is int) && (_calculationResult!['feedings_per_day'] as int) > 0)
-                  const SizedBox(height: 8),
-                Text(
-                  _getFeedingTimesText(),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF004D40),
+                ),
+                const SizedBox(width: 12),
+                // Total Food
+                Expanded(
+                  flex: 1,
+                  child: _buildSimpleCard(
+                    'Total Food Per Feeding',
+                    _calculationResult!['tank_total_display'] as String,
+                    Icons.scale,
+                    const Color(0xFF00BCD4),
                   ),
                 ),
               ],
             ),
           ),
+          
           const SizedBox(height: 16),
           
-          // Tank Totals Section
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Color(0xFF00BCD4).withOpacity(0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.restaurant, color: Color(0xFF006064), size: 20),
-                    SizedBox(width: 8),
-                    Text(
-                      'Feeding Guide & Portions',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _buildTankTotalsDisplay(),
-              ],
-            ),
-          ),
+          // Detailed Information
+          _buildDetailedInfo(),
+          
           const SizedBox(height: 16),
           
-          // Feeding Notes Section (if available)
-          if (_calculationResult!['feeding_notes'] != null && (_calculationResult!['feeding_notes'] as String).isNotEmpty) ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Color(0xFF00BCD4).withOpacity(0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          // Action Buttons - Always in one row with responsive sizing
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // Calculate responsive padding based on screen width
+              final isSmallScreen = constraints.maxWidth < 400;
+              final buttonPadding = isSmallScreen 
+                  ? const EdgeInsets.symmetric(vertical: 12, horizontal: 8)
+                  : const EdgeInsets.symmetric(vertical: 16, horizontal: 12);
+              
+              return Row(
                 children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.lightbulb_outline, color: Color(0xFF006064), size: 20),
-                      SizedBox(width: 8),
-                      Text(
-                        'Feeding Tips',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
+                  Expanded(
+                    flex: isSmallScreen ? 1 : 1,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        _tryAgain();
+                        _tabController.animateTo(0);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        padding: buttonPadding,
+                        side: const BorderSide(color: Colors.grey),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
                         ),
                       ),
-                    ],
+                      child: Text(
+                        'Calculate Again',
+                        style: TextStyle(
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w600,
+                          fontSize: isSmallScreen ? 14 : 16,
+                        ),
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _formatFeedingTips(_calculationResult!['feeding_tips'] ?? _calculationResult!['feeding_notes'] as String),
-                    style: const TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF004D40),
+                  SizedBox(width: isSmallScreen ? 8 : 12),
+                  Expanded(
+                    flex: isSmallScreen ? 1 : 1,
+                    child: ElevatedButton(
+                      onPressed: _saveDietCalculation,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00BCD4),
+                        foregroundColor: Colors.white,
+                        padding: buttonPadding,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                      ),
+                      child: Text(
+                        'Save Results',
+                        style: TextStyle(fontSize: isSmallScreen ? 14 : 16),
+                      ),
                     ),
                   ),
                 ],
-              ),
+              );
+            },
+          ),
+          
+          const SizedBox(height: 100), // Extra space for safe area
+        ],
+      ),
+    );
+  }
+
+
+  // Helper method to build simple info cards
+  Widget _buildSimpleCard(String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00BCD4).withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: const Color(0xFF00BCD4), size: 20),
+          const SizedBox(height: 6),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 10,
+              color: Colors.black54,
+              fontWeight: FontWeight.w500,
             ),
-            const SizedBox(height: 16),
-          ],
-          // Action Buttons
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    _tryAgain();
-                    _tabController.animateTo(0);
-                  },
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    side: const BorderSide(color: Color(0xFF00BCD4)),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Text(
-                    'Calculate Again',
-                    style: TextStyle(
-                      color: Color(0xFF00BCD4),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _isSaving ? null : _saveDietCalculation,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00BCD4),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: _isSaving
-                      ? Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: const [
-                            SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            Text('Saving...'),
-                          ],
-                        )
-                      : const Text('Save Results'),
-                ),
-              ),
-            ],
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+            ),
+            textAlign: TextAlign.left,
           ),
         ],
       ),
     );
   }
 
-  // Helper method to get user-friendly food type display names
-  String _getFoodTypeDisplayName(String foodType) {
-    switch (foodType.toLowerCase()) {
-      case 'pellets':
-        return 'pellets';
-      case 'flakes':
-        return 'flakes';
-      case 'algae wafers':
-        return 'algae wafers';
-      case 'bloodworms':
-        return 'bloodworms';
-      case 'brine shrimp':
-        return 'brine shrimp';
-      case 'daphnia':
-        return 'daphnia';
-      case 'cooked peas':
-        return 'cooked peas';
-      case 'micropellets':
-        return 'micro-pellets';
-      case 'mini pellets':
-        return 'mini pellets';
-      case 'small pellets':
-        return 'small pellets';
-      default:
-        return foodType;
-    }
-  }
-
-  // Helper method to format food type recommendations
-  String _formatFoodTypeRecommendations(List<String> foodTypes) {
-    if (foodTypes.isEmpty) return 'No specific recommendations available.';
-    
-    final formattedTypes = foodTypes.map((type) => _getFoodTypeDisplayName(type)).toList();
-    
-    if (formattedTypes.length == 1) {
-      return 'Use ${formattedTypes.first} for optimal nutrition.';
-    } else if (formattedTypes.length == 2) {
-      return 'Use ${formattedTypes.first} and ${formattedTypes.last} for variety.';
-    } else {
-      final last = formattedTypes.last;
-      final others = formattedTypes.take(formattedTypes.length - 1).join(', ');
-      return 'Use $others, and $last for balanced nutrition.';
-    }
-  }
-
-  Widget _buildTankTotalsDisplay() {
-    final tankTotals = _calculationResult?['tank_totals_by_food'] as Map<String, dynamic>?;
-    final aiFoodTypes = _calculationResult?['ai_food_types'] as List<String>?;
-    final fishPortions = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
-    
-    if (tankTotals == null || tankTotals.isEmpty) {
-      return const Text(
-        'No food totals available',
-        style: TextStyle(
-          fontSize: 14,
-          color: Color(0xFF004D40),
-        ),
-      );
-    }
-
+  // Helper method to build detailed information with expandable sections
+  Widget _buildDetailedInfo() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Main feeding summary
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+        // Per Fish Breakdown (for any number of fish)
+        if (_calculationResult!['fish_portions'] != null && 
+            (_calculationResult!['fish_portions'] as Map).isNotEmpty) ...[
+          _buildExpandableCard(
+            'Per Fish Breakdown',
+            FontAwesomeIcons.fish,
+            const Color(0xFF00BCD4),
+            _buildTankTotalsDisplay(),
+            _showPerFishBreakdown,
+            () => setState(() => _showPerFishBreakdown = !_showPerFishBreakdown),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.restaurant, color: Color(0xFF006064), size: 20),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Total Food Per Feeding',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF006064),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              ...tankTotals.entries.map((entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('• ', style: TextStyle(color: Color(0xFF006064), fontSize: 16)),
-                    Expanded(
-                      child: Text(
-                        '${(entry.value['low'] ?? 0) == (entry.value['high'] ?? 0) ? (entry.value['low'] ?? 0) : '${entry.value['low'] ?? 0}-${entry.value['high'] ?? 0}'} ${_getFoodTypeDisplayName(entry.key)}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF004D40),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              )),
-            ],
-          ),
-        ),
-        
-        const SizedBox(height: 12),
-        
-                // Individual fish breakdown (if multiple fish)
-        if (fishPortions != null && fishPortions.length > 1) ...[
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const FaIcon(FontAwesomeIcons.fish, color: Color(0xFF006064), size: 20),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Per Fish Breakdown',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                ...fishPortions.entries.map((entry) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      const FaIcon(FontAwesomeIcons.fish, color: Color(0xFF006064), size: 16),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${entry.value['quantity']}x ${entry.key}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF006064),
-                              ),
-                            ),
-                            Text(
-                              '${entry.value['per_fish']} each',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Color(0xFF666666),
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                )),
-              ],
-            ),
-          ),
         ],
         
-        // Food type recommendations
-        if (aiFoodTypes != null && aiFoodTypes.isNotEmpty) ...[
+        // Recommended Food Types
+        if (_calculationResult!['ai_food_types'] != null) ...[
+          _buildExpandableCard(
+            'Recommended Food Types',
+            Icons.restaurant,
+            const Color(0xFF00BCD4),
+            Text(
+              _formatFoodTypeRecommendations(_calculationResult!['ai_food_types'] as List<String>),
+              style: const TextStyle(
+                fontSize: 14,
+                color: Colors.black,
+                height: 1.4,
+              ),
+              textAlign: TextAlign.left,
+            ),
+            _showFoodTypes,
+            () => setState(() => _showFoodTypes = !_showFoodTypes),
+          ),
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+        ],
+        
+        // Feeding Tips
+        if (_calculationResult!['feeding_tips'] != null && 
+            (_calculationResult!['feeding_tips'] as String).isNotEmpty) ...[
+          _buildExpandableCard(
+            'Feeding Tips',
+            Icons.lightbulb_outline,
+            const Color(0xFF00BCD4),
+            Text(
+              _formatFeedingTips(_calculationResult!['feeding_tips'] as String),
+              style: const TextStyle(
+                fontSize: 14,
+                color: Colors.black,
+                height: 1.4,
+              ),
+              textAlign: TextAlign.justify,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.lightbulb_outline, color: Color(0xFF006064), size: 20),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Recommended Food Types',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _formatFoodTypeRecommendations(aiFoodTypes),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF004D40),
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
+            _showFeedingTips,
+            () => setState(() => _showFeedingTips = !_showFeedingTips),
           ),
         ],
       ],
     );
   }
 
-  Widget _buildMainTab() {
+  // Helper method to build expandable cards
+  Widget _buildExpandableCard(String title, IconData icon, Color color, Widget content, bool isExpanded, VoidCallback onTap) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00BCD4).withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(icon, color: const Color(0xFF00BCD4), size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: const Color(0xFF00BCD4),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isExpanded) ...[
+            const Divider(height: 1, color: Colors.grey),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: content,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // Helper method to format food type recommendations
+  String _formatFoodTypeRecommendations(List<String> foodTypes) {
+    if (foodTypes.isEmpty) return 'No specific recommendations available.';
+    
+    // If multiple food types, show as bullet points
+    if (foodTypes.length > 1) {
+      return foodTypes.map((food) => '• $food').join('\n');
+    } else {
+      return '• ${foodTypes.first}';
+    }
+  }
+
+
+  Widget _buildTankTotalsDisplay() {
+    final fishPortions = _calculationResult?['fish_portions'] as Map<String, dynamic>?;
+    
+    if (fishPortions == null || fishPortions.isEmpty) {
+      return const Text(
+        'No fish data available',
+        style: TextStyle(
+          fontSize: 14,
+          color: Color(0xFF004D40),
+        ),
+        textAlign: TextAlign.left,
+      );
+    }
+
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        // Individual fish breakdown
+        ...fishPortions.entries.map((entry) => Padding(
+          padding: const EdgeInsets.only(bottom: 0),
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
               children: [
-                // Fish input cards
-                ..._fishCards.asMap().entries.map((entry) {
-                  final index = entry.key;
-                  final card = entry.value;
-                  return _buildFishInputCard(card, index);
-                }).toList(),
-                const SizedBox(height: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${entry.value['quantity']}x ${entry.key}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${entry.value['per_fish']} × ${entry.value['quantity']} = ${entry.value['total_portion']}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF666666),
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
-        ),
-        // Bottom action bar: Add Another Fish + Calculate side-by-side
-        Container(
-          padding: const EdgeInsets.all(16),
-          child: Row(
+        )),
+      ],
+    );
+  }
+
+  // Helper method to build fish header with selected fish names and info buttons
+  Widget _buildFishHeader() {
+    final fishData = _calculationResult?['fish_data'] as Map<String, Map<String, dynamic>>?;
+    
+    if (fishData == null || fishData.isEmpty) {
+      return const SizedBox();
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00BCD4).withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header title
+          Row(
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _addFishCard,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    side: const BorderSide(color: Color(0xFF00BCD4)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  icon: const Icon(Icons.add, color: Color(0xFF00BCD4)),
-                  label: const Text(
-                    'Add Fish',
-                    style: TextStyle(color: Color(0xFF00BCD4), fontWeight: FontWeight.w600),
-                  ),
+              const Icon(
+                FontAwesomeIcons.fish,
+                color: Color(0xFF00BCD4),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Selected Fish',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF006064),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _calculateDiet,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00BCD4),
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: Color(0xFF00BCD4),
-                    disabledForegroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+            ],
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // Fish list with info buttons
+          ...fishData.entries.map((entry) {
+            final fishName = entry.key;
+            final fishInfo = entry.value;
+            final scientificName = fishInfo['scientific_name'] as String? ?? 'Unknown';
+            
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  // Fish name and scientific name
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          fishName,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF006064),
+                          ),
+                        ),
+                        Text(
+                          scientificName,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontStyle: FontStyle.italic,
+                            color: Color(0xFF666666),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  child: const Text(
-                    'Calculate Diet',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                  
+                  // Eye icon button
+                  GestureDetector(
+                    onTap: () => _showFishInfoDialog(fishName),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00BCD4).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+                      ),
+                      child: const Icon(
+                        Icons.remove_red_eye,
+                        color: Color(0xFF00BCD4),
+                        size: 20,
+                      ),
                     ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        ],
+      ),
+    );
+  }
+
+  // Show fish info dialog
+  void _showFishInfoDialog(String fishName) {
+    showDialog(
+      context: context,
+      builder: (context) => FishInfoDialog(fishName: fishName),
+    );
+  }
+
+  Widget _buildMainTab() {
+    return Column(
+      children: [
+        const SizedBox(height: 16),
+        // Help button row
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+              const Text(
+                'Diet Calculator',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF006064),
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => const BeginnerGuideDialog(calculatorType: 'diet'),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00ACC1).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFF00ACC1).withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+          child: Row(
+                    mainAxisSize: MainAxisSize.min,
+            children: [
+                      const Icon(
+                        Icons.help_outline,
+                        color: Color(0xFF00ACC1),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 4),
+                      const Text(
+                        'Help',
+                        style: TextStyle(
+                          color: Color(0xFF00ACC1),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: FutureBuilder<Map<String, dynamic>>(
+            future: _fishSelections.length >= 2 ? _getRealTimeCompatibilityResults() : Future.value({}),
+            builder: (context, snapshot) {
+              Map<String, dynamic> compatibilityResults = {};
+              
+              if (snapshot.hasData) {
+                compatibilityResults = snapshot.data!;
+              } else if (snapshot.connectionState == ConnectionState.waiting && _fishSelections.length >= 2) {
+                // Show loading state for compatibility check
+                compatibilityResults = {
+                  'loading': true,
+                };
+              }
+              
+              return FishSelectionWidget(
+                selectedFish: _fishSelections,
+                onFishSelectionChanged: _onFishSelectionChanged,
+                availableFish: _availableFish,
+                canProceed: _fishSelections.isNotEmpty && !_isLoading,
+                onNext: _calculateDiet,
+                compatibilityResults: compatibilityResults,
+                tankShapeWarnings: const {},
+              );
+            },
           ),
         ),
       ],
@@ -2209,122 +1464,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
     );
   }
 
-  String _getFeedingTimesText() {
-    final feedingTimes = _calculationResult?['feeding_times'] as String?;
-    if (feedingTimes != null && feedingTimes.isNotEmpty) {
-      return feedingTimes;
-    }
-    
-    final feedingsPerDay = _calculationResult?['feedings_per_day'] as int?;
-    if (feedingsPerDay == null || feedingsPerDay <= 0) {
-      return 'Best times: Morning, afternoon, and evening';
-    }
-    
-    switch (feedingsPerDay) {
-      case 1:
-        return 'Best time: Morning (8-10 AM)';
-      case 2:
-        return 'Best times: Morning (8-10 AM) and evening (6-8 PM)';
-      case 3:
-        return 'Best times: Morning (8-10 AM), afternoon (2-4 PM), and evening (6-8 PM)';
-      case 4:
-        return 'Best times: Morning (8-9 AM), noon (12-1 PM), afternoon (3-4 PM), and evening (7-8 PM)';
-      case 5:
-        return 'Best times: Early morning (7-8 AM), late morning (10-11 AM), afternoon (2-3 PM), evening (6-7 PM), and night (9-10 PM)';
-      default:
-        return 'Best times: Morning, afternoon, and evening';
-    }
-  }
 
-  Future<Map<String, dynamic>> _generateAIDietRecommendations(Map<String, int> fishSelections) async {
-    try {
-      print('🔄 Generating AI diet recommendations for: ${fishSelections.keys.join(', ')}');
-      final result = await OpenAIService.generateDietRecommendations(fishSelections);
-      print('✅ AI diet recommendations generated successfully');
-      return result;
-    } catch (e) {
-      print('❌ Error generating AI diet recommendations: $e');
-      print('🔄 Falling back to local recommendations...');
-      return await _getFallbackDietRecommendations(fishSelections.keys.toList());
-    }
-  }
-
-
-  Future<Map<String, dynamic>> _getFallbackDietRecommendations(List<String> fishList) async {
-    return await OpenAIService.getFallbackDietRecommendations(fishList);
-  }
-
-
-
-
-  Future<Map<String, dynamic>> _generateFishPortionRecommendation(String fishName, int quantity, List<String> availableFoodTypes) async {
-    try {
-      final prompt = '''
-Generate specific portion recommendations for $quantity $fishName fish.
-Available food types: ${availableFoodTypes.join(', ')}
-
-Provide:
-1. PORTION SIZE: Specific portion size (e.g., "2-3 small pellets", "1 pinch of flakes")
-2. FOOD TYPE: Choose the most appropriate food type from the available list
-3. REASONING: Brief explanation of why this food type and portion size is recommended
-
-Consider:
-- Fish size and dietary needs
-- Quantity of fish
-- Food type compatibility
-- Nutritional balance
-
-Format as structured information.
-''';
-
-      final response = await OpenAIService.generatePortionRecommendation(fishName, quantity, availableFoodTypes);
-      
-      return response;
-    } catch (e) {
-      print('Error generating portion recommendation for $fishName: $e');
-      return _getFallbackPortionRecommendation(fishName, quantity, availableFoodTypes);
-    }
-  }
-
-  Future<Map<String, dynamic>> _getFallbackPortionRecommendation(String fishName, int quantity, List<String> availableFoodTypes) async {
-    final foodType = availableFoodTypes.isNotEmpty ? availableFoodTypes.first : 'pellets';
-    return {
-      'portion_size': '2-3 small $foodType',
-      'food_type': foodType,
-      'reasoning': 'Standard portion for $quantity $fishName fish',
-    };
-  }
-
-
-
-  Future<String> _generateFeedingNotes(List<String> fishNames) async {
-    final prompt = """
-Generate feeding notes for an aquarium with these fish: ${fishNames.join(', ')}.
-Requirements:
-- Output exactly 3 lines.
-- Each line must be a short, plain sentence (no lists, no numbering, no extra text).
-- Do not include species names, headings, or phrases like "Feeding Notes."
-- Content of each line:
-  1) Feeding frequency and timing.
-  2) When to remove uneaten food to maintain water quality.
-  3) A general care note relevant to mixed fish tanks.
-- Keep it concise and user-friendly.
-- Lines must be separated only by a newline.
-""";
-            final response = await OpenAIService.generateFeedingNotes(fishNames);
-    
-    return response;
-  }
-
-  Future<String> _generateAIFeedingTips(List<String> fishNames) async {
-    try {
-      final response = await OpenAIService.generateFeedingNotes(fishNames);
-      return response;
-    } catch (e) {
-      print('Error generating AI feeding tips: $e');
-      return 'Start with smaller portions and observe fish appetite. Remove uneaten food after 2-3 minutes. Adjust feeding based on fish activity and water quality.';
-    }
-  }
 
   Widget _buildCalculatingDialog() {
     return Dialog(
@@ -2342,5 +1482,28 @@ Requirements:
         ),
       ),
     );
+  }
+
+  /// Get feeding frequency display for multiple fish
+  String _getFeedingFrequencyDisplay(Map<String, Map<String, dynamic>> fishData) {
+    if (fishData.isEmpty) return '2 times per day';
+    
+    // Get unique feeding frequencies
+    final frequencies = fishData.values
+        .map((fish) => FishSpeciesService.getFeedingFrequencyDisplay(fish['feeding_frequency']))
+        .toSet()
+        .toList();
+    
+    if (frequencies.length == 1) {
+      return frequencies.first;
+    } else {
+      // Multiple different frequencies - show each fish's frequency
+      final List<String> frequencyList = [];
+      fishData.forEach((name, fish) {
+        final frequency = FishSpeciesService.getFeedingFrequencyDisplay(fish['feeding_frequency']);
+        frequencyList.add('$name: $frequency');
+      });
+      return frequencyList.join('\n');
+    }
   }
 }

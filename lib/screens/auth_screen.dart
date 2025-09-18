@@ -7,10 +7,12 @@ import 'in_app_password_reset_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   final bool showBackButton;
+  final bool initialMode; // true for sign-in, false for sign-up
   
   const AuthScreen({
     super.key,
     this.showBackButton = true,
+    this.initialMode = true, // default to sign-in
   });
 
   @override
@@ -22,7 +24,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authService = AuthService();
-  bool _isLogin = true;
+  late bool _isLogin;
   bool _isLoading = false;
   String? _errorMessage;
   
@@ -34,6 +36,9 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    
+    // Initialize _isLogin based on the initialMode parameter
+    _isLogin = widget.initialMode;
     
     _slideController = AnimationController(
       duration: const Duration(milliseconds: 400),
@@ -89,11 +94,17 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
           password: _passwordController.text,
         );
         if (mounted) {
-          // Only navigate to HomePage immediately for successful login
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const HomePage()),
-          );
+          // Check if we have a back button (meaning we were called from another screen)
+          if (widget.showBackButton) {
+            // Just pop back to the previous screen
+            Navigator.of(context).pop(true); // Return true to indicate successful login
+          } else {
+            // Navigate to HomePage for direct access
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const HomePage()),
+            );
+          }
         }
       } else {
         // For signup, do not navigate immediately. Inform user to check email.
@@ -103,16 +114,6 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
         );
         // Profile will be automatically created by database trigger
         // No need to manually insert into profiles table
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                  'Account created! Please check your email to confirm.'),
-              duration: Duration(seconds: 5),
-            ),
-          );
-          // Do not navigate, AuthWrapper will handle after confirmation
-        }
       }
     } catch (error) {
       setState(() {
@@ -185,7 +186,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
     
     return Scaffold(
       extendBodyBehindAppBar: true,
-      backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+      backgroundColor: isDark ? const Color(0xFF0F172A) : Colors.white,
       body: Stack(
         children: [
           // Background gradient
@@ -201,11 +202,12 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                         const Color(0xFF0F172A),
                       ]
                     : [
-                        const Color(0xFFF8FAFC),
-                        const Color(0xFFE2E8F0),
-                        const Color(0xFFF1F5F9),
+                        Colors.white,
+                        const Color(0xFF00BFB3).withOpacity(0.1),
+                        const Color(0xFF4DD0E1).withOpacity(0.1),
+                        Colors.white,
                       ],
-                stops: const [0.0, 0.5, 1.0],
+                stops: const [0.0, 0.3, 0.7, 1.0],
               ),
             ),
           ),
@@ -229,7 +231,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                         border: Border.all(
                           color: isDark
                               ? Colors.white.withOpacity(0.2)
-                              : const Color(0xFF00ACC1).withOpacity(0.2),
+                              : const Color(0xFF00BFB3).withOpacity(0.2),
                           width: 1,
                         ),
                         boxShadow: [
@@ -252,7 +254,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                               size: 20,
                               color: isDark
                                   ? Colors.white.withOpacity(0.9)
-                                  : const Color(0xFF006064),
+                                  : const Color(0xFF00BFB3),
                             ),
                           ),
                         ),
@@ -290,20 +292,6 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                   width: 160,
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              
-                              // Title
-                              Text(
-                                _isLogin ? 'Welcome to AquaSync' : 'Create Account',
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  color: isDark ? Colors.white : const Color(0xFF006064),
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 32),
-
                               // Email field
                               TextFormField(
                                 controller: _emailController,
@@ -328,7 +316,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                   focusedBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
                                     borderSide: const BorderSide(
-                                      color: Color(0xFF00ACC1),
+                                      color: Color(0xFF00BFB3),
                                       width: 2,
                                     ),
                                   ),
@@ -375,7 +363,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                   focusedBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
                                     borderSide: const BorderSide(
-                                      color: Color(0xFF00ACC1),
+                                      color: Color(0xFF00BFB3),
                                       width: 2,
                                     ),
                                   ),
@@ -413,7 +401,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                         child: const Text(
                                           'Forgot Password?',
                                           style: TextStyle(
-                                            color: Color(0xFF00ACC1),
+                                            color: Color(0xFF00BFB3),
                                             fontSize: 14,
                                             decoration: TextDecoration.underline,
                                           ),
@@ -456,7 +444,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                   borderRadius: BorderRadius.circular(12),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                      color: const Color(0xFF00BFB3).withOpacity(0.3),
                                       blurRadius: 12,
                                       offset: const Offset(0, 6),
                                     ),
@@ -465,7 +453,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                 child: ElevatedButton(
                                   onPressed: _isLoading ? null : _submitForm,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF00ACC1),
+                                    backgroundColor: const Color(0xFF00BFB3),
                                     padding: const EdgeInsets.symmetric(vertical: 16),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12),
@@ -513,18 +501,18 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                     side: BorderSide(
                                       color: isDark 
                                           ? Colors.white.withOpacity(0.2)
-                                          : const Color(0xFF00ACC1),
+                                          : const Color(0xFF00BFB3),
                                     ),
                                   ),
                                   icon: FaIcon(
                                     FontAwesomeIcons.google,
-                                    color: isDark ? Colors.white.withOpacity(0.9) : const Color(0xFF00ACC1),
+                                    color: isDark ? Colors.white.withOpacity(0.9) : const Color(0xFF00BFB3),
                                   ),
                                   label: Text(
                                     'Continue with Google',
                                     style: TextStyle(
                                       fontSize: 16,
-                                      color: isDark ? Colors.white.withOpacity(0.9) : const Color(0xFF00ACC1),
+                                      color: isDark ? Colors.white.withOpacity(0.9) : const Color(0xFF00BFB3),
                                     ),
                                   ),
                                 ),
@@ -560,7 +548,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                     child: Text(
                                       _isLogin ? 'Sign Up' : 'Sign In',
                                       style: const TextStyle(
-                                        color: Color(0xFF00ACC1),
+                                        color: Color(0xFF00BFB3),
                                         decoration: TextDecoration.underline,
                                         fontWeight: FontWeight.bold,
                                       ),

@@ -28,6 +28,8 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
         return _getDimensionsCalculatorGuide();
       case 'volume':
         return _getVolumeCalculatorGuide();
+      case 'diet':
+        return _getDietCalculatorGuide();
       default:
         return _getGeneralGuide();
     }
@@ -63,18 +65,17 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
         tips: [
           'Red warnings indicate incompatible fish',
           'Green results show successful combinations',
-          'Check oxygen and filtration needs',
           'Save successful calculations to your history',
         ],
       ),
       GuideSection(
         title: 'Tank Shape Considerations',
-        icon: Icons.crop_square,
+        icon: Icons.crop_landscape,
         content: 'Different tank shapes affect fish behavior and water circulation.',
         tips: [
-          'Rectangle tanks: Best for most fish, good swimming space',
-          'Square tanks: Suitable for territorial fish',
+          'Rectangle/Square tanks: Best for most fish, good swimming space',
           'Bowl tanks: Only for small, low-bioload fish',
+          'Cylinder tanks: Limited horizontal swimming space',
           'Consider fish swimming patterns when choosing shape',
         ],
       ),
@@ -84,46 +85,47 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
   List<GuideSection> _getDimensionsCalculatorGuide() {
     return [
       GuideSection(
-        title: 'Tank Dimensions Calculator',
+        title: 'Dimensions Calculator',
         icon: FontAwesomeIcons.ruler,
-        content: 'Calculate how many fish can fit in your specific tank dimensions.',
+        content: 'Calculate fish capacity based on your tank\'s specific length, width, and height measurements.',
         tips: [
-          'Measure your tank accurately',
-          'Consider usable space vs. total volume',
-          'Account for decorations and equipment',
+          'Perfect for custom or irregular tank shapes',
+          'Enter exact dimensions in cm or inches',
+          'Calculator converts to volume automatically',
+          'Accounts for different tank shapes (rectangle, cylinder, bowl)',
         ],
       ),
       GuideSection(
         title: 'Measuring Your Tank',
         icon: Icons.straighten,
-        content: 'Use accurate measurements for the best results. Choose between centimeters or inches.',
+        content: 'Get accurate measurements for the best fish stocking recommendations.',
         tips: [
-          'Measure internal dimensions only',
+          'Measure internal dimensions only (not external)',
           'Length × Width × Height = Volume',
-          'Subtract space for substrate and decorations',
-          'Don\'t fill tank to the very top',
+          'Subtract space for substrate (2-3 inches)',
+          'Account for decorations and equipment space',
         ],
       ),
       GuideSection(
-        title: 'Tank Shape Guide',
-        icon: Icons.crop_square,
-        content: 'Different tank shapes have different benefits for fish keeping.',
+        title: 'Tank Shape Selection',
+        icon: Icons.crop_landscape,
+        content: 'Choose the shape that matches your tank for accurate calculations.',
         tips: [
-          'Long tanks: Better for active swimmers',
-          'Tall tanks: Good for vertical territories',
-          'Cube tanks: Suitable for less active fish',
-          'Surface area matters more than height for oxygenation',
+          'Rectangle/Square: Most common, best for most fish',
+          'Cylinder: Limited horizontal swimming space',
+          'Bowl: Only for nano fish under 8cm',
+          'Shape affects fish behavior and swimming patterns',
         ],
       ),
       GuideSection(
-        title: 'Bioload Management',
+        title: 'Fish Compatibility Check',
         icon: Icons.eco,
-        content: 'Understanding your tank\'s biological capacity is crucial for fish health.',
+        content: 'The calculator checks if your selected fish are compatible with the tank shape and size.',
         tips: [
-          'More fish = more waste = more filtration needed',
-          'Large fish produce more waste than small fish',
-          'Overstocking leads to poor water quality',
-          'Start with fewer fish and add gradually',
+          'Large fish need more horizontal swimming space',
+          'Some fish are incompatible with bowl tanks',
+          'Check warnings before adding fish',
+          'Consider adult fish size, not current size',
         ],
       ),
     ];
@@ -134,44 +136,94 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
       GuideSection(
         title: 'Volume Calculator',
         icon: FontAwesomeIcons.water,
-        content: 'Determine how many fish can safely live in your known tank volume.',
+        content: 'Calculate fish capacity when you already know your tank\'s volume in liters or gallons.',
         tips: [
-          'Know your tank\'s exact volume',
-          'Consider net volume vs. total volume',
-          'Account for displacement from decorations',
+          'Ideal when you know your tank\'s exact volume',
+          'No need to measure dimensions',
+          'Works with any tank shape',
+          'Quick and easy fish stocking calculation',
         ],
       ),
       GuideSection(
-        title: 'Volume Units',
+        title: 'Volume Input',
         icon: Icons.science,
-        content: 'Choose between liters and gallons for your tank volume measurement.',
+        content: 'Enter your tank volume in the unit you prefer - liters or gallons.',
         tips: [
           'Liters (L): Common in metric countries',
-          'Gallons (gal): Common in US',
+          'Gallons (gal): Common in US and UK',
           '1 gallon ≈ 3.79 liters',
-          'Be consistent with your measurements',
+          'Use the unit you\'re most comfortable with',
         ],
       ),
       GuideSection(
-        title: 'Stocking Guidelines',
+        title: 'Fish Selection',
         icon: FontAwesomeIcons.fish,
-        content: 'General rules for how many fish can fit in your tank volume.',
+        content: 'Add the fish species you want to keep and see how many fit in your tank.',
         tips: [
-          'Freshwater: ~1 inch of fish per gallon',
-          'Saltwater: ~1 inch of fish per 2-3 gallons',
-          'Consider adult fish size, not current size',
-          'Aggressive fish need more space per individual',
+          'Search for fish by name',
+          'Add multiple species for community tanks',
+          'Adjust quantities with +/- buttons',
+          'Check compatibility warnings',
         ],
       ),
       GuideSection(
-        title: 'Water Quality',
-        icon: Icons.water_damage,
-        content: 'Larger volumes are more stable and forgiving for beginners.',
+        title: 'Stocking Recommendations',
+        icon: Icons.recommend,
+        content: 'Get personalized recommendations based on your tank volume and selected fish.',
         tips: [
-          'Bigger tanks = more stable water parameters',
-          'Easier to maintain consistent temperature',
-          'Dilutes waste products more effectively',
-          'More room for error in feeding and care',
+          'Considers fish adult size and behavior',
+          'Accounts for bioload and waste production',
+          'Provides optimal fish quantities',
+          'Shows water parameter requirements',
+        ],
+      ),
+    ];
+  }
+
+  List<GuideSection> _getDietCalculatorGuide() {
+    return [
+      GuideSection(
+        title: 'Welcome to Diet Calculator',
+        icon: Icons.restaurant,
+        content: 'This tool helps you calculate the optimal feeding amounts and schedules for your fish combination.',
+        tips: [
+          'Select fish species you want to feed together',
+          'The calculator considers each fish\'s dietary needs',
+          'Get portion recommendations per fish and total',
+          'View feeding schedules and food type suggestions',
+        ],
+      ),
+      GuideSection(
+        title: 'Selecting Fish Species',
+        icon: FontAwesomeIcons.fish,
+        content: 'Choose the fish you want to calculate feeding for. You can select multiple species for community tanks.',
+        tips: [
+          'Browse fish by visual cards with images',
+          'Use search to find specific fish quickly',
+          'Adjust quantities with +/- buttons',
+          'Check compatibility before calculating',
+        ],
+      ),
+      GuideSection(
+        title: 'Understanding Feeding Results',
+        icon: Icons.analytics,
+        content: 'The calculator provides detailed feeding information based on each fish\'s dietary requirements.',
+        tips: [
+          'Per-fish breakdown shows individual portions',
+          'Total feeding amount for all fish combined',
+          'Feeding frequency recommendations',
+          'Suggested food types for each species',
+        ],
+      ),
+      GuideSection(
+        title: 'Feeding Tips & Best Practices',
+        icon: Icons.lightbulb,
+        content: 'Follow these guidelines to ensure your fish receive proper nutrition and maintain good health.',
+        tips: [
+          'Feed small amounts 2-3 times per day',
+          'Only feed what fish can consume in 2-3 minutes',
+          'Vary food types for balanced nutrition',
+          'Monitor fish behavior and adjust portions as needed',
         ],
       ),
     ];
@@ -216,7 +268,7 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [Color(0xFF006064), Color(0xFF00ACC1)],
+                  colors: [Color(0xFF00BFB3), Color(0xFF4DD0E1)],
                 ),
               ),
               child: Row(
@@ -255,7 +307,7 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: _currentPage == index
-                          ? const Color(0xFF00BCD4)
+                          ? const Color(0xFF00BFB3)
                           : Colors.grey.shade300,
                     ),
                   ),
@@ -297,7 +349,7 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
                     child: Text(
                       'Previous',
                       style: TextStyle(
-                        color: _currentPage > 0 ? const Color(0xFF006064) : Colors.grey,
+                        color: _currentPage > 0 ? const Color(0xFF00BFB3) : Colors.grey,
                       ),
                     ),
                   ),
@@ -317,7 +369,7 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
                       }
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00BCD4),
+                      backgroundColor: const Color(0xFF00BFB3),
                     ),
                     child: Text(
                       _currentPage < guideContent.length - 1 ? 'Next' : 'Got It!',
@@ -343,8 +395,12 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: const Color(0xFFE0F7FA),
+              color: const Color(0xFF00BFB3).withOpacity(0.1),
               borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFF00BFB3).withOpacity(0.2),
+                width: 1,
+              ),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -352,7 +408,7 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
                 Icon(
                   section.icon,
                   size: 40,
-                  color: const Color(0xFF006064),
+                  color: const Color(0xFF00BFB3),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -360,7 +416,7 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF006064),
+                    color: Color(0xFF00BFB3),
                   ),
                   textAlign: TextAlign.center,
                   maxLines: 2,
@@ -405,14 +461,14 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
                 children: [
                   const Row(
                     children: [
-                      Icon(Icons.tips_and_updates, color: Color(0xFF00BCD4)),
+                      Icon(Icons.tips_and_updates, color: Color(0xFF00BFB3)),
                       SizedBox(width: 8),
                       Text(
                         'Tips',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
+                          color: Color(0xFF00BFB3),
                         ),
                       ),
                     ],
@@ -431,7 +487,7 @@ class _BeginnerGuideDialogState extends State<BeginnerGuideDialog> {
                                 width: 6,
                                 height: 6,
                                 decoration: const BoxDecoration(
-                                  color: Color(0xFF00BCD4),
+                                  color: Color(0xFF00BFB3),
                                   shape: BoxShape.circle,
                                 ),
                               ),

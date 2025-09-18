@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'screens/homepage.dart';
+import 'screens/capture.dart';
+import 'screens/auth_screen.dart';
 import 'package:provider/provider.dart';
 import 'screens/logbook_provider.dart';
-import 'providers/user_plan_provider.dart';
+import 'providers/tank_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'screens/auth_screen.dart';
 import 'services/auth_service.dart';
-import 'screens/email_not_confirmed_screen.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 void main() async {
@@ -44,8 +44,8 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider<LogBookProvider>(create: (_) => LogBookProvider()),
+        ChangeNotifierProvider<TankProvider>(create: (_) => TankProvider()),
         Provider<AuthService>(create: (_) => AuthService()),
-        ChangeNotifierProvider<UserPlanProvider>(create: (_) => UserPlanProvider()),
       ],
       child: const MyApp(),
     ),
@@ -123,10 +123,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
             _currentUser = latestUserResponse.user;
             _isLoadingUser = false;
           });
-          // Fetch user's plan when they sign in
-          Provider.of<UserPlanProvider>(context, listen: false).fetchPlan();
-          // Subscribe to realtime plan changes
-          Provider.of<UserPlanProvider>(context, listen: false).subscribeToPlanChanges();
         }
       } else {
         if (mounted) {
@@ -134,10 +130,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
             _currentUser = null;
             _isLoadingUser = false;
           });
-          // Reset plan to free on sign-out to avoid stale plan leakage
-          Provider.of<UserPlanProvider>(context, listen: false).setPlan('free');
-          // Unsubscribe from realtime when signed out
-          Provider.of<UserPlanProvider>(context, listen: false).unsubscribeFromPlanChanges();
         }
       }
     });
@@ -157,10 +149,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
           _currentUser = latestUserResponse.user;
           _isLoadingUser = false;
         });
-        // Fetch user's plan when they sign in
-        Provider.of<UserPlanProvider>(context, listen: false).fetchPlan();
-        // Subscribe to realtime plan changes
-        Provider.of<UserPlanProvider>(context, listen: false).subscribeToPlanChanges();
       }
     } else {
       if (mounted) {
@@ -168,9 +156,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
           _currentUser = null;
           _isLoadingUser = false;
         });
-        // Unsubscribe and reset plan on app start with no session
-        Provider.of<UserPlanProvider>(context, listen: false).unsubscribeFromPlanChanges();
-        Provider.of<UserPlanProvider>(context, listen: false).setPlan('free');
       }
     }
   }
@@ -189,9 +174,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
         },
       );
     }
-    // After onboarding, go directly to HomePage regardless of auth status
+    // After onboarding, go directly to Capture screen to start fish identification
     // Authentication will be required only when trying to save or use premium features
-    return const HomePage();
+    return const CaptureScreen();
   }
 }
 
@@ -203,129 +188,310 @@ class OnboardingScreen extends StatefulWidget {
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends State<OnboardingScreen> {
-  final PageController _controller = PageController();
-  int _currentPage = 0;
+class _OnboardingScreenState extends State<OnboardingScreen> 
+    with TickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+  late Animation<double> _scaleAnimation;
+  late Animation<Offset> _slideAnimation;
 
-  final List<_OnboardingPageData> _pages = [
-    _OnboardingPageData(
-      imageAsset: 'lib/icons/Identify_Fishes.png',
-      headline: 'Identify fishes',
-      description: 'Accurate Fish Identification',
-    ),
-    _OnboardingPageData(
-      imageAsset: 'lib/icons/Document_Fishes.png',
-      headline: 'Document fishes',
-      description: 'Save Captured Fish, Calculation Results, and Compatibility Results',
-    ),
-    _OnboardingPageData(
-      imageAsset: 'lib/icons/More_Recommendation.png',
-      headline: 'More Recommendation',
-      description: 'Helps build suitable fish environment',
-    ),
-    _OnboardingPageData(
-      imageAsset: 'lib/icons/Create_Aquarium.png',
-      headline: 'Create your\nPerfect Aquarium',
-      description: '',
-      buttonText: 'Get Started',
-    ),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    );
 
-  void _nextPage() {
-    if (_currentPage < _pages.length - 1) {
-      _controller.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
-    } else {
-      if (widget.onFinish != null) widget.onFinish!();
-    }
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: const Interval(0.0, 0.6, curve: Curves.easeOut),
+    ));
+
+    _scaleAnimation = Tween<double>(
+      begin: 0.95,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: const Interval(0.0, 0.4, curve: Curves.easeOut),
+    ));
+
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.1),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: const Interval(0.2, 0.8, curve: Curves.easeOut),
+    ));
+
+    // Delay the animation start to ensure everything is initialized
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) {
+        _animationController.forward();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Column(
-              children: [
-                const SizedBox(height: 32),
-                const Center(
-                  child: _AquaSyncTitle(),
-                ),
-                const SizedBox(height: 18),
-                Expanded(
-                  child: PageView.builder(
-                    controller: _controller,
-                    itemCount: _pages.length,
-                    onPageChanged: (i) => setState(() => _currentPage = i),
-                    itemBuilder: (context, i) {
-                      final data = _pages[i];
-                      return _OnboardingCard(
-                        data: data,
-                        isLast: i == _pages.length - 1,
-                        onButton: _nextPage,
-                        currentPage: _currentPage,
-                        totalPages: _pages.length,
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-            if (_currentPage < _pages.length - 1)
-              Positioned(
-                top: 16,
-                right: 16,
-                child: TextButton(
-                  onPressed: () {
-                    if (widget.onFinish != null) widget.onFinish!();
-                  },
-                  child: const Text(
-                    'Skip',
-                    style: TextStyle(
-                      color: Colors.grey,
-                      fontSize: 16,
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white,
+              const Color(0xFF00BFB3).withOpacity(0.1),
+              const Color(0xFF4DD0E1).withOpacity(0.1),
+              Colors.white,
+            ],
+            stops: const [0.0, 0.3, 0.7, 1.0],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Header with cancel button
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const SizedBox(width: 60),
+                    FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: TextButton(
+                        onPressed: () {
+                          if (widget.onFinish != null) widget.onFinish!();
+                        },
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(
+                            color: Color(0xFF00BFB3),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
                     ),
+                  ],
+                ),
+              ),
+              
+              // Main content - fixed layout
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Animated AquaSync logo
+                      ScaleTransition(
+                        scale: _scaleAnimation,
+                        child: FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: Image.asset(
+                            'lib/icons/AquaSync_Logo.png',
+                            fit: BoxFit.contain,
+                            width: 200,
+                            height: 200,
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 24),
+                      
+                      // Features list
+                      SlideTransition(
+                        position: _slideAnimation,
+                        child: FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: const _FeatureItem(
+                            icon: Icons.camera_alt,
+                            title: 'Identify Fish Species',
+                            description: 'AI-powered fish identification',
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 12),
+                      
+                      SlideTransition(
+                        position: _slideAnimation,
+                        child: FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: const _FeatureItem(
+                            icon: Icons.group,
+                            title: 'Check Compatibility',
+                            description: 'Find perfect tank mates for your fish',
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 12),
+                      
+                      SlideTransition(
+                        position: _slideAnimation,
+                        child: FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: const _FeatureItem(
+                            icon: Icons.collections_bookmark,
+                            title: 'Save Your Collection',
+                            description: 'Keep track of your fish collection',
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 24),
+                      
+                      // Animated get started button
+                      ScaleTransition(
+                        scale: _scaleAnimation,
+                        child: FadeTransition(
+                          opacity: _fadeAnimation,
+                          child: SizedBox(
+                            width: 200,
+                            child: ElevatedButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const AuthScreen(
+                                      showBackButton: true,
+                                      initialMode: false, // Start in sign-up mode
+                                    ),
+                                  ),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF00BFB3),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                elevation: 4,
+                                shadowColor: const Color(0xFF00BFB3).withOpacity(0.3),
+                              ),
+                              child: const Text(
+                                'Get Started',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 8),
+                      
+                      // Animated sign in option
+                      FadeTransition(
+                        opacity: _fadeAnimation,
+                        child: TextButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const AuthScreen(
+                                  showBackButton: true,
+                                  initialMode: true, // Start in sign-in mode
+                                ),
+                              ),
+                            );
+                          },
+                          child: const Text(
+                            'Already have an account? Sign In',
+                            style: TextStyle(
+                              color: Color(0xFF00BFB3),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _AquaSyncTitle extends StatelessWidget {
-  const _AquaSyncTitle();
+class _FeatureItem extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String description;
+  
+  const _FeatureItem({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+  
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 32.0, top: 0, bottom: 0),
-      child: Column(
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF00BFB3).withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFF00BFB3).withOpacity(0.1),
+          width: 1,
+        ),
+      ),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Welcome to',
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
-            ),
+          Icon(
+            icon,
+            color: const Color(0xFF00BFB3),
+            size: 32,
           ),
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                'AquaSync',
-                style: TextStyle(
-                  fontSize: 50,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF009688),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF00BFB3),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 6),
+                Text(
+                  description,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: Colors.grey,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -333,137 +499,6 @@ class _AquaSyncTitle extends StatelessWidget {
   }
 }
 
-class _OnboardingPageData {
-  final String? imageAsset;
-  final String headline;
-  final String description;
-  final String? buttonText;
-  _OnboardingPageData({
-    this.imageAsset,
-    required this.headline,
-    required this.description,
-    this.buttonText,
-  });
-}
-
-class _OnboardingCard extends StatelessWidget {
-  final _OnboardingPageData data;
-  final bool isLast;
-  final VoidCallback onButton;
-  final int currentPage;
-  final int totalPages;
-  const _OnboardingCard({
-    required this.data,
-    required this.isLast,
-    required this.onButton,
-    required this.currentPage,
-    required this.totalPages,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final double cardWidth = MediaQuery.of(context).size.width;
-    final double cardHeight = MediaQuery.of(context).size.height - 120;
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Container(
-        width: cardWidth,
-        height: cardHeight,
-        decoration: const BoxDecoration(
-          color: Color(0xFFB2EBF2),
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(28),
-            topRight: Radius.circular(28),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const Spacer(flex: 2),
-              if (data.imageAsset != null)
-                Center(
-                  child: Image.asset(
-                    data.imageAsset!,
-                    width: 150,
-                    height: 150,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-              const SizedBox(height: 36),
-              Center(
-                child: Text(
-                  data.headline,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
-                ),
-              ),
-              if (data.description.isNotEmpty) ...[
-                const SizedBox(height: 18),
-                Center(
-                  child: Text(
-                    data.description,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ),
-              ],
-              if (data.buttonText != null) ...[
-                const SizedBox(height: 32),
-                Center(
-                  child: SizedBox(
-                    width: 200,
-                    child: ElevatedButton(
-                      onPressed: onButton,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00BFB3),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                      ),
-                      child: Text(
-                        data.buttonText!,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-              const Spacer(flex: 3),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(totalPages, (i) => AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 16),
-                  width: currentPage == i ? 16 : 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: currentPage == i ? const Color(0xFF00BFB3) : Colors.black12,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                )),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class FeatureScreen extends StatelessWidget {
   final String title;

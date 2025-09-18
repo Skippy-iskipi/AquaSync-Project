@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/auth_screen.dart';
 
 class AuthRequiredDialog extends StatefulWidget {
@@ -89,6 +90,14 @@ class _AuthRequiredDialogState extends State<AuthRequiredDialog>
     
     // Haptic feedback
     HapticFeedback.lightImpact();
+    
+    // Listen for auth state changes
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedIn && mounted) {
+        // User has signed in, close the dialog
+        Navigator.of(context).pop();
+      }
+    });
   }
 
   @override
@@ -305,11 +314,6 @@ class _AuthRequiredDialogState extends State<AuthRequiredDialog>
         'icon': Icons.collections_bookmark_outlined,
         'text': 'Access your personal collection',
         'color': const Color(0xFF3B82F6)
-      },
-      {
-        'icon': Icons.auto_awesome_outlined,
-        'text': 'Unlock premium AI features',
-        'color': const Color(0xFF8B5CF6)
       },
       {
         'icon': Icons.devices_outlined,

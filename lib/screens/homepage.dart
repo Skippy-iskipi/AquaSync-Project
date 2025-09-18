@@ -6,17 +6,19 @@ import '../screens/logbook.dart';
 import '../screens/fish_list_screen.dart';
 import 'package:provider/provider.dart';
 import 'logbook_provider.dart';
-import '../providers/user_plan_provider.dart';
+
 import 'dart:io';
+import 'dart:async';
 import '../models/water_calculation.dart';
 import '../models/fish_calculation.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_prediction.dart';
 import '../models/diet_calculation.dart';
+import '../models/fish_volume_calculation.dart';
+import '../models/tank.dart';
 import '../screens/calculator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/auth_screen.dart';
-import '../screens/subscription_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/guide_overlay.dart';
 
@@ -41,18 +43,14 @@ class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   int _logBookTabIndex = 0;
   bool _showGuide = false;
+  Timer? _timeUpdateTimer;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialTabIndex;
     _checkFirstTime();
-    // Ensure user's subscription plan is fetched on first build
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        Provider.of<UserPlanProvider>(context, listen: false).fetchPlan();
-      }
-    });
+    _startTimeUpdateTimer();
     // The LogBookProvider is now self-initializing.
     // This call is redundant and has been removed to prevent race conditions.
     /*
@@ -60,6 +58,23 @@ class _HomePageState extends State<HomePage> {
       Provider.of<LogBookProvider>(context, listen: false).init();
     });
     */
+  }
+
+  void _startTimeUpdateTimer() {
+    // Update time display every minute for real-time relative time
+    _timeUpdateTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          // This will trigger a rebuild of the recent activity cards
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timeUpdateTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _checkFirstTime() async {
@@ -124,96 +139,138 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildHomeContent() {
     return Container(
-      color: Colors.white,
+      color: Colors.grey[50],
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 24),
+            const SizedBox(height: 32),
             // Explore Section
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: const [
-                      Icon(Icons.remove_red_eye, color: Color(0xFF00BCD4), size: 22),
-                      SizedBox(width: 8),
+                      Icon(Icons.remove_red_eye, color: Color(0xFF00BFB3), size: 24),
+                      SizedBox(width: 10),
                       Text(
                         'Explore',
                         style: TextStyle(
-                          fontSize: 20,
+                          fontSize: 22,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
+                          color: Color(0xFF00BFB3),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   // Explore Card
                   _ModernExploreCard(),
                 ],
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 40),
             // Recent Activity Section
             Padding(
-              padding: const EdgeInsets.only(left: 20, right: 20, bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Row(
                 children: const [
-                  Icon(Icons.show_chart, color: Color(0xFF00C853), size: 22),
-                  SizedBox(width: 8),
+                  Icon(Icons.show_chart, color: Color(0xFF00BFB3), size: 24),
+                  SizedBox(width: 10),
                   Text(
                     'Recent Activity',
                     style: TextStyle(
-                      fontSize: 20,
+                      fontSize: 22,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF006064),
+                      color: Color(0xFF00BFB3),
                     ),
                   ),
                 ],
               ),
             ),
+            const SizedBox(height: 20),
             Consumer<LogBookProvider>(
               builder: (context, logBookProvider, child) {
                 final allItems = logBookProvider.allItems;
                 if (allItems.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-                    child: Center(
-                      child: Text(
-                        'No recent activities yet',
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontSize: 16,
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                    padding: const EdgeInsets.all(32),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
                         ),
-                      ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Icon(
+                            Icons.inbox_outlined,
+                            size: 48,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        const Text(
+                          'No recent activities yet',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Learn more about fish species, check their compatibility, and more.',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
                   );
                 }
                 return Column(
                   children: allItems.take(5).map((item) => _ModernRecentActivityCard(item: item, onTap: () {
                     setState(() {
-                      if (item is CompatibilityResult) {
-                        _selectedIndex = 3;
-                        _logBookTabIndex = 2;
-                      } else if (item is FishPrediction) {
-                        _selectedIndex = 3;
-                        _logBookTabIndex = 0;
-                      } else if (item is WaterCalculation || item is FishCalculation) {
+                      if (item is FishPrediction) {
+                        // Fish captured -> Fish Collection tab
                         _selectedIndex = 3;
                         _logBookTabIndex = 1;
-                      } else if (item is DietCalculation) {
+                      } else if (item is WaterCalculation || item is FishCalculation || item is DietCalculation || item is FishVolumeCalculation) {
+                        // All calculators -> Fish Calculator tab
                         _selectedIndex = 3;
-                        _logBookTabIndex = 1; // Diet calculations go to Calculator tab
+                        _logBookTabIndex = 2;
+                      } else if (item is CompatibilityResult) {
+                        // Compatibility -> Fish Compatibility tab
+                        _selectedIndex = 3;
+                        _logBookTabIndex = 3;
+                      } else if (item is Tank) {
+                        // Tank -> My Tanks tab
+                        _selectedIndex = 3;
+                        _logBookTabIndex = 0;
                       }
                     });
                   })).toList(),
                 );
               },
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 32),
           ],
         ),
       ),
@@ -228,120 +285,55 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final bool isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
     
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(35),
-        child: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          title: Text(
-            _selectedIndex == 0 ? 'AquaSync' :
-            _selectedIndex == 1 ? 'Sync' :
-            _selectedIndex == 2 ? 'Calculator' : 'History',
-            style: const TextStyle(
-              color: Color(0xFF006064),
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.white,
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(35),
+            child: AppBar(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              automaticallyImplyLeading: false,
+              title: Text(
+                _selectedIndex == 0 ? 'AquaSync' :
+                _selectedIndex == 1 ? 'Sync' :
+                _selectedIndex == 2 ? 'Calculator' : 'Profile',
+                style: const TextStyle(
+                  color: Color(0xFF00BFB3),
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              actions: [],
             ),
           ),
-          actions: [
-            // Upgrade Button for Free Users
-            Consumer<UserPlanProvider>(
-              builder: (context, userPlanProvider, child) {
-                final plan = userPlanProvider.plan.toLowerCase().replaceAll(' ', '_');
-                if (plan == 'free') {
-                  return Container(
-                    margin: const EdgeInsets.only(right: 12),
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const SubscriptionPage()),
-                        );
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00BFB3),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        elevation: 2,
-                      ),
-                      child: const Text(
-                        'Upgrade',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  );
-                }
-                return const SizedBox.shrink();
+          body: _getSelectedScreen(),
+          floatingActionButton: null, // We'll handle FAB positioning in the bottom navigation
+          bottomNavigationBar: Container(
+            key: const ValueKey('stable_bottom_nav'),
+            child: BottomNavigation(
+              selectedIndex: _selectedIndex,
+              onItemTapped: _onItemTapped,
+              exploreKey: null,
+              logbookKey: null,
+              calculatorKey: null,
+              syncKey: null,
+              isKeyboardVisible: isKeyboardVisible,
+              onCapturePressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const CaptureScreen()),
+                );
               },
             ),
-            // Profile Icon
-            Container(
-              margin: const EdgeInsets.only(right: 12),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: const Color(0xFF006064),
-                  width: 4,
-                ),
-              ),
-              child: IconButton(
-                icon: const Icon(
-                  Icons.person,
-                  color: Color(0xFF006064),
-                  size: 32,
-                ),
-                onPressed: () => _showUserInfo(context),
-                tooltip: 'Profile',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 40,
-                  minHeight: 40,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
-      body: Stack(
-        children: [
-          _getSelectedScreen(),
-          if (_showGuide)
-            GuideOverlay(
-              onFinish: _finishGuide,
-            ),
-          
-        ],
-      ),
-      floatingActionButton: isKeyboardVisible ? null : FloatingActionButton(
-        key: GuideOverlay.captureKey,
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const CaptureScreen()),
-          );
-        },
-        backgroundColor: Colors.white,
-        shape: const CircleBorder(),
-        child: Image.asset('lib/icons/capture_icon.png', width: 60, height: 60),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: BottomNavigation(
-        selectedIndex: _selectedIndex,
-        onItemTapped: _onItemTapped,
-        exploreKey: GuideOverlay.exploreKey,
-        logbookKey: GuideOverlay.logbookKey,
-        calculatorKey: GuideOverlay.calculatorKey,
-        syncKey: GuideOverlay.syncKey,
-      ),
+        if (_showGuide)
+          GuideOverlay(
+            onFinish: _finishGuide,
+          ),
+      ],
     );
   }
 }
@@ -360,7 +352,7 @@ class _ModernExploreCard extends StatelessWidget {
               context,
               MaterialPageRoute(
                 builder: (context) => const FishListScreen(
-                  title: 'Fish Collection',
+                  title: 'Fish Database',
                   isSaltWater: null,
                 ),
               ),
@@ -368,41 +360,120 @@ class _ModernExploreCard extends StatelessWidget {
           },
           child: Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF00BCD4), Color(0xFF2196F3)],
+                colors: [Color(0xFF00BFB3), Color(0xFF4DD0E1)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Fish Collection',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                  ],
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF00BFB3).withOpacity(0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Discover and learn about different fish species',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w400,
+              ],
+            ),
+            child: Stack(
+              children: [
+                // Background pattern
+                Positioned(
+                  top: -20,
+                  right: -20,
+                  child: Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withOpacity(0.1),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                Positioned(
+                  bottom: -30,
+                  left: -30,
+                  child: Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withOpacity(0.05),
+                    ),
+                  ),
+                ),
+                // Content
+                Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const SizedBox(width: 20),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Fish Database',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                const Text(
+                                  'Discover and learn about different fish species',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w400,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text(
+                              'Explore Now',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.arrow_forward,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -422,11 +493,27 @@ class _ModernRecentActivityCard extends StatelessWidget {
     if (date == null) return '';
     final now = DateTime.now();
     final diff = now.difference(date);
-    if (diff.inSeconds < 60) return 'Just now';
-    if (diff.inMinutes < 60) return diff.inMinutes == 1 ? '1 minute ago' : '${diff.inMinutes} minutes ago';
-    if (diff.inHours < 24) return diff.inHours == 1 ? '1 hour ago' : '${diff.inHours} hours ago';
-    if (diff.inDays == 1) return 'Yesterday';
-    return diff.inDays == 1 ? '1 day ago' : '${diff.inDays} days ago';
+    
+    if (diff.inSeconds < 60) {
+      return 'Just now';
+    } else if (diff.inMinutes < 60) {
+      return diff.inMinutes == 1 ? '1 minute ago' : '${diff.inMinutes} minutes ago';
+    } else if (diff.inHours < 24) {
+      return diff.inHours == 1 ? '1 hour ago' : '${diff.inHours} hours ago';
+    } else if (diff.inDays == 1) {
+      return 'Yesterday';
+    } else if (diff.inDays < 7) {
+      return '${diff.inDays} days ago';
+    } else if (diff.inDays < 30) {
+      final weeks = (diff.inDays / 7).floor();
+      return weeks == 1 ? '1 week ago' : '$weeks weeks ago';
+    } else if (diff.inDays < 365) {
+      final months = (diff.inDays / 30).floor();
+      return months == 1 ? '1 month ago' : '$months months ago';
+    } else {
+      final years = (diff.inDays / 365).floor();
+      return years == 1 ? '1 year ago' : '$years years ago';
+    }
   }
 
   @override
@@ -461,8 +548,9 @@ class _ModernRecentActivityCard extends StatelessWidget {
       iconColor = Colors.teal;
       time = _relativeTime(item.dateCalculated);
     } else if (item is CompatibilityResult) {
-      title = '${item.fish1Name} & ${item.fish2Name}';
-      subtitle = item.isCompatible ? 'Compatible' : 'Not Compatible';
+      final fishNames = item.selectedFish.keys.join(' & ');
+      title = fishNames;
+      subtitle = item.compatibilityLevel == 'Compatible' ? 'Compatible' : 'Not Compatible';
       icon = Icons.compare_arrows;
       iconColor = Colors.deepPurple;
       time = _relativeTime(item.dateChecked);
@@ -473,57 +561,131 @@ class _ModernRecentActivityCard extends StatelessWidget {
       icon = Icons.restaurant;
       iconColor = Colors.orange;
       time = _relativeTime(item.dateCalculated);
+    } else if (item is Tank) {
+      title = 'Tank Created';
+      final fishCount = item.fishSelections.values.fold(0, (sum, count) => sum + count);
+      subtitle = '${item.name}\n${fishCount} fish • ${item.volume.toStringAsFixed(1)}L';
+      icon = Icons.water;
+      iconColor = Colors.cyan;
+      time = _relativeTime(item.createdAt ?? item.dateCreated);
     } else {
-      title = 'Activity';
-      subtitle = 'Details about the activity';
-      icon = Icons.info_outline;
-      iconColor = Colors.grey;
-      time = 'Some time ago';
+      // Skip unknown item types - don't display placeholder activities
+      return const SizedBox.shrink();
     }
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       child: GestureDetector(
         onTap: onTap,
         child: Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 15,
+                offset: const Offset(0, 5),
               ),
             ],
           ),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: iconColor.withOpacity(0.15),
-              child: Icon(icon, color: iconColor),
-            ),
-            title: Text(
-              title,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-                color: Colors.black,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: iconColor,
+                    width: 4,
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            iconColor.withOpacity(0.1),
+                            iconColor.withOpacity(0.05),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Icon(icon, color: iconColor, size: 26),
+                    ),
+                    const SizedBox(width: 18),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 17,
+                              color: Colors.black87,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            subtitle,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey,
+                              height: 1.4,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: iconColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            time,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: iconColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_forward_ios,
+                            color: Colors.grey,
+                            size: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-            subtitle: Text(
-              subtitle,
-              style: const TextStyle(
-                fontSize: 14,
-                color: Colors.black87,
-              ),
-            ),
-            trailing: Text(
-              time,
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.grey,
-              ),
-            ),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           ),
         ),
       ),
@@ -558,17 +720,14 @@ class _UserProfileSheet extends StatelessWidget {
       padding: MediaQuery.of(context).viewInsets + const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: SizedBox(
         height: modalHeight,
-        child: Consumer<UserPlanProvider>(
-          builder: (context, userPlanProvider, child) {
-            return FutureBuilder<Map<String, dynamic>>(
-              future: _fetchProfile(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final profile = snapshot.data ?? {};
-                final String tierPlan = userPlanProvider.plan;
-                final String email = (profile['email'] ?? user?.email ?? '').toString();
+        child: FutureBuilder<Map<String, dynamic>>(
+          future: _fetchProfile(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final profile = snapshot.data ?? {};
+            final String email = (profile['email'] ?? user?.email ?? '').toString();
 
                 return Column(
                   mainAxisSize: MainAxisSize.max,
@@ -588,7 +747,7 @@ class _UserProfileSheet extends StatelessWidget {
                       height: 90,
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(
-                          colors: [Color(0xFF00BCD4), Color(0xFF2196F3)],
+                          colors: [Color(0xFF00BFB3), Color(0xFF4DD0E1)],
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
@@ -596,7 +755,7 @@ class _UserProfileSheet extends StatelessWidget {
                         border: Border.all(color: Colors.white, width: 4),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.08),
+                            color: const Color(0xFF00BFB3).withOpacity(0.2),
                             blurRadius: 10,
                             offset: const Offset(0, 5),
                           ),
@@ -616,20 +775,6 @@ class _UserProfileSheet extends StatelessWidget {
                         style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
                       ),
                       const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00BCD4).withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'Plan: ${tierPlan[0].toUpperCase()}${tierPlan.substring(1)}',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: const Color(0xFF006064),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
                     ] else ...[
                       Text(
                         'Guest User',
@@ -677,8 +822,8 @@ class _UserProfileSheet extends StatelessWidget {
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: user != null 
-                            ? const Color(0xFF006064)  // Dark teal for logout
-                            : const Color(0xFF00BCD4), // Bright teal for sign in
+                            ? const Color(0xFF00BFB3)  // Aqua for logout
+                            : const Color(0xFF00BFB3), // Aqua for sign in
                           foregroundColor: Colors.white,
                           elevation: 2,
                           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -702,8 +847,6 @@ class _UserProfileSheet extends StatelessWidget {
                     ),
                   ],
                 );
-              },
-            );
           },
         ),
       ),

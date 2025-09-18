@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import '../models/fish_calculation.dart';
+import '../models/fish_volume_calculation.dart';
 import 'package:provider/provider.dart';
 import 'logbook_provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async';
 import '../config/api_config.dart';
 import '../widgets/custom_notification.dart';
 import 'package:lottie/lottie.dart';
@@ -15,7 +16,6 @@ import '../widgets/auth_required_dialog.dart';
 import '../widgets/fish_info_dialog.dart';
 import '../widgets/fish_card_tankmates.dart';
 import '../widgets/beginner_guide_dialog.dart';
-import '../services/openai_service.dart';
 
 class FishCalculatorVolume extends StatefulWidget {
   const FishCalculatorVolume({super.key});
@@ -33,23 +33,22 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   bool _isCalculating = false;
   Map<String, int> _fishSelections = {};
   Map<String, dynamic>? _calculationData;
-  List<String> _suggestions = [];
-  bool _showAllShapes = false;
 
-  // State variables for See More/Less functionality
-  bool _showFullTankAnalysis = false;
-  bool _showFullFiltration = false;
-  bool _showFullDietCare = false;
-  bool _showFullWaterParameters = false;
+  // Fish data from Supabase
+  Map<String, dynamic>? _fishData;
   
-  // State variables for AI responses
-  List<String>? _tankmateRecommendations;
+  // Dropdown state
+  Map<String, bool> _showDropdown = {};
+  Map<String, String> _searchQueries = {};
   
-  // Store AI responses to avoid regeneration
-  String? _tankAnalysisResponse;
-  String? _filtrationResponse;
-  String? _dietCareResponse;
-  String? _waterParametersResponse;
+  // Key to reset autocomplete field
+  int _autocompleteKey = 0;
+  
+  // Tank shape compatibility warnings
+  Map<String, String> _fishTankShapeWarnings = {};
+  
+  // Debounce timer for volume changes
+  Timer? _volumeChangeTimer;
 
   
 
@@ -57,10 +56,16 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   void initState() {
     super.initState();
     _loadFishSpecies();
+    _loadFishData();
+    
+    // Add listener to volume controller for real-time compatibility checks
+    _volumeController.addListener(_onVolumeChanged);
   }
 
   @override
   void dispose() {
+    _volumeController.removeListener(_onVolumeChanged);
+    _volumeChangeTimer?.cancel();
     _volumeController.dispose();
     _fishController1.dispose();
     super.dispose();
@@ -75,14 +80,17 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       }
 
       final response = await http.get(
-        Uri.parse(ApiConfig.fishSpeciesEndpoint),
+        Uri.parse(ApiConfig.fishListEndpoint),
         headers: {'Accept': 'application/json'}
       ).timeout(ApiConfig.timeout);
       
       if (response.statusCode == 200) {
-        final List<dynamic> species = jsonDecode(response.body);
+        final List<dynamic> fishList = jsonDecode(response.body);
         setState(() {
-          _fishSpecies = species.map((s) => s.toString()).toList();
+          _fishSpecies = fishList
+              .map((fish) => fish['common_name'] as String)
+              .toList();
+          _fishSpecies.sort(); // Sort alphabetically
         });
       } else {
         print('Error loading fish species: ${response.statusCode}');
@@ -92,84 +100,97 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     }
   }
 
-  void _updateSuggestions(String query) {
-    if (query.isEmpty) {
+  Future<void> _loadFishData() async {
+    try {
+      final response = await http.get(
+        Uri.parse(ApiConfig.fishListEndpoint),
+        headers: {'Accept': 'application/json'},
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final List<dynamic> fishList = jsonDecode(response.body);
+        _fishData = {};
+        for (var fish in fishList) {
+          _fishData![fish['common_name']] = fish;
+        }
+        print('Loaded fish data for ${_fishData!.length} species');
+        
+        // Debug: Show sample fish data
+        if (_fishData!.isNotEmpty) {
+          final sampleFish = _fishData!.values.first;
+          print('Sample fish data: $sampleFish');
+          print('Sample fish max_size_cm: ${sampleFish['max_size_cm']}');
+        }
+      } else {
+        print('Failed to load fish data: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('Error loading fish data: $e');
+    }
+  }
+
+  // Real-time volume change handler with debouncing
+  void _onVolumeChanged() {
+    // Cancel previous timer
+    _volumeChangeTimer?.cancel();
+    
+    // Clear warnings immediately if volume is empty
+    if (_fishSelections.isNotEmpty && _volumeController.text.isEmpty) {
       setState(() {
-        _suggestions = [];
+        _fishTankShapeWarnings.clear();
       });
       return;
     }
-
-    setState(() {
-      _suggestions = _fishSpecies
-          .where((species) =>
-              species.toLowerCase().contains(query.toLowerCase()))
-          .toList();
-    });
-  }
-
-  void _selectFish(String fish) {
-    setState(() {
-      _fishController1.text = fish;
-      _suggestions = [];
-    });
-  }
-
-  void _addFish() {
-    final fishName = _fishController1.text.trim();
-    if (fishName.isEmpty) {
-      showCustomNotification(
-        context,
-        'Please enter a fish species',
-        isError: true,
-      );
-      return;
-    }
-
-    // Check if the fish exists in the available species
-    if (!_fishSpecies.contains(fishName)) {
-      showCustomNotification(
-        context,
-        'Please select a valid fish from the suggestions',
-        isError: true,
-      );
-      return;
-    }
-
-    setState(() {
-      // If the fish is already in selections, increment its count
-      if (_fishSelections.containsKey(fishName)) {
-        _fishSelections[fishName] = _fishSelections[fishName]! + 1;
-      } else {
-        // Otherwise add it with count 1
-        _fishSelections[fishName] = 1;
+    
+    // Only check compatibility if there are selected fish and volume is valid
+    if (_fishSelections.isNotEmpty && _volumeController.text.isNotEmpty) {
+      final volumeValue = double.tryParse(_volumeController.text);
+      if (volumeValue != null && volumeValue > 0) {
+        // Debounce the compatibility check by 500ms
+        _volumeChangeTimer = Timer(const Duration(milliseconds: 500), () {
+          print('🔄 Volume changed to ${_volumeController.text}${_selectedUnit} - checking compatibility...');
+          _checkAllFishTankShapeCompatibility();
+        });
       }
-      _fishController1.clear();
-      _suggestions = [];
-    });
+    }
   }
+
+
 
   void _addFishByName(String fishName) {
     if (!_fishSpecies.contains(fishName)) return;
     
     setState(() {
+      // Add new fish
       if (_fishSelections.containsKey(fishName)) {
         _fishSelections[fishName] = _fishSelections[fishName]! + 1;
       } else {
         _fishSelections[fishName] = 1;
       }
+      
+      // Clear search query to allow adding more fish
+      _searchQueries['fish'] = '';
     });
+    
+    // Check tank shape compatibility for the new fish
+    _checkFishTankShapeCompatibility(fishName);
+    
+    // Also check all fish for real-time updates
+    _checkAllFishTankShapeCompatibility();
   }
+
+
 
   void _clearFishInputs() {
     setState(() {
       _fishSelections = {};
       _fishController1.clear();
       _volumeController.clear();
-      _suggestions = [];
       _calculationData = null;
       _selectedTankShape = 'bowl';
-      _showAllShapes = false;
+      _showDropdown.clear();
+      _searchQueries.clear();
+      _fishTankShapeWarnings.clear();
     });
   }
 
@@ -211,26 +232,44 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       }
     }
 
-    final calculation = FishCalculation(
+    // Prepare water requirements
+    Map<String, dynamic> waterRequirements = {
+      'temperature_range': _getTemperatureRangeFromFishData(),
+      'ph_range': _getPhRangeFromFishData(),
+    };
+
+    // Prepare feeding information for each fish
+    Map<String, dynamic> feedingInformation = {};
+    for (String fishName in _fishSelections.keys) {
+      final fishData = _fishData?[fishName];
+      if (fishData != null) {
+        feedingInformation[fishName] = {
+          'portion_grams': fishData['portion_grams'],
+          'preferred_food': fishData['preferred_food'],
+          'feeding_notes': fishData['feeding_notes'],
+          'overfeeding_risks': fishData['overfeeding_risks'],
+        };
+      }
+    }
+
+    // Get tankmate recommendations
+    final tankmateRecommendations = await _getTankmateRecommendations();
+
+    final calculation = FishVolumeCalculation(
+      tankShape: _selectedTankShape,
       tankVolume: _calculationData!['tank_details']['volume'],
       fishSelections: _fishSelections,
       recommendedQuantities: recommendedQuantities,
+      tankmateRecommendations: tankmateRecommendations.isNotEmpty ? tankmateRecommendations : null,
+      waterRequirements: waterRequirements,
+      feedingInformation: feedingInformation,
       dateCalculated: DateTime.now(),
-      phRange: _calculationData!['water_conditions']['pH_range'],
-      temperatureRange: _calculationData!['water_conditions']['temperature_range'],
-      tankStatus: _calculationData!['tank_details']['status'],
-      currentBioload: _calculationData!['tank_details']['current_bioload'],
-      waterParametersResponse: _waterParametersResponse,
-      tankAnalysisResponse: _tankAnalysisResponse,
-      filtrationResponse: _filtrationResponse,
-      dietCareResponse: _dietCareResponse,
-      tankmateRecommendations: _tankmateRecommendations,
     );
 
     final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
-    logBookProvider.addFishCalculation(calculation);
+    await logBookProvider.addFishVolumeCalculation(calculation);
 
-    showCustomNotification(context, 'Fish calculation saved to history');
+    showCustomNotification(context, 'Fish volume calculation saved to history');
     
     // Clear all inputs and reset state
     setState(() {
@@ -241,13 +280,27 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   }
 
   Future<void> _calculateRequirements() async {
-    if (_volumeController.text.isEmpty) {
-      showCustomNotification(
-        context,
-        'Please enter tank volume or use the Dimensions Calculator if you don\'t know it',
-        isError: true,
-      );
-      return;
+    // For bowl tanks, skip volume validation since it's hardcoded to 10L
+    if (_selectedTankShape != 'bowl') {
+      if (_volumeController.text.isEmpty) {
+        showCustomNotification(
+          context,
+          'Please enter tank volume or use the Dimensions Calculator if you don\'t know it',
+          isError: true,
+        );
+        return;
+      }
+
+      // Validate that volume is greater than zero
+      final volumeValue = double.tryParse(_volumeController.text);
+      if (volumeValue == null || volumeValue <= 0) {
+        showCustomNotification(
+          context,
+          'Tank volume must be greater than 0. Please enter valid tank dimensions.',
+          isError: true,
+        );
+        return;
+      }
     }
 
     setState(() {
@@ -265,64 +318,143 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
         });
         return;
       }
-      double volume = double.parse(_volumeController.text);
-      if (_selectedUnit == 'gal') {
-        volume = volume * 3.78541; // Convert gallons to liters
-      }
 
-      print('Request URL: ${ApiConfig.calculateCapacityEndpoint}');
-      print('Request body: ${jsonEncode({
-        'tank_volume': volume,
-        'fish_selections': _fishSelections,
-      })}');
+      // Check fish-to-fish compatibility for multiple fish
+      final totalCount = _fishSelections.values.fold<int>(0, (sum, v) => sum + v);
+      print('Total fish count: $totalCount');
       
-      final response = await http.post(
-        Uri.parse(ApiConfig.calculateCapacityEndpoint),
+      if (totalCount >= 2) {
+        print('Checking compatibility for multiple fish...');
+        final expandedFishNames = _fishSelections.entries
+            .expand((e) => List.filled(e.value, e.key))
+            .toList();
+
+        print('Main calculation compatibility check - fish selections: $_fishSelections');
+        print('Main calculation compatibility check - expanded fish names: $expandedFishNames');
+
+        final compatibilityResponse = await http.post(
+          Uri.parse(ApiConfig.checkGroupEndpoint),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: jsonEncode({
-          'tank_volume': volume,
-          'fish_selections': _fishSelections,
-          'tank_shape': _selectedTankShape,
-        }),
-      );
+          body: jsonEncode({'fish_names': expandedFishNames}),
+        ).timeout(const Duration(seconds: 30));
 
-      print('Response status code: ${response.statusCode}');
-      print('Response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        if (response.body.isEmpty) {
-          throw Exception('Server returned an empty response');
+        if (compatibilityResponse.statusCode != 200) {
+          throw Exception('Failed to check compatibility: ${compatibilityResponse.statusCode}');
         }
 
-        try {
-          final data = jsonDecode(response.body);
+        print('Compatibility check completed successfully');
+        final compatibilityData = json.decode(compatibilityResponse.body);
+        print('Compatibility results: ${compatibilityData['results']?.length ?? 0} pairs checked');
+        bool hasIncompatiblePairs = false;
+        bool hasConditionalPairs = false;
+        final List<Map<String, dynamic>> incompatiblePairs = [];
+        final List<Map<String, dynamic>> conditionalPairs = [];
+        final Set<String> seenPairs = {};
+        
+        for (var result in compatibilityData['results']) {
+          final compatibility = result['compatibility'];
+          
+          if (compatibility == 'Not Compatible' || compatibility == 'Conditional' || compatibility == 'Conditionally Compatible') {
+            final pair = List<String>.from(result['pair'].map((e) => e.toString()));
+            if (pair.length == 2) {
+              final a = pair[0].toLowerCase();
+              final b = pair[1].toLowerCase();
+              final key = ([a, b]..sort()).join('|');
+              if (!seenPairs.contains(key)) {
+                seenPairs.add(key);
+                
+                if (compatibility == 'Not Compatible') {
+                hasIncompatiblePairs = true;
+                incompatiblePairs.add({
+                  'pair': result['pair'],
+                  'reasons': result['reasons'],
+                    'type': 'incompatible',
+                  });
+                } else if (compatibility == 'Conditional' || compatibility == 'Conditionally Compatible') {
+                  hasConditionalPairs = true;
+                  conditionalPairs.add({
+                    'pair': result['pair'],
+                    'reasons': result['reasons'],
+                    'type': 'conditional',
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        print('Found ${incompatiblePairs.length} incompatible pairs and ${conditionalPairs.length} conditional pairs');
+        
+        if (hasIncompatiblePairs || hasConditionalPairs) {
+          print('Processing compatibility issues...');
+          // Combine both incompatible and conditional pairs
+          final allProblematicPairs = [...incompatiblePairs, ...conditionalPairs];
+          
           setState(() {
             _calculationData = {
-              ...data,
-              'fish_selections': _fishSelections,
+              'error': hasIncompatiblePairs ? 'Incompatible Fish Combinations' : 'Conditional Fish Compatibility',
+              'incompatible_pairs': incompatiblePairs,
+              'conditional_pairs': conditionalPairs,
+              'all_pairs': allProblematicPairs,
             };
             _isCalculating = false;
           });
-        } catch (e) {
-          print('Error parsing response: $e');
-          throw Exception('Failed to parse response');
+          return;
         }
-      } else {
-        print('Error response body: ${response.body}');
-        String errorMessage;
-        try {
-          final errorBody = jsonDecode(response.body);
-          errorMessage = errorBody['error'] ?? 'Unknown error occurred';
-        } catch (e) {
-          errorMessage = response.body.isNotEmpty 
-              ? 'Server error: ${response.body}'
-              : 'Server returned status code ${response.statusCode}';
-        }
-        throw Exception('Failed to calculate requirements: $errorMessage');
       }
+
+      double volume;
+      if (_selectedTankShape == 'bowl') {
+        // Bowl tanks are hardcoded to 10L
+        volume = 10.0;
+      } else {
+        volume = double.parse(_volumeController.text);
+        if (_selectedUnit == 'gal') {
+          volume = volume * 3.78541; // Convert gallons to liters
+        }
+      }
+
+      // Use the tank management system's approach for fish quantity recommendations
+      print('Using tank management system approach for fish quantity recommendations');
+      final recommendedQuantities = await _calculateRecommendedFishQuantities(volume, _fishSelections);
+      
+      // Build fish details with recommended quantities
+      final fishDetails = <Map<String, dynamic>>[];
+      for (final entry in _fishSelections.entries) {
+        final fishName = entry.key;
+        final currentQuantity = entry.value;
+        final recommendedQuantity = recommendedQuantities[fishName] ?? 0;
+        
+        fishDetails.add({
+          'name': fishName,
+          'current_quantity': currentQuantity,
+          'recommended_quantity': recommendedQuantity,
+          'individual_requirements': {
+            'minimum_tank_size': '${(volume * 0.8).toStringAsFixed(1)} L', // 80% of tank volume
+            'bioload_factor': _getBioloadFactor(fishName),
+            'volume_per_fish': _getVolumePerFish(fishName),
+          },
+        });
+      }
+
+      setState(() {
+        _calculationData = {
+          'tank_details': {
+            'volume': '${volume.toStringAsFixed(1)} L',
+            'status': 'Optimal',
+            'current_bioload': _calculateCurrentBioload(_fishSelections),
+            'recommended_bioload': _calculateRecommendedBioload(recommendedQuantities),
+          },
+          'fish_details': fishDetails,
+          'fish_selections': _fishSelections,
+          'recommended_quantities': recommendedQuantities,
+        };
+        _isCalculating = false;
+      });
+      
     } catch (e) {
       print('Error calculating requirements: $e');
       showCustomNotification(
@@ -337,88 +469,414 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     }
   }
 
+  // Calculate recommended fish quantities using database data
+  Future<Map<String, int>> _calculateRecommendedFishQuantities(double tankVolume, Map<String, int> fishSelections) async {
+    Map<String, int> recommendations = {};
+    
+    // Fetch fish data from database using the same approach as tank management
+    final fishData = await _getFishDataFromDatabase(fishSelections.keys.toList());
+    
+    for (String fishName in fishSelections.keys) {
+      final fishInfo = fishData[fishName];
+      if (fishInfo != null) {
+        final maxSizeCm = fishInfo['max_size_cm'] ?? 0.0;
+        final minimumTankSizeL = fishInfo['minimum_tank_size_l'] ?? 0.0;
+        final bioload = fishInfo['bioload'] ?? 1.0;
+        
+        // Calculate recommended quantity using database data
+        int recommendedQty = 0;
+        
+        // Check if tank meets minimum requirements first
+        if (minimumTankSizeL > 0 && tankVolume < minimumTankSizeL) {
+          // Tank too small for this species - recommend 0
+          recommendedQty = 0;
+        } else {
+          // Calculate based on fish behavior and tank capacity
+          recommendedQty = _calculateFishQuantity(fishName, tankVolume, minimumTankSizeL, maxSizeCm, bioload);
+        }
+        
+        // Ensure maximum of 20 for better stocking
+        final finalQty = recommendedQty.clamp(0, 20);
+        recommendations[fishName] = finalQty;
+      } else {
+        recommendations[fishName] = 1;
+      }
+    }
+    return recommendations;
+  }
+
+  // Fetch fish data from database using the same approach as tank management
+  Future<Map<String, Map<String, dynamic>>> _getFishDataFromDatabase(List<String> fishNames) async {
+    final Map<String, Map<String, dynamic>> fishData = {};
+    
+    try {
+      // Query fish_species table for the required data
+      final response = await Supabase.instance.client
+          .from('fish_species')
+          .select('common_name, "max_size_(cm)", "minimum_tank_size_(l)", bioload')
+          .inFilter('common_name', fishNames);
+      
+      for (final fish in response) {
+        final commonName = fish['common_name'] as String?;
+        final maxSizeCm = fish['max_size_(cm)'];
+        final minimumTankSizeL = fish['minimum_tank_size_(l)'];
+        final bioload = fish['bioload'];
+        
+        if (commonName != null) {
+          fishData[commonName] = {
+            'max_size_cm': maxSizeCm != null ? double.tryParse(maxSizeCm.toString()) ?? 0.0 : 0.0,
+            'minimum_tank_size_l': minimumTankSizeL != null ? double.tryParse(minimumTankSizeL.toString()) ?? 0.0 : 0.0,
+            'bioload': bioload != null ? double.tryParse(bioload.toString()) ?? 1.0 : 1.0,
+          };
+        }
+      }
+      
+      // Add fallback values for fish not found in database
+      for (final fishName in fishNames) {
+        if (!fishData.containsKey(fishName)) {
+          // Try case-insensitive matching
+          bool found = false;
+          for (final dbFishName in fishData.keys) {
+            if (dbFishName.toLowerCase() == fishName.toLowerCase()) {
+              fishData[fishName] = fishData[dbFishName]!;
+              found = true;
+              break;
+            }
+          }
+          
+          if (!found) {
+            // Use fallback values
+            fishData[fishName] = {
+              'max_size_cm': 10.0,
+              'minimum_tank_size_l': 20.0,
+              'bioload': 1.0,
+            };
+          }
+        }
+      }
+      
+    } catch (e) {
+      print('Error fetching fish data from database: $e');
+      // Return fallback data for all fish
+      for (final fishName in fishNames) {
+        fishData[fishName] = {
+          'max_size_cm': 10.0,
+          'minimum_tank_size_l': 20.0,
+          'bioload': 1.0,
+        };
+      }
+    }
+    
+    return fishData;
+  }
+
+  // Calculate volume requirement from fish size (realistic aquarium stocking)
+  double _calculateVolumeFromSize(double sizeCm) {
+    // Calculate volume requirement based on fish size using realistic aquarium guidelines
+    // More conservative approach for better fish welfare
+    
+    if (sizeCm <= 0) return 10.0; // Default fallback
+    
+    final sizeInches = sizeCm / 2.54;
+    
+    // Base volume calculation - 1 gallon per inch rule (more conservative)
+    double baseVolume = sizeInches * 3.78; // 1 gallon = 3.78 liters
+    
+    // Adjust based on size categories - more realistic for aquarium stocking
+    if (sizeCm <= 3.0) {
+      // Very small fish (≤1.2 inches) - still need reasonable space
+      baseVolume *= 0.8; // 80% of 1 gallon per inch
+    } else if (sizeCm <= 5.0) {
+      // Small fish (1.2-2 inches) - standard 1 gallon per inch
+      baseVolume *= 1.0;
+    } else if (sizeCm <= 8.0) {
+      // Medium-small fish (2-3 inches) - need more space
+      baseVolume *= 1.2;
+    } else if (sizeCm <= 12.0) {
+      // Medium fish (3-5 inches) - need significantly more space
+      baseVolume *= 1.5;
+    } else if (sizeCm <= 20.0) {
+      // Large fish (5-8 inches) - need lots of space
+      baseVolume *= 2.0;
+    } else {
+      // Very large fish (>8 inches) - need extensive space
+      baseVolume *= 3.0;
+    }
+    
+    return baseVolume.clamp(5.0, 200.0); // More conservative bounds
+  }
+
+
+  // Get bioload factor for a fish (based on size and temperament)
+  double _getBioloadFactor(String fishName) {
+    final fishData = _fishData?[fishName];
+    
+    if (fishData == null) return 1.0;
+    
+    final maxSizeCm = fishData['max_size_cm'] ?? 0.0;
+    final temperament = fishData['temperament'] ?? 'peaceful';
+    
+    // Safety check: ensure fish size is valid
+    if (maxSizeCm <= 0 || maxSizeCm.isNaN || maxSizeCm.isInfinite) {
+      return 1.0;
+    }
+    
+    // Base factor from size (larger fish = higher bioload)
+    double sizeFactor = maxSizeCm / 10.0; // 1.0 for 10cm fish
+    
+    // Adjust based on temperament
+    double temperamentMultiplier = 1.0;
+    switch (temperament.toLowerCase()) {
+      case 'aggressive':
+        temperamentMultiplier = 1.5;
+        break;
+      case 'semi-aggressive':
+        temperamentMultiplier = 1.2;
+        break;
+      case 'peaceful':
+        temperamentMultiplier = 1.0;
+        break;
+      case 'shy':
+        temperamentMultiplier = 0.8;
+        break;
+    }
+    
+    final result = sizeFactor * temperamentMultiplier;
+    
+    // Safety check: ensure result is valid
+    if (result.isNaN || result.isInfinite) {
+      return 1.0;
+    }
+    
+    return result.clamp(0.1, 5.0);
+  }
+
+  // Get volume per fish in liters
+  String _getVolumePerFish(String fishName) {
+    final fishData = _fishData?[fishName];
+    
+    if (fishData == null) return '10 L';
+    
+    final maxSizeCm = fishData['max_size_cm'] ?? 0.0;
+    final temperament = fishData['temperament'] ?? 'peaceful';
+    
+    // Safety check: ensure fish size is valid
+    if (maxSizeCm <= 0 || maxSizeCm.isNaN || maxSizeCm.isInfinite) {
+      return '10 L';
+    }
+    
+    // Base volume calculation: 1 gallon per inch of fish
+    final maxSizeInches = maxSizeCm / 2.54;
+    
+    // Safety check: ensure conversion is valid
+    if (maxSizeInches <= 0 || maxSizeInches.isNaN || maxSizeInches.isInfinite) {
+      return '10 L';
+    }
+    
+    double baseVolumeGallons = maxSizeInches;
+    
+    // Adjust based on temperament
+    double temperamentMultiplier = 1.0;
+    switch (temperament.toLowerCase()) {
+      case 'aggressive':
+        temperamentMultiplier = 2.0;
+        break;
+      case 'semi-aggressive':
+        temperamentMultiplier = 1.5;
+        break;
+      case 'peaceful':
+        temperamentMultiplier = 1.0;
+        break;
+      case 'shy':
+        temperamentMultiplier = 0.8;
+        break;
+    }
+    
+    final volumeLiters = baseVolumeGallons * temperamentMultiplier * 3.78541;
+    
+    // Safety check: ensure result is valid
+    if (volumeLiters.isNaN || volumeLiters.isInfinite) {
+      return '10 L';
+    }
+    
+    final clampedVolume = volumeLiters.clamp(5.0, 200.0);
+    return '${clampedVolume.toStringAsFixed(1)} L';
+  }
+
+  // Calculate current bioload based on selected fish
+  double _calculateCurrentBioload(Map<String, int> fishSelections) {
+    double totalBioload = 0.0;
+    
+    for (final entry in fishSelections.entries) {
+      final fishName = entry.key;
+      final quantity = entry.value;
+      final bioloadFactor = _getBioloadFactor(fishName);
+      totalBioload += bioloadFactor * quantity;
+    }
+    
+    return totalBioload;
+  }
+
+  // Calculate recommended bioload based on recommended quantities
+  double _calculateRecommendedBioload(Map<String, int> recommendedQuantities) {
+    double totalBioload = 0.0;
+    
+    for (final entry in recommendedQuantities.entries) {
+      final fishName = entry.key;
+      final quantity = entry.value;
+      final bioloadFactor = _getBioloadFactor(fishName);
+      totalBioload += bioloadFactor * quantity;
+    }
+    
+    return totalBioload;
+  }
+
+  // Calculate fish quantity based on behavior and tank capacity
+  int _calculateFishQuantity(String fishName, double tankVolume, double minimumTankSizeL, double maxSizeCm, double bioload) {
+    final fishNameLower = fishName.toLowerCase();
+    
+    // Special handling for bettas
+    if (fishNameLower.contains('betta') || fishNameLower.contains('fighting fish')) {
+      // For bettas: 1 male OR 4-5 females (sorority)
+      // Since we can't determine gender, recommend 1 (male) for safety
+      // In a real app, you'd ask the user to specify gender
+      return 1;
+    }
+    
+    // Special handling for other territorial fish
+    if (fishNameLower.contains('gourami') || 
+        fishNameLower.contains('cichlid') ||
+        fishNameLower.contains('angelfish') ||
+        fishNameLower.contains('discus')) {
+      // Most territorial fish should be kept alone or in pairs
+      return 1;
+    }
+    
+    // For other fish, calculate based on tank capacity
+    if (minimumTankSizeL > 0) {
+      // Use minimum tank size as a guide for maximum fish per tank
+      // For example: if minimum is 20L, then 100L tank can hold 100/20 = 5 fish
+      int maxFish = (tankVolume / minimumTankSizeL).floor();
+      
+      // Apply bioload factor
+      if (bioload > 1.0) {
+        maxFish = (maxFish / bioload).floor();
+      }
+      
+      // Ensure at least 1 fish
+      return maxFish.clamp(1, 10);
+    } else if (maxSizeCm > 0) {
+      // Fallback to size-based calculation
+      final volumePerFish = _calculateVolumeFromSize(maxSizeCm);
+      int calculatedQty = (tankVolume / volumePerFish).floor();
+      
+      // Apply bioload factor
+      if (bioload > 1.0) {
+        calculatedQty = (calculatedQty / bioload).floor();
+      }
+      
+      return calculatedQty.clamp(1, 10);
+    }
+    
+    // Default fallback
+    return 1;
+  }
+
+
   Widget _buildFishInput() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          // Display selected fish
-          if (_fishSelections.isNotEmpty) ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                color: Color(0xFFE0F7FA),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.grey.shade200),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+          // Header
                   Row(
                     children: [
                       const Icon(
                         FontAwesomeIcons.fish,
-                        color: Color(0xFF006064),
+                color: Color(0xFF00BCD4),
+                size: 20,
                       ),
                       const SizedBox(width: 8),
                       const Text(
-                        'Selected Fish',
+                'Fish Species',
                         style: TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w600,
                           color: Color(0xFF006064),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          // Display selected fish
+          if (_fishSelections.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F9FA),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Column(
+                children: [
                   for (var entry in _fishSelections.entries)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(
                         children: [
+                          // Quantity display
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
+                              color: const Color(0xFF00BCD4).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
                             ),
                             child: Text(
                               '${entry.value}',
                               style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF006064),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF00BCD4),
                               ),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: InkWell(
+                            child: Text(
+                              entry.key,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: Color(0xFF006064),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          // Eye icon for fish info
+                          GestureDetector(
                               onTap: () {
                                 showDialog(
                                   context: context,
                                   builder: (context) => FishInfoDialog(fishName: entry.key),
                                 );
                               },
-                              child: Text(
-                                entry.key,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Color(0xFF006064),
-                                  decoration: TextDecoration.underline,
-                                ),
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00BCD4).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Icon(
+                                Icons.remove_red_eye,
+                                color: Color(0xFF00BCD4),
+                                size: 16,
                               ),
                             ),
                           ),
@@ -427,7 +885,10 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                             onPressed: () {
                               setState(() {
                                 _fishSelections.remove(entry.key);
+                                _fishTankShapeWarnings.remove(entry.key);
                               });
+                              // Check remaining fish for real-time updates
+                              _checkAllFishTankShapeCompatibility();
                             },
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
@@ -439,117 +900,274 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                 ],
               ),
             ),
+            const SizedBox(height: 12),
           ],
-          // Input section
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: _fishSelections.isEmpty ? const Color(0xFFE0F7FA) : Colors.white,
-              borderRadius: _fishSelections.isEmpty
-                ? const BorderRadius.vertical(top: Radius.circular(12))
-                : BorderRadius.zero,
-            ),
+          // Fish input field
+          GestureDetector(
+            onTap: () {
+              // Close dropdown when tapping outside
+              setState(() {
+                _showDropdown['fish'] = false;
+              });
+            },
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                if (_fishSelections.isEmpty) ...[
-                  Row(
-                    children: [
-                      const Icon(
-                        FontAwesomeIcons.fish,
-                        color: Color(0xFF006064),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Fish Species',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
+              // Fish name input field with autocomplete
+              Expanded(
+                flex: 3,
+                child: Autocomplete<String>(
+                  key: ValueKey(_autocompleteKey),
+                  optionsBuilder: (TextEditingValue textEditingValue) {
+                    // Only show suggestions when user has typed something
+                    if (textEditingValue.text.isEmpty) {
+                      return const Iterable<String>.empty();
+                    }
+                    return _fishSpecies.where((String fish) =>
+                        fish.toLowerCase().contains(textEditingValue.text.toLowerCase())).take(10);
+                  },
+                      onSelected: (String selection) {
+                        setState(() {
+                          _addFishByName(selection);
+                          _showDropdown['fish'] = false; // Close dropdown
+                        });
+                      },
+                  fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {
+                    return TextFormField(
+                        controller: textEditingController,
+                        focusNode: focusNode,
+                        onTap: () {
+                          // Don't close dropdown when user taps input field - let them type
+                          // Only close if they're not trying to open the dropdown
+                        },
+                        onChanged: (value) {
+                          setState(() {
+                            _searchQueries['fish'] = value;
+                            _showDropdown['fish'] = value.isNotEmpty;
+                          });
+                        },
+                      decoration: InputDecoration(
+                        hintText: 'Search or type fish name...',
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                        border: OutlineInputBorder(
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(8),
+                            bottomLeft: Radius.circular(8),
+                            topRight: Radius.zero,
+                            bottomRight: Radius.zero,
+                          ),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
                         ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(8),
+                            bottomLeft: Radius.circular(8),
+                            topRight: Radius.zero,
+                            bottomRight: Radius.zero,
+                          ),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(8),
+                            bottomLeft: Radius.circular(8),
+                            topRight: Radius.zero,
+                            bottomRight: Radius.zero,
+                          ),
+                          borderSide: const BorderSide(color: Color(0xFF00BCD4)),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                       ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _fishController1,
-                    decoration: InputDecoration(
-                      hintText: 'Enter fish species',
-                      filled: true,
-                      fillColor: const Color(0xFFF5F5F5),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    ),
-                    onChanged: (value) => _updateSuggestions(value),
-                  ),
+                    );
+                  },
                 ),
-                const SizedBox(width: 12),
-                ElevatedButton(
-                  onPressed: _addFish,
+              ),
+              // Separate dropdown button
+              Container(
+                height: 48,
+                width: 50,
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _showDropdown['fish'] = !(_showDropdown['fish'] ?? false);
+                    });
+                  },
+                  child: ElevatedButton(
+                    onPressed: () {
+                      setState(() {
+                        _showDropdown['fish'] = !(_showDropdown['fish'] ?? false);
+                      });
+                    },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00ACC1),
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                    backgroundColor: Colors.transparent,
+                    elevation: 0,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.zero,
+                        bottomLeft: Radius.zero,
+                        topRight: Radius.circular(8),
+                        bottomRight: Radius.circular(8),
+                      ),
+                      side: BorderSide(
+                        color: Colors.grey.shade300,
+                        width: 1,
+                      ),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: AnimatedRotation(
+                    turns: (_showDropdown['fish'] ?? false) ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: const Icon(
+                      Icons.arrow_drop_down,
+                      color: Color(0xFF00BCD4),
+                      size: 36,
                     ),
                   ),
-                  child: const Text(
-                    'Add',
-                    style: TextStyle(color: Colors.white),
+                ),
                   ),
                 ),
               ],
             ),
           ),
-          if (_suggestions.isNotEmpty)
+          // Dropdown list
+          if (_showDropdown['fish'] == true) ...[
+            const SizedBox(height: 8),
             Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
+              height: 200,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.grey.shade300),
               ),
-              constraints: const BoxConstraints(maxHeight: 200),
               child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: _suggestions.length,
+                itemCount: _getFilteredFish('fish').length,
                 itemBuilder: (context, index) {
+                  final fish = _getFilteredFish('fish')[index];
                   return ListTile(
-                    leading: const Icon(FontAwesomeIcons.fish, color: Color(0xFF006064)),
-                    title: Text(_suggestions[index]),
-                    onTap: () => _selectFish(_suggestions[index]),
+                    title: Text(fish),
+                    onTap: () {
+                      setState(() {
+                        _addFishByName(fish);
+                        _showDropdown['fish'] = false;
+                      });
+                    },
                   );
                 },
               ),
             ),
-          // Show tankmate recommendations for each selected fish
-          ..._fishSelections.keys.map((fishName) => 
+          ],
+          // Show common tankmate recommendation for all selected fish
+          if (_fishSelections.isNotEmpty)
             FishCardTankmates(
-              fishName: fishName,
+              selectedFishNames: _fishSelections.keys.toList(),
+              fishQuantities: _fishSelections,
               onFishSelected: (selectedFish) {
                 _addFishByName(selectedFish);
               },
             ),
+        ],
+      ),
+    );
+  }
+
+  // Build tank shape warnings widget
+  Widget _buildTankShapeWarningsWidget() {
+    if (_fishTankShapeWarnings.isEmpty) return const SizedBox.shrink();
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 4,
+            offset: const Offset(0, 2),
           ),
         ],
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          dividerColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          childrenPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          collapsedIconColor: const Color(0xFF00BCD4),
+          iconColor: const Color(0xFF00BCD4),
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(
+              Icons.info_outline,
+              color: Colors.orange.shade600,
+              size: 16,
+            ),
+          ),
+          title: const Text(
+            'Tank Size Notice',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF006064),
+            ),
+          ),
+          subtitle: const Text(
+            'Some fish may need a bigger tank',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+          ),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var entry in _fishTankShapeWarnings.entries)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            FontAwesomeIcons.fish,
+                            size: 14,
+                            color: Colors.orange.shade600,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${entry.key}: ${entry.value}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.orange.shade800,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -565,16 +1183,17 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
           // Tank Volume Card
           Container(
             width: double.infinity,
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  Color(0xFF006064),
-                  Color(0xFF00ACC1),
+                  const Color(0xFF006064),
+                  const Color(0xFF00ACC1),
                 ],
               ),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.2),
@@ -584,40 +1203,41 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                 ),
               ],
             ),
-            child: Stack(
-              children: [
-                Positioned(
-                  right: -20,
-                  bottom: -20,
-                  child: Icon(
-                    Icons.water,
-                    size: 100,
-                    color: Colors.white.withOpacity(0.1),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(24),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Icon(
+                        Icons.water_drop,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
                       const Text(
                         'Tank Volume',
                         style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.white70,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
                         ),
                       ),
-                      const SizedBox(height: 8),
+                  ],
+                ),
+                const SizedBox(height: 16),
                       Text(
                         _calculationData!['tank_details']['volume'],
                         style: const TextStyle(
-                          fontSize: 32,
+                    fontSize: 28,
                           fontWeight: FontWeight.bold,
                           color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
                   ),
                 ),
               ],
@@ -629,7 +1249,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
             width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.1),
@@ -653,7 +1273,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: const Icon(
                               FontAwesomeIcons.fish,
@@ -677,7 +1297,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                         margin: const EdgeInsets.symmetric(vertical: 8),
                         elevation: 0,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(6),
                           side: BorderSide(color: Colors.grey.shade200),
                         ),
                         child: Padding(
@@ -688,7 +1308,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFFE0F7FA),
-                                  borderRadius: BorderRadius.circular(8),
+                                  borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: const Icon(
                                   FontAwesomeIcons.fish,
@@ -723,7 +1343,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                             padding: const EdgeInsets.all(2),
                                             decoration: BoxDecoration(
                                               color: const Color(0xFFE0F7FA),
-                                              borderRadius: BorderRadius.circular(4),
+                                              borderRadius: BorderRadius.circular(6),
                                             ),
                                             child: const Icon(
                                               Icons.remove_red_eye,
@@ -737,6 +1357,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                     const SizedBox(height: 6),
                                     Row(
                                       children: [
+                                        if (fish['recommended_quantity'] > 0) ...[
                                         Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                           decoration: BoxDecoration(
@@ -745,7 +1366,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                               begin: Alignment.topLeft,
                                               end: Alignment.bottomRight,
                                             ),
-                                            borderRadius: BorderRadius.circular(8),
+                                            borderRadius: BorderRadius.circular(6),
                                             boxShadow: [
                                               BoxShadow(
                                                 color: Colors.black.withOpacity(0.1),
@@ -780,8 +1401,45 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                           style: TextStyle(
                                             fontSize: 12,
                                             color: Color(0xFF006064),
+                                            ),
+                                          ),
+                                        ] else ...[
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: Colors.red.shade100,
+                                              borderRadius: BorderRadius.circular(6),
+                                              border: Border.all(color: Colors.red.shade300),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(
+                                                  Icons.warning,
+                                                  color: Colors.red,
+                                                  size: 14,
+                                                ),
+                                                const SizedBox(width: 5),
+                                                const Text(
+                                                  'Not suitable',
+                                                  style: TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.red,
                                           ),
                                         ),
+                                      ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          const Text(
+                                            'tank too small',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.red,
+                                            ),
+                                          ),
+                                        ],
                                       ],
                                     ),
                                   ],
@@ -798,12 +1456,12 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
             ),
           ),
           const SizedBox(height: 20),
-          // Water Parameters Card
+          // Water Requirements Card
           Container(
             width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.1),
@@ -827,7 +1485,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: const Icon(
                               Icons.water_drop,
@@ -836,7 +1494,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                           ),
                           const SizedBox(width: 12),
                           const Text(
-                            'Water Parameters',
+                            'Water Requirements',
                             style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
@@ -845,99 +1503,31 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 24),
-                      // AI-generated water parameters
-                      FutureBuilder<String>(
-                        future: _waterParametersResponse != null
-                            ? Future.value(_waterParametersResponse!)
-                            : _generateWaterParameters().then((response) {
-                                _waterParametersResponse = response;
-                                return response;
-                              }),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return Row(
-                              children: [
-                                SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                const Text(
-                                  'Generating water parameters...',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Color(0xFF006064),
-                                  ),
-                                ),
-                              ],
-                            );
-                          } else if (snapshot.hasError) {
-                            return Text(
-                              'Unable to generate water parameters. Please try again.',
-                              style: TextStyle(
-                                color: Colors.grey[600],
-                                fontSize: 14,
-                              ),
-                            );
-                          } else {
-                            final response = snapshot.data ?? 'No water parameters available.';
-                            final words = response.split(' ');
-                            final displayText = _showFullWaterParameters 
-                                ? response 
-                                : words.take(25).join(' ');
-                            
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  displayText,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Color(0xFF006064),
-                                    height: 1.5,
-                                  ),
-                                ),
-                                if (words.length > 25) ...[
-                                  const SizedBox(height: 8),
-                                  GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        _showFullWaterParameters = !_showFullWaterParameters;
-                                      });
-                                    },
-                                    child: Text(
-                                      _showFullWaterParameters ? 'See less' : 'See more',
-                                      style: const TextStyle(
-                                        color: Color(0xFF00BCD4),
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 13,
-                                      ),
+                      const SizedBox(height: 16),
+                      _buildInfoRow(
+                        Icons.thermostat,
+                        'Temperature Range',
+                        _getTemperatureRangeFromFishData(),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildInfoRow(
+                        Icons.science,
+                        'pH Range',
+                        _getPhRangeFromFishData(),
+                      ),
+                    ],
                                     ),
                                   ),
                                 ],
-                              ],
-                            );
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ],
             ),
           ),
           const SizedBox(height: 20),
-          // Tankmate Recommendations Card
+          // Tankmate Recommendations Card (Collapsible)
           Container(
             width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.1),
@@ -947,29 +1537,29 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                 ),
               ],
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                dividerColor: Colors.transparent,
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+              ),
+              child: ExpansionTile(
+                tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                childrenPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                collapsedIconColor: const Color(0xFF00BCD4),
+                iconColor: const Color(0xFF00BCD4),
+                leading: Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: const Icon(
                               FontAwesomeIcons.users,
                               color: Color(0xFF006064),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          const Text(
+                title: const Text(
                             'Tankmate Recommendations',
                             style: TextStyle(
                               fontSize: 18,
@@ -977,11 +1567,53 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                               color: Color(0xFF006064),
                             ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      FutureBuilder<List<String>>(
-                        future: _getTankmateRecommendations(),
+                subtitle: FutureBuilder<Map<String, List<String>>>(
+                        future: _getGroupedTankmateRecommendations(),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Text(
+                                  'Finding compatible tankmates...',
+                                  style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                                  ),
+                            );
+                          } else if (snapshot.hasData) {
+                            final fullyCompatible = snapshot.data!['fully_compatible'] ?? [];
+                            final conditional = snapshot.data!['conditional'] ?? [];
+                            final total = fullyCompatible.length + conditional.length;
+                            
+                            if (total > 0) {
+                            return Text(
+                                'Tap to view $total recommended tankmates (${fullyCompatible.length} fully compatible, ${conditional.length} conditional)',
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                              ),
+                            );
+                          } else {
+                            return const Text(
+                                'No tankmate recommendations available',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                              ),
+                            );
+                          }
+                          } else {
+                            return const Text(
+                        'No tankmate recommendations available',
+                            style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                              ),
+                            );
+                          }
+                        },
+                ),
+              children: [
+                      FutureBuilder<Map<String, List<String>>>(
+                        future: _getGroupedTankmateRecommendations(),
                         builder: (context, snapshot) {
                           if (snapshot.connectionState == ConnectionState.waiting) {
                             return Row(
@@ -1005,41 +1637,103 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                 ),
                               ],
                             );
-                          } else if (snapshot.hasData && snapshot.data!.isNotEmpty) {
-                            final recommendations = snapshot.data!.take(3).join(', ');
-                            return Text(
-                              'Compatible tankmates: $recommendations.',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.black87,
-                                height: 1.5,
-                              ),
+                          } else if (snapshot.hasData) {
+                            final fullyCompatible = snapshot.data!['fully_compatible'] ?? [];
+                            final conditional = snapshot.data!['conditional'] ?? [];
+                            
+                            if (fullyCompatible.isNotEmpty || conditional.isNotEmpty) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                  // Fully Compatible Section
+                                  if (fullyCompatible.isNotEmpty) ...[
+                                    _buildTankmateSection(
+                                      title: 'Fully Compatible',
+                                      tankmates: fullyCompatible,
+                                      icon: Icons.check_circle,
+                                      color: const Color(0xFF4CAF50),
+                                      description: 'These fish are highly compatible with all your selected fish.',
+                                    ),
+                                    if (conditional.isNotEmpty) const SizedBox(height: 16),
+                                  ],
+                                  
+                                  // Conditional Section
+                                  if (conditional.isNotEmpty) ...[
+                                    _buildTankmateSection(
+                                      title: 'Conditionally Compatible',
+                                      tankmates: conditional,
+                                      icon: Icons.warning,
+                                      color: const Color(0xFFFF9800),
+                                      description: 'These fish may work with proper conditions and monitoring.',
+                                    ),
+                                  ],
+                                  
+                                  const SizedBox(height: 16),
+                                  // Info text
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE0F7FA),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.info_outline,
+                                          color: Color(0xFF00BCD4),
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                    child: Text(
+                                            'These ${fullyCompatible.length + conditional.length} fish are compatible with all your selected fish.',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                              color: Color(0xFF006064),
+                                              fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                    ),
+                                  ),
+                              ],
                             );
                           } else {
+                              return const Text(
+                                'No specific tankmate recommendations available.',
+                                style: TextStyle(
+                                fontSize: 14,
+                                  color: Colors.grey,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              );
+                            }
+                          } else {
                             return const Text(
-                              'Consider peaceful community fish like tetras, rasboras, or corydoras.',
+                              'No specific tankmate recommendations available.',
                               style: TextStyle(
                                 fontSize: 14,
-                                color: Colors.black87,
-                                height: 1.5,
+                                color: Colors.grey,
+                                fontStyle: FontStyle.italic,
                               ),
                             );
                           }
                         },
-                ),
-              ],
-            ),
-          ),
-        ],
+                      ),
+                    ],
+                  ),
             ),
           ),
           const SizedBox(height: 20),
-          // Tank & Environment Analysis Card
+          // Feeding Information Card (Collapsible)
+          if (_fishData != null && _fishSelections.isNotEmpty)
           Container(
             width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.1),
@@ -1049,384 +1743,262 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                 ),
               ],
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
+              child: Theme(
+                data: Theme.of(context).copyWith(
+                  dividerColor: Colors.transparent,
+                  splashColor: Colors.transparent,
+                  highlightColor: Colors.transparent,
+                ),
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  childrenPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  collapsedIconColor: const Color(0xFF00BCD4),
+                  iconColor: const Color(0xFF00BCD4),
+                  leading: Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: const Icon(
-                              Icons.home,
+                      Icons.restaurant,
                               color: Color(0xFF006064),
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Tank & Environment',
+                  title: const Text(
+                    'Feeding Information',
                             style: TextStyle(
-                              fontSize: 20,
+                      fontSize: 18,
                               fontWeight: FontWeight.bold,
                               color: Color(0xFF006064),
                             ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      FutureBuilder<String>(
-                        future: _tankAnalysisResponse != null 
-                          ? Future.value(_tankAnalysisResponse!)
-                          : _generateTankEnvironmentAnalysis().then((response) {
-                              _tankAnalysisResponse = response;
-                              return response;
-                            }),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return Row(
-                              children: [
-                                SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                const Text(
-                                  'Analyzing tank environment...',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Color(0xFF006064),
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                              ],
-                            );
-                          } else if (snapshot.hasData) {
-                            final fullText = snapshot.data!;
-                            final shortText = fullText.length > 80 ? fullText.substring(0, 77) + '...' : fullText;
-                            
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _showFullTankAnalysis ? fullText : shortText,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.black87,
-                                    height: 1.5,
-                                  ),
-                                ),
-                                if (fullText.length > 80) ...[
-                                  const SizedBox(height: 8),
-                                  GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        _showFullTankAnalysis = !_showFullTankAnalysis;
-                                      });
-                                    },
-                                    child: Text(
-                                      _showFullTankAnalysis ? 'See Less' : 'See More',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Color(0xFF00BCD4),
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            );
-                          } else {
-                            return Text(
-                              'This ${_getShapeLabel(_selectedTankShape).toLowerCase()} tank provides adequate swimming space and surface area for gas exchange. Consider the fish species requirements for optimal health.',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.black87,
-                                height: 1.5,
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                    ],
+                  subtitle: Text(
+                    'Tap to view feeding details for ${_getUniqueFishSpecies().length} fish species',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Filtration & Equipment Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
-                  spreadRadius: 2,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
+                    // Display feeding info for each unique fish species
+                    ..._getUniqueFishSpecies().map((fishName) {
+                      final fishData = _fishData?[fishName];
+                      if (fishData == null) return const SizedBox.shrink();
+                      
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F9FA),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: const Color(0xFF00BCD4).withOpacity(0.2),
+                          ),
+                        ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(8),
+                                  padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
+                                    color: const Color(0xFF00BCD4).withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(6),
                             ),
                             child: const Icon(
-                              Icons.filter_alt,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Filtration & Equipment',
-                            style: TextStyle(
-                              fontSize: 20,
+                                    FontAwesomeIcons.fish,
+                                    size: 16,
+                                    color: Color(0xFF00BCD4),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  fishName,
+                                  style: const TextStyle(
+                                    fontSize: 16,
                               fontWeight: FontWeight.bold,
                               color: Color(0xFF006064),
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
-                      FutureBuilder<String>(
-                        future: _filtrationResponse != null 
-                          ? Future.value(_filtrationResponse!)
-                          : _generateFiltrationRecommendations().then((response) {
-                              _filtrationResponse = response;
-                              return response;
-                            }),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return Row(
+                            const SizedBox(height: 12),
+                            // Portion Grams
+                            if (fishData['portion_grams'] != null && fishData['portion_grams'].toString().isNotEmpty) ...[
+                              Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
-                                  ),
+                                  const Icon(
+                                    Icons.scale,
+                                    size: 16,
+                                    color: Color(0xFF4CAF50),
                                 ),
                                 const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
                                 const Text(
-                                  'Generating filtration recommendations...',
+                                          'Portion per Fish:',
                                   style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: Color(0xFF4CAF50),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                Text(
+                                          _getPortionDisplay(fishName, fishData['portion_grams']),
+                                  style: const TextStyle(
                                     fontSize: 13,
-                                    color: Color(0xFF006064),
-                                    fontStyle: FontStyle.italic,
+                                    color: Colors.black87,
+                                            height: 1.4,
                                   ),
                                 ),
                               ],
-                            );
-                          } else if (snapshot.hasData) {
-                            final fullText = snapshot.data!;
-                            final shortText = fullText.length > 80 ? fullText.substring(0, 77) + '...' : fullText;
-                            
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _showFullFiltration ? fullText : shortText,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.black87,
-                                    height: 1.5,
-                                  ),
-                                ),
-                                if (fullText.length > 80) ...[
-                                  const SizedBox(height: 8),
-                                  GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        _showFullFiltration = !_showFullFiltration;
-                                      });
-                                    },
-                                    child: Text(
-                                      _showFullFiltration ? 'See Less' : 'See More',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Color(0xFF00BCD4),
-                                        fontWeight: FontWeight.w600,
-                                      ),
                                     ),
                                   ),
                                 ],
-                              ],
-                            );
-                          } else {
-                            return const Text(
-                              'Use filter rated for your tank size with 4-6x turnover rate.',
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+                            // Preferred Food
+                            if (fishData['preferred_food'] != null && fishData['preferred_food'].toString().isNotEmpty) ...[
+                              Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                  const Icon(
+                                    Icons.restaurant_menu,
+                                    size: 16,
+                                    color: Color(0xFF9C27B0),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Preferred Food:',
                               style: TextStyle(
                                 fontSize: 14,
-                                color: Colors.black87,
-                                height: 1.5,
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                    ],
+                                            fontWeight: FontWeight.w600,
+                                            color: Color(0xFF9C27B0),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                Text(
+                                          fishData['preferred_food'].toString(),
+                                  style: const TextStyle(
+                                            fontSize: 13,
+                                    color: Colors.black87,
+                                            height: 1.4,
                   ),
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 20),
-          // Diet & Care Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
-                  spreadRadius: 2,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
                 ),
               ],
             ),
-            child: Column(
+                              const SizedBox(height: 12),
+                            ],
+                            // Feeding Notes
+                            if (fishData['feeding_notes'] != null && fishData['feeding_notes'].toString().isNotEmpty) ...[
+                              Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
+                                  const Icon(
+                                    Icons.note,
+                                    size: 16,
+                                    color: Color(0xFF00BCD4),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.restaurant,
+                          const Text(
+                                          'Feeding Notes:',
+                              style: TextStyle(
+                                fontSize: 14,
+                                            fontWeight: FontWeight.w600,
                               color: Color(0xFF006064),
                             ),
                           ),
-                          const SizedBox(width: 12),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          fishData['feeding_notes'].toString(),
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.black87,
+                                            height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+                ),
+              ],
+            ),
+                              const SizedBox(height: 12),
+                            ],
+                            // Overfeeding Risks
+                            if (fishData['overfeeding_risks'] != null && fishData['overfeeding_risks'].toString().isNotEmpty) ...[
+                              Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                                  const Icon(
+                                    Icons.warning,
+                                    size: 16,
+                                    color: Colors.orange,
+                                ),
+                                const SizedBox(width: 8),
+                                  Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                           const Text(
-                            'Diet & Care Tips',
+                                          'Overfeeding Risks:',
                             style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.orange,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                Text(
+                                          fishData['overfeeding_risks'].toString(),
+                                  style: const TextStyle(
+                                            fontSize: 13,
+                                    color: Colors.black87,
+                                            height: 1.4,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
-                      FutureBuilder<String>(
-                        future: _dietCareResponse != null 
-                          ? Future.value(_dietCareResponse!)
-                          : _generateDietAndCareTips().then((response) {
-                              _dietCareResponse = response;
-                              return response;
-                            }),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return Row(
-                              children: [
-                                SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
+                                ],
+                              ),
+                            ],
+                            // Show message if no feeding info available
+                            if ((fishData['portion_grams'] == null || fishData['portion_grams'].toString().isEmpty) &&
+                                (fishData['preferred_food'] == null || fishData['preferred_food'].toString().isEmpty) &&
+                                (fishData['feeding_notes'] == null || fishData['feeding_notes'].toString().isEmpty) &&
+                                (fishData['overfeeding_risks'] == null || fishData['overfeeding_risks'].toString().isEmpty))
                                 const Text(
-                                  'Generating care recommendations...',
+                                'No specific feeding information available for this fish.',
                                   style: TextStyle(
                                     fontSize: 13,
-                                    color: Color(0xFF006064),
+                                  color: Colors.grey,
                                     fontStyle: FontStyle.italic,
                                   ),
                                 ),
                               ],
-                            );
-                          } else if (snapshot.hasData) {
-                            final fullText = snapshot.data!;
-                            final shortText = fullText.length > 80 ? fullText.substring(0, 77) + '...' : fullText;
-                            
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _showFullDietCare ? fullText : shortText,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.black87,
-                                    height: 1.5,
-                                  ),
-                                ),
-                                if (fullText.length > 80) ...[
-                                  const SizedBox(height: 8),
-                                  GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        _showFullDietCare = !_showFullDietCare;
-                                      });
-                                    },
-                                    child: Text(
-                                      _showFullDietCare ? 'See Less' : 'See More',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Color(0xFF00BCD4),
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            );
-                          } else {
-                            return const Text(
-                              'Feed 1-2 times daily and perform 25% weekly water changes.',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.black87,
-                                height: 1.5,
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                    ],
                   ),
-                ),
+                      );
+                    }).toList(),
               ],
+                ),
             ),
           ),
         ],
@@ -1434,208 +2006,506 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     );
   }
 
-  Future<List<String>> _getTankmateRecommendations() async {
+
+  Future<Map<String, List<String>>> _getGroupedTankmateRecommendations() async {
     try {
       final fishNames = _fishSelections.keys.toList();
-      if (fishNames.isEmpty) return [];
+      if (fishNames.isEmpty) return {'fully_compatible': [], 'conditional': []};
 
-      final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/tankmate-recommendations'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'fish_names': fishNames}),
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final recommendations = List<String>.from(data['recommendations'] ?? []);
-        final result = recommendations.take(5).toList(); // Limit to 5 recommendations
-        _tankmateRecommendations = result; // Store the result
-        return result;
+      // Get tankmate recommendations from Supabase for each selected fish
+      final supabase = Supabase.instance.client;
+      Map<String, Set<String>> fishFullyCompatible = {};
+      Map<String, Set<String>> fishConditional = {};
+      
+      for (String fishName in fishNames) {
+        try {
+          final response = await supabase
+              .from('fish_tankmate_recommendations')
+              .select('fully_compatible_tankmates, conditional_tankmates')
+              .ilike('fish_name', fishName)
+              .maybeSingle();
+          
+          if (response != null) {
+            print('🐠 Tankmate data for $fishName: $response');
+            print('🐠 fully_compatible_tankmates type: ${response['fully_compatible_tankmates'].runtimeType}');
+            print('🐠 conditional_tankmates type: ${response['conditional_tankmates'].runtimeType}');
+            // Add fully compatible tankmates
+            if (response['fully_compatible_tankmates'] != null) {
+              final fullyCompatibleData = response['fully_compatible_tankmates'];
+              List<String> fullyCompatible = [];
+              
+              try {
+                if (fullyCompatibleData is List) {
+                  fullyCompatible = fullyCompatibleData
+                      .where((item) => item is String)
+                      .cast<String>()
+                      .toList();
+                } else if (fullyCompatibleData is String) {
+                  // Handle case where it might be a JSON string
+                  final parsed = jsonDecode(fullyCompatibleData);
+                  if (parsed is List) {
+                    fullyCompatible = parsed
+                        .where((item) => item is String)
+                        .cast<String>()
+                        .toList();
+                  }
+                } else if (fullyCompatibleData is Map) {
+                  // Handle case where it might be a map with string keys
+                  fullyCompatible = fullyCompatibleData.keys
+                      .where((key) => key is String)
+                      .cast<String>()
+                      .toList();
+                }
+                
+                print('🐠 Parsed fully_compatible_tankmates for $fishName: $fullyCompatible');
+                fishFullyCompatible[fishName] = fullyCompatible.toSet();
+              } catch (e) {
+                print('Error parsing fully_compatible_tankmates for $fishName: $e');
+                print('Raw data: $fullyCompatibleData');
+              }
+            }
+            
+            // Add conditional tankmates
+            if (response['conditional_tankmates'] != null) {
+              final conditionalData = response['conditional_tankmates'];
+              List<String> conditional = [];
+              
+              try {
+                if (conditionalData is List) {
+                  conditional = conditionalData
+                      .where((item) => item is String)
+                      .cast<String>()
+                      .toList();
+                } else if (conditionalData is String) {
+                  // Handle case where it might be a JSON string
+                  final parsed = jsonDecode(conditionalData);
+                  if (parsed is List) {
+                    conditional = parsed
+                        .where((item) => item is String)
+                        .cast<String>()
+                        .toList();
+                  }
+                } else if (conditionalData is Map) {
+                  // Handle case where it might be a map with string keys
+                  conditional = conditionalData.keys
+                      .where((key) => key is String)
+                      .cast<String>()
+                      .toList();
+                }
+                
+                print('🐠 Parsed conditional_tankmates for $fishName: $conditional');
+                fishConditional[fishName] = conditional.toSet();
+              } catch (e) {
+                print('Error parsing conditional_tankmates for $fishName: $e');
+                print('Raw data: $conditionalData');
+              }
+            }
+          }
+        } catch (e) {
+          print('Error loading tankmate recommendations for $fishName: $e');
+        }
       }
+      
+      // Find common tankmates across all selected fish
+      Set<String> commonFullyCompatible = {};
+      Set<String> commonConditional = {};
+      
+      if (fishFullyCompatible.isNotEmpty) {
+        commonFullyCompatible = fishFullyCompatible.values.reduce((a, b) => a.intersection(b));
+      }
+      
+      if (fishConditional.isNotEmpty) {
+        commonConditional = fishConditional.values.reduce((a, b) => a.intersection(b));
+      }
+      
+      // Convert to lists and sort
+      final fullyCompatible = commonFullyCompatible.toList()..sort();
+      final conditional = commonConditional.toList()..sort();
+      
+      print('🐠 Found ${fullyCompatible.length} fully compatible and ${conditional.length} conditional tankmates from Supabase');
+      
+      return {
+        'fully_compatible': fullyCompatible,
+        'conditional': conditional,
+      };
     } catch (e) {
       print('🐠 Tankmate recommendations failed: $e');
+      return {'fully_compatible': [], 'conditional': []};
+    }
+  }
+
+  Future<List<String>> _getTankmateRecommendations() async {
+    final grouped = await _getGroupedTankmateRecommendations();
+    return [...grouped['fully_compatible']!, ...grouped['conditional']!];
+  }
+
+  Widget _buildTankmateSection({
+    required String title,
+    required List<String> tankmates,
+    required IconData icon,
+    required Color color,
+    required String description,
+  }) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+        // Section Header
+        Row(
+          children: [
+            Icon(icon, color: color, size: 16),
+            const SizedBox(width: 8),
+                                Text(
+              title,
+              style: TextStyle(
+                                    fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(6),
+              ),
+                                    child: Text(
+                '${tankmates.length}',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  color: color,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+        ),
+        const SizedBox(height: 8),
+        // Tankmate Chips
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: tankmates.map((tankmate) => _buildTankmateChip(tankmate, color: color)).toList(),
+        ),
+        const SizedBox(height: 8),
+        // Description
+        Text(
+          description,
+                              style: TextStyle(
+            fontSize: 11,
+            color: color.withOpacity(0.8),
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTankmateChip(String tankmate, {Color? color}) {
+    final chipColor = color ?? const Color(0xFF00BCD4);
+    
+    return InkWell(
+      onTap: () {
+        showDialog(
+          context: context,
+          builder: (context) => FishInfoDialog(fishName: tankmate),
+        );
+      },
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: chipColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: chipColor.withOpacity(0.3),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              FontAwesomeIcons.fish,
+              size: 12,
+              color: chipColor,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              tankmate,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: chipColor,
+              ),
+            ),
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () {
+                showDialog(
+                  context: context,
+                  builder: (context) => FishInfoDialog(fishName: tankmate),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: chipColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(
+                  Icons.remove_red_eye,
+                  size: 10,
+                  color: chipColor,
+                ),
+            ),
+          ),
+        ],
+        ),
+      ),
+    );
+  }
+
+  String _getPhRangeFromFishData() {
+    if (_fishData == null || _fishSelections.isEmpty) {
+      print('DEBUG: No fish data or selections available for pH range');
+      return 'Unknown';
     }
     
-    final fallback = ['Consider peaceful community fish like tetras, rasboras, or corydoras.'];
-    _tankmateRecommendations = fallback; // Store fallback result
-    return fallback;
-  }
-
-  Future<String> _generateWaterParameters() async {
-    try {
-      final fishNames = _fishSelections.keys.toList();
+    List<String> phRanges = [];
+    
+    for (String fishName in _fishSelections.keys) {
+      final fishData = _fishData![fishName];
+      if (fishData == null) {
+        print('DEBUG: No fish data for $fishName');
+        continue;
+      }
       
-      final aiPrompt = """
-      Provide comprehensive water parameters for these fish in bullet point format (EXACTLY 50 words):
-      Fish: ${fishNames.join(', ')}
+      // Try different possible field names for pH range
+      String? phRange = fishData['ph_range']?.toString() ?? 
+                       fishData['pH_range']?.toString() ?? 
+                       fishData['pH']?.toString();
       
-      Provide detailed water parameter recommendations in bullet points covering:
-      - Temperature range (in Celsius) and why it's optimal
-      - pH range and water hardness requirements
-      - Ammonia, nitrite, and nitrate levels to maintain
-      - Water change frequency and procedures
-      - Testing schedule and monitoring tips
-      - Any special water quality considerations
+      print('DEBUG: pH range for $fishName: $phRange');
       
-      Format as bullet points with • symbol. Be comprehensive, educational, and practical. Count your words carefully - maximum 50 words total.
-      """;
-      
-      final aiResponse = await OpenAIService.getChatResponse(aiPrompt).timeout(
-        const Duration(seconds: 25),
-        onTimeout: () => 'Unable to generate water parameters at this time. Please try again later.',
-      );
-      
-      return aiResponse;
-    } catch (e) {
-      return 'Unable to generate water parameters. Please check your connection and try again.';
+      if (phRange != null && phRange.isNotEmpty && phRange != 'null') {
+        phRanges.add(phRange);
+      }
     }
+    
+    print('DEBUG: All pH ranges found: $phRanges');
+    
+    if (phRanges.isEmpty) return 'Unknown';
+    
+    // If all fish have the same pH range, return it
+    if (phRanges.toSet().length == 1) {
+      return phRanges.first;
+    }
+    
+    // If different pH ranges, calculate a combined range
+    return _calculateCombinedPhRange(phRanges);
   }
 
-  Future<String> _generateTankEnvironmentAnalysis() async {
+  String _calculateCombinedPhRange(List<String> phRanges) {
+    List<double> allPhValues = [];
+    
+    for (String phRange in phRanges) {
+      // Parse different pH range formats like "6.5-7.5", "6.5 to 7.5", "6.5-7.5 pH", etc.
+      final cleanRange = phRange.replaceAll(RegExp(r'[^\d.-]'), ' ').trim();
+      final parts = cleanRange.split(RegExp(r'\s+'));
+      
+      for (String part in parts) {
+        if (part.contains('-')) {
+          // Handle range like "6.5-7.5"
+          final rangeParts = part.split('-');
+          if (rangeParts.length == 2) {
+            final min = double.tryParse(rangeParts[0]);
+            final max = double.tryParse(rangeParts[1]);
+            if (min != null && max != null) {
+              allPhValues.addAll([min, max]);
+            }
+          }
+        } else {
+          // Handle single value
+          final value = double.tryParse(part);
+          if (value != null) {
+            allPhValues.add(value);
+          }
+        }
+      }
+    }
+    
+    if (allPhValues.isEmpty) {
+      return phRanges.join(', ');
+    }
+    
+    // Find the overall min and max pH values
+    final minPh = allPhValues.reduce((a, b) => a < b ? a : b);
+    final maxPh = allPhValues.reduce((a, b) => a > b ? a : b);
+    
+    // Round to 1 decimal place
+    final minRounded = (minPh * 10).round() / 10;
+    final maxRounded = (maxPh * 10).round() / 10;
+    
+    return '${minRounded.toStringAsFixed(1)}-${maxRounded.toStringAsFixed(1)}';
+  }
+
+  String _getTemperatureRangeFromFishData() {
+    if (_fishData == null || _fishSelections.isEmpty) {
+      print('DEBUG: No fish data or selections available for temperature range');
+      return 'Unknown';
+    }
+    
+    List<String> tempRanges = [];
+    
+    for (String fishName in _fishSelections.keys) {
+      final fishData = _fishData![fishName];
+      if (fishData == null) continue;
+      
+      String? tempRange = fishData['temperature_range']?.toString() ?? 
+                         fishData['temp_range']?.toString();
+      
+      print('DEBUG: Temperature range for $fishName: $tempRange');
+      
+      if (tempRange != null && tempRange.isNotEmpty && tempRange != 'null') {
+        tempRanges.add(tempRange);
+      }
+    }
+    
+    print('DEBUG: All temperature ranges found: $tempRanges');
+    
+    if (tempRanges.isEmpty) return 'Unknown';
+    
+    // If all fish have the same temperature range, return it
+    if (tempRanges.toSet().length == 1) {
+      return tempRanges.first;
+    }
+    
+    // If different temperature ranges, calculate a combined range
+    return _calculateCombinedTemperatureRange(tempRanges);
+  }
+
+  String _calculateCombinedTemperatureRange(List<String> tempRanges) {
+    List<double> allTempValues = [];
+    
+    for (String tempRange in tempRanges) {
+      // Parse different temperature range formats like "22-26°C", "22 to 26", "22-26°F", etc.
+      final cleanRange = tempRange.replaceAll(RegExp(r'[^\d.-]'), ' ').trim();
+      final parts = cleanRange.split(RegExp(r'\s+'));
+      
+      for (String part in parts) {
+        if (part.contains('-')) {
+          // Handle range like "22-26"
+          final rangeParts = part.split('-');
+          if (rangeParts.length == 2) {
+            final min = double.tryParse(rangeParts[0]);
+            final max = double.tryParse(rangeParts[1]);
+            if (min != null && max != null) {
+              allTempValues.addAll([min, max]);
+            }
+          }
+        } else {
+          // Handle single value
+          final value = double.tryParse(part);
+          if (value != null) {
+            allTempValues.add(value);
+          }
+        }
+      }
+    }
+    
+    if (allTempValues.isEmpty) {
+      return tempRanges.join(', ');
+    }
+    
+    // Find the overall min and max temperature values
+    final minTemp = allTempValues.reduce((a, b) => a < b ? a : b);
+    final maxTemp = allTempValues.reduce((a, b) => a > b ? a : b);
+    
+    // Round to 1 decimal place
+    final minRounded = (minTemp * 10).round() / 10;
+    final maxRounded = (maxTemp * 10).round() / 10;
+    
+    return '${minRounded.toStringAsFixed(1)}-${maxRounded.toStringAsFixed(1)}°C';
+  }
+
+  List<String> _getUniqueFishSpecies() {
+    return _fishSelections.keys.toSet().toList();
+  }
+
+  List<String> _getFilteredFish(String cardId) {
+    final query = _searchQueries[cardId] ?? '';
+    if (query.isEmpty) {
+      return _fishSpecies;
+    }
+    return _fishSpecies.where((fish) =>
+        fish.toLowerCase().contains(query.toLowerCase())).toList();
+  }
+
+
+
+  String _getPortionDisplay(String fishName, dynamic portionGrams) {
     try {
-      final fishNames = _fishSelections.keys.toList();
-      final tankVolume = _calculationData!['tank_details']['volume'];
-      final tankShape = _getShapeLabel(_selectedTankShape);
+      final portionPerFish = double.parse(portionGrams.toString());
+      final quantity = _fishSelections[fishName] ?? 1;
       
-      // Extract recommended quantities from fish_details
-      final fishDetails = _calculationData!['fish_details'] as List<dynamic>;
-      final quantityText = fishDetails
-          .map((fish) => '${fish['recommended_quantity']} ${fish['name']}')
-          .join(', ');
-      
-      final aiPrompt = """
-      Explain why this tank setup is optimal for these fish in EXACTLY 50 words:
-      Fish: ${fishNames.join(', ')}
-      Recommended Quantities: $quantityText
-      Tank Volume: $tankVolume
-      Tank Shape: $tankShape
-      
-      Provide a detailed, educational explanation covering:
-      - Why these specific quantities are ideal for this tank volume
-      - How the tank volume supports the recommended fish quantities
-      - Benefits of this tank shape for swimming patterns and gas exchange
-      - Key environmental factors and considerations
-      - Any special requirements or recommendations
-      
-      Be comprehensive, educational, and practical. Count your words carefully - maximum 50 words total.
-      """;
-      
-      print('🧠 Generating tank environment analysis for: ${fishNames.join(', ')}');
-      final aiResponse = await OpenAIService.getChatResponse(aiPrompt).timeout(
-        const Duration(seconds: 25),
-      );
-      
-      print('🧠 AI Response: $aiResponse');
-      
-      if (aiResponse.isNotEmpty && aiResponse.trim().isNotEmpty) {
-        return aiResponse.trim();
+      // Convert to mg if portion is less than 0.1g for better readability
+      if (portionPerFish < 0.1) {
+        final portionMg = portionPerFish * 1000; // Convert g to mg
+        if (quantity == 1) {
+          return '${portionMg.toStringAsFixed(portionMg % 1 == 0 ? 0 : 1)} mg each';
+        } else {
+          final totalMg = portionMg * quantity;
+          return '${portionMg.toStringAsFixed(portionMg % 1 == 0 ? 0 : 1)} mg each (${totalMg.toStringAsFixed(totalMg % 1 == 0 ? 0 : 1)} mg total)';
+        }
+      } else {
+        // Use grams for larger portions
+        if (quantity == 1) {
+          return '${portionPerFish.toStringAsFixed(portionPerFish % 1 == 0 ? 0 : 1)} grams each';
+        } else {
+          final totalGrams = portionPerFish * quantity;
+          return '${portionPerFish.toStringAsFixed(portionPerFish % 1 == 0 ? 0 : 1)} grams each (${totalGrams.toStringAsFixed(totalGrams % 1 == 0 ? 0 : 1)} grams total)';
+        }
       }
     } catch (e) {
-      print('🧠 AI tank environment analysis failed: $e');
+      return '${portionGrams.toString()} grams each';
     }
-    
-    // Return a more detailed fallback
-    final fishNames = _fishSelections.keys.toList();
-    final tankVolume = _calculationData!['tank_details']['volume'];
-    final tankShape = _getShapeLabel(_selectedTankShape);
-    
-    return 'This ${tankShape.toLowerCase()} tank ($tankVolume) provides adequate swimming space and surface area for gas exchange. The recommended quantities of ${fishNames.join(', ')} are suitable for this tank size and shape.';
   }
 
-  Future<String> _generateFiltrationRecommendations() async {
-    try {
-      final fishNames = _fishSelections.keys.toList();
-      final tankVolume = _calculationData!['tank_details']['volume'];
-      
-      // Extract recommended quantities from fish_details
-      final fishDetails = _calculationData!['fish_details'] as List<dynamic>;
-      final quantityText = fishDetails
-          .map((fish) => '${fish['recommended_quantity']} ${fish['name']}')
-          .join(', ');
-      
-      final aiPrompt = """
-      Recommend filtration for this aquarium setup in EXACTLY 50 words:
-      Fish: ${fishNames.join(', ')}
-      Recommended Quantities: $quantityText
-      Tank Volume: $tankVolume
-      
-      Provide detailed, educational filter recommendations covering:
-      - Recommended filter type and capacity for this setup
-      - Filtration rate (turnover) requirements and why they matter
-      - How the recommended fish quantities affect filtration needs
-      - Maintenance schedule and procedures for optimal performance
-      - Special considerations for these specific fish species
-      - Additional equipment recommendations if needed
-      
-      Be comprehensive, educational, and practical. Count your words carefully - maximum 50 words total.
-      """;
-      
-      print('🧠 Generating filtration recommendations for: ${fishNames.join(', ')}');
-      final aiResponse = await OpenAIService.getChatResponse(aiPrompt).timeout(
-        const Duration(seconds: 25),
-      );
-      
-      print('🧠 AI Response: $aiResponse');
-      
-      if (aiResponse.isNotEmpty && aiResponse.trim().isNotEmpty) {
-        return aiResponse.trim();
-      }
-    } catch (e) {
-      print('🧠 AI filtration recommendations failed: $e');
-    }
-    
-    // Return a more detailed fallback
-    final tankVolume = _calculationData!['tank_details']['volume'];
-    final fishNames = _fishSelections.keys.toList();
-    
-    return 'Use a filter rated for $tankVolume or larger with 4-6x tank volume turnover per hour. For ${fishNames.join(', ')}, consider canister or hang-on-back filters. Clean filter media monthly and monitor water quality weekly for optimal fish health.';
-  }
-
-  Future<String> _generateDietAndCareTips() async {
-    try {
-      final fishNames = _fishSelections.keys.toList();
-      
-      // Extract recommended quantities from fish_details
-      final fishDetails = _calculationData!['fish_details'] as List<dynamic>;
-      final quantityText = fishDetails
-          .map((fish) => '${fish['recommended_quantity']} ${fish['name']}')
-          .join(', ');
-      
-      final aiPrompt = """
-      Provide diet and care tips for these fish in EXACTLY 50 words:
-      Fish: ${fishNames.join(', ')}
-      Recommended Quantities: $quantityText
-      
-      Provide detailed, educational recommendations covering:
-      - Feeding frequency, amounts, and timing for optimal health
-      - How the recommended quantities affect feeding requirements
-      - Food types (flakes, pellets, live food) and nutritional requirements
-      - Water change schedule, procedures, and why they're important
-      - Special care requirements and behavioral monitoring
-      - Health monitoring tips and common issues to watch for
-      - Environmental factors that affect fish well-being
-      
-      Be comprehensive, educational, and practical. Count your words carefully - maximum 50 words total.
-      """;
-      
-      print('🧠 Generating diet and care tips for: ${fishNames.join(', ')}');
-      final aiResponse = await OpenAIService.getChatResponse(aiPrompt).timeout(
-        const Duration(seconds: 25),
-      );
-      
-      print('🧠 AI Response: $aiResponse');
-      
-      if (aiResponse.isNotEmpty && aiResponse.trim().isNotEmpty) {
-        return aiResponse.trim();
-      }
-    } catch (e) {
-      print('🧠 AI diet and care tips failed: $e');
-    }
-    
-    // Return a more detailed fallback
-    final fishNames = _fishSelections.keys.toList();
-    
-    return 'Feed ${fishNames.join(', ')} 1-2 times daily, only what they eat in 2-3 minutes. Use high-quality flakes or pellets as staple diet. Perform 25% water changes weekly and monitor fish behavior daily for signs of stress or illness.';
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFF00BCD4), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                children: [
+                  TextSpan(
+                    text: '$label: ',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: Color(0xFF00BCD4),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  TextSpan(
+                    text: value,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildTankShapeIncompatibilityResults(Map<String, dynamic> results) {
@@ -1656,7 +2526,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                 end: Alignment.bottomRight,
                 colors: [Color(0xFFFF6B6B), Color(0xFFFF8585)],
               ),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.2),
@@ -1674,7 +2544,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(6),
                     ),
                     child: Icon(
                       _getShapeIcon(selectedShape),
@@ -1716,7 +2586,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
             width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.1),
@@ -1763,7 +2633,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
                               color: const Color(0xFFFF6B6B).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(6),
                               border: Border.all(color: const Color(0xFFFF6B6B).withOpacity(0.3)),
                             ),
                             child: Text(
@@ -1802,7 +2672,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: const Color(0xFFE0F7FA),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(6),
               border: Border.all(color: const Color(0xFF00BCD4)),
             ),
             child: Column(
@@ -1845,7 +2715,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                 ),
               ),
               child: const Text(
@@ -1867,8 +2737,6 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     switch (shape) {
       case 'rectangle':
         return Icons.crop_landscape;
-      case 'square':
-        return Icons.crop_square;
       case 'bowl':
         return Icons.circle;
       case 'cylinder':
@@ -1881,15 +2749,13 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   String _getShapeLabel(String shape) {
     switch (shape) {
       case 'rectangle':
-        return 'Rectangle Tank';
-      case 'square':
-        return 'Square Tank';
+        return 'Rectangle/Square Tank';
       case 'bowl':
         return 'Bowl Tank';
       case 'cylinder':
         return 'Cylinder Tank';
       default:
-        return 'Rectangle Tank';
+        return 'Rectangle/Square Tank';
     }
   }
 
@@ -1911,7 +2777,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                   Color(0xFFFF8585),
                 ],
               ),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.2),
@@ -1929,7 +2795,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(6),
                     ),
                     child: const Icon(
                       Icons.warning_rounded,
@@ -1958,7 +2824,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
             width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.withOpacity(0.1),
@@ -1982,7 +2848,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: const Icon(
                               FontAwesomeIcons.fish,
@@ -2010,7 +2876,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFFE0F7FA),
-                                  borderRadius: BorderRadius.circular(8),
+                                  borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
                                   '${entry.value}',
@@ -2147,7 +3013,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                     backgroundColor: const Color(0xFF00BCD4),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(6),
                     ),
                   ),
                   child: const Text(
@@ -2166,101 +3032,141 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     );
   }
 
-  Widget _buildParameterRow({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: const Color(0xFFE0F7FA),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            icon,
-            color: const Color(0xFF006064),
-            size: 20,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey[600],
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 
   Widget _buildVolumeInput() {
+    // Hide volume input for bowl tanks since they're hardcoded to 10L
+    if (_selectedTankShape == 'bowl') {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE0F7FA),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              FontAwesomeIcons.water,
+              color: Color(0xFF00BCD4),
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Bowl Tank Volume',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF006064),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Fixed at 10L (Bowl tanks are standardized)',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF006064),
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              color: Color(0xFFE0F7FA),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
+          // Header
                 Row(
                   children: [
                     const Icon(
                       FontAwesomeIcons.water,
-                      color: Color(0xFF006064),
+                color: Color(0xFF00BCD4),
+                size: 20,
                     ),
                     const SizedBox(width: 8),
                     const Text(
                       'Tank Volume',
                       style: TextStyle(
                         fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w600,
                         color: Color(0xFF006064),
                       ),
                     ),
                   ],
                 ),
+          const SizedBox(height: 12),
+          // Input field with unit selector
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _volumeController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: 'Enter tank volume',
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
+                    border: OutlineInputBorder(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(8),
+                        bottomLeft: Radius.circular(8),
+                        topRight: Radius.zero,
+                        bottomRight: Radius.zero,
+                      ),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(8),
+                        bottomLeft: Radius.circular(8),
+                        topRight: Radius.zero,
+                        bottomRight: Radius.zero,
+                      ),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(8),
+                        bottomLeft: Radius.circular(8),
+                        topRight: Radius.zero,
+                        bottomRight: Radius.zero,
+                      ),
+                      borderSide: const BorderSide(color: Color(0xFF00BCD4)),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                ),
+              ),
+              // Unit selector
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
+                  color: Colors.grey.shade50,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.zero,
+                    bottomLeft: Radius.zero,
+                    topRight: Radius.circular(8),
+                    bottomRight: Radius.circular(8),
+                  ),
+                  border: Border.all(color: Colors.grey.shade300),
                   ),
                   child: DropdownButton<String>(
                     value: _selectedUnit,
@@ -2275,39 +3181,21 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                         setState(() {
                           _selectedUnit = newValue;
                         });
+                        // Check compatibility when unit changes (affects volume calculation)
+                        if (_fishSelections.isNotEmpty && _volumeController.text.isNotEmpty) {
+                          print('🔄 Unit changed to $newValue - checking compatibility...');
+                          _checkAllFishTankShapeCompatibility();
+                        }
                       }
                     },
                     style: const TextStyle(
                       color: Color(0xFF006064),
-                      fontSize: 16,
+                    fontSize: 14,
                     ),
                     underline: Container(),
                   ),
                 ),
               ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _volumeController,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    hintText: 'Enter tank volume',
-                    filled: true,
-                    fillColor: const Color(0xFFF5F5F5),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  ),
-                ),
-
-              ],
-            ),
           ),
         ],
       ),
@@ -2317,6 +3205,26 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   Future<Map<String, dynamic>?> _validateTankShapeCompatibility() async {
     try {
       print('Validating tank shape compatibility for: $_selectedTankShape');
+      
+      // Get user's input volume
+      final userVolume = double.tryParse(_volumeController.text);
+      if (userVolume == null || userVolume <= 0) {
+        print('Invalid user volume input: ${_volumeController.text}');
+        return null; // Continue with calculation if volume is invalid
+      }
+
+      // Convert to liters if needed
+      double volumeInLiters = userVolume;
+      if (_selectedUnit == 'gal') {
+        volumeInLiters = userVolume * 3.78541;
+      }
+
+      // For bowl tanks, use hardcoded 10L limit
+      if (_selectedTankShape == 'bowl') {
+        volumeInLiters = 10.0;
+      }
+
+      print('Using volume for validation: ${volumeInLiters}L (user input: ${userVolume}${_selectedUnit})');
       
       // Get fish data to check sizes
       final response = await http.get(
@@ -2332,7 +3240,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       final List<dynamic> fishList = json.decode(response.body);
       final List<Map<String, dynamic>> incompatibleFish = [];
 
-      // Check each selected fish against tank shape
+      // Check each selected fish against tank shape and user's volume
       for (var fishName in _fishSelections.keys) {
         final fishData = fishList.firstWhere(
           (fish) => fish['common_name']?.toString().toLowerCase() == fishName.toLowerCase(),
@@ -2343,12 +3251,12 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
           final maxSize = fishData['max_size'];
           final minTankSize = fishData['minimum_tank_size_l'];
           
-          if (_isFishIncompatibleWithTankShape(fishName, maxSize, minTankSize, _selectedTankShape)) {
+          if (_isFishIncompatibleWithTankShapeAndVolume(fishName, maxSize, minTankSize, _selectedTankShape, volumeInLiters)) {
             incompatibleFish.add({
               'fish_name': fishName,
               'max_size': maxSize,
               'min_tank_size': minTankSize,
-              'reason': _getTankShapeIncompatibilityReason(fishName, maxSize, minTankSize, _selectedTankShape),
+              'reason': _getTankShapeIncompatibilityReason(fishName, maxSize, minTankSize, _selectedTankShape, volumeInLiters),
             });
           }
         }
@@ -2370,7 +3278,167 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     }
   }
 
-  bool _isFishIncompatibleWithTankShape(String fishName, dynamic maxSize, dynamic minTankSize, String tankShape) {
+
+  String _getTankShapeIncompatibilityReason(String fishName, dynamic maxSize, dynamic minTankSize, String tankShape, double userVolume) {
+    final size = maxSize?.toString() ?? 'N/A';
+    final tankVol = minTankSize?.toString() ?? 'N/A';
+    
+    print('🔍 Incompatibility reason for $fishName:');
+    print('   - Max Size: $maxSize (raw) -> $size (formatted)');
+    print('   - Min Tank Size: $minTankSize (raw) -> $tankVol (formatted)');
+    print('   - Tank Shape: $tankShape');
+    print('   - User Volume: ${userVolume}L');
+    
+    // Create a more informative tank volume display
+    String tankVolDisplay = tankVol;
+    if (tankVol == 'N/A' && maxSize != null) {
+      // Calculate estimated tank size based on fish size
+      final maxSizeNum = double.tryParse(maxSize.toString());
+      if (maxSizeNum != null) {
+        final maxSizeInches = maxSizeNum / 2.54;
+        final estimatedTankSize = maxSizeInches * 3.78541; // Convert to liters
+        tankVolDisplay = '${estimatedTankSize.toStringAsFixed(0)}L';
+      } else {
+        tankVolDisplay = 'estimated size';
+      }
+    } else if (tankVol != 'N/A') {
+      // Format the tank volume nicely
+      final tankVolNum = double.tryParse(tankVol);
+      if (tankVolNum != null) {
+        tankVolDisplay = '${tankVolNum.toStringAsFixed(0)}L';
+      }
+    }
+
+    switch (tankShape) {
+      case 'bowl':
+        return '$fishName (max size: ${size}cm, min tank: ${tankVolDisplay}) is too large for a bowl tank. Bowl tanks are limited to 10L and designed for nano fish under 8cm like bettas, small tetras, or shrimp.';
+               
+      case 'cylinder':
+        return '$fishName (max size: ${size}cm, min tank: ${tankVolDisplay}) needs more horizontal swimming space than a cylinder tank provides. Your ${userVolume}L cylinder tank may not provide enough horizontal swimming space for this fish.';
+               
+      case 'rectangle':
+        return '$fishName (min tank: ${tankVolDisplay}) needs more space than your ${userVolume}L ${tankShape} tank. Consider a larger tank or different fish.';
+        
+      default:
+        return '$fishName is not suitable for the selected tank shape.';
+    }
+  }
+
+  // Check if a fish is compatible with the selected tank shape
+  Future<void> _checkFishTankShapeCompatibility(String fishName) async {
+    try {
+      print('🔍 Checking tank shape compatibility for: $fishName');
+      
+      // Get fish data from Supabase
+      var response = await Supabase.instance.client
+          .from('fish_species')
+          .select('common_name, "max_size_(cm)", "minimum_tank_size_(l)"')
+          .ilike('common_name', fishName)
+          .maybeSingle();
+
+      print('📊 Supabase response for $fishName: $response');
+      
+      // If no data found, try alternative column names
+      if (response == null) {
+        print('🔄 Trying alternative column names...');
+        final altResponse = await Supabase.instance.client
+            .from('fish_species')
+            .select('common_name, max_size_cm, minimum_tank_size_l')
+            .ilike('common_name', fishName)
+            .maybeSingle();
+        print('📊 Alternative response: $altResponse');
+        
+        // Also try to see what fish names are available
+        print('🔍 Searching for similar fish names...');
+        final similarFish = await Supabase.instance.client
+            .from('fish_species')
+            .select('common_name')
+            .ilike('common_name', '%$fishName%')
+            .limit(5);
+        print('📊 Similar fish found: $similarFish');
+        
+        // If we found data with alternative columns, use it
+        if (altResponse != null) {
+          response = altResponse;
+          print('✅ Using alternative response data');
+        }
+      }
+
+      if (response != null) {
+        // Try both column name formats
+        final maxSize = response['max_size_(cm)'] ?? response['max_size_cm'];
+        final minTankSize = response['minimum_tank_size_(l)'] ?? response['minimum_tank_size_l'];
+        
+        print('📏 Fish data - Max Size: $maxSize, Min Tank Size: $minTankSize');
+        print('🔍 Raw response keys: ${response.keys.toList()}');
+        print('🔍 Raw response values: ${response.values.toList()}');
+        
+        // Convert to double safely
+        double? maxSizeDouble = maxSize != null ? double.tryParse(maxSize.toString()) : null;
+        double? minTankSizeDouble = minTankSize != null ? double.tryParse(minTankSize.toString()) : null;
+        
+        print('🔢 Converted - Max Size: $maxSizeDouble, Min Tank Size: $minTankSizeDouble');
+        
+        // If minTankSize is null, calculate a reasonable estimate based on max size
+        double? effectiveMinTankSize = minTankSizeDouble;
+        if (minTankSizeDouble == null && maxSizeDouble != null) {
+          // Estimate minimum tank size based on fish size (rough rule: 1 gallon per inch)
+          final maxSizeInches = maxSizeDouble / 2.54;
+          effectiveMinTankSize = maxSizeInches * 3.78541; // Convert to liters
+          print('📊 Estimated min tank size based on ${maxSizeDouble}cm: ${effectiveMinTankSize}L');
+        }
+        
+        // Get user's input volume for validation
+        final userVolume = double.tryParse(_volumeController.text);
+        if (userVolume != null && userVolume > 0) {
+          // Convert to liters if needed
+          double volumeInLiters = userVolume;
+          if (_selectedUnit == 'gal') {
+            volumeInLiters = userVolume * 3.78541;
+          }
+
+          // For bowl tanks, use hardcoded 10L limit
+          if (_selectedTankShape == 'bowl') {
+            volumeInLiters = 10.0;
+          }
+
+          print('🏠 Using user volume for validation: ${volumeInLiters}L (user input: ${userVolume}${_selectedUnit})');
+          
+          if (_isFishIncompatibleWithTankShapeAndVolume(fishName, maxSizeDouble, effectiveMinTankSize, _selectedTankShape, volumeInLiters)) {
+            print('⚠️ Fish $fishName is incompatible with $_selectedTankShape tank');
+            setState(() {
+              _fishTankShapeWarnings[fishName] = _getSimpleWarningMessage(fishName, _getTankShapeIncompatibilityReason(fishName, maxSizeDouble, effectiveMinTankSize, _selectedTankShape, volumeInLiters));
+            });
+          } else {
+            print('✅ Fish $fishName is compatible with $_selectedTankShape tank');
+            setState(() {
+              _fishTankShapeWarnings.remove(fishName);
+            });
+          }
+        } else {
+          print('⚠️ No valid volume input for compatibility check');
+          setState(() {
+            _fishTankShapeWarnings.remove(fishName);
+          });
+        }
+    } else {
+        print('❌ No fish data found for: $fishName');
+      }
+    } catch (e) {
+      print('Error checking tank shape compatibility for $fishName: $e');
+    }
+  }
+
+  // Check all selected fish for tank shape compatibility
+  Future<void> _checkAllFishTankShapeCompatibility() async {
+    for (String fishName in _fishSelections.keys) {
+      await _checkFishTankShapeCompatibility(fishName);
+    }
+  }
+
+
+  // Check if fish is incompatible with tank shape AND user's volume
+  bool _isFishIncompatibleWithTankShapeAndVolume(String fishName, dynamic maxSize, dynamic minTankSize, String tankShape, double userVolume) {
     // Convert sizes to numbers for comparison
     double? fishMaxSize;
     double? fishMinTankSize;
@@ -2383,143 +3451,65 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       return false; // Don't block if we can't parse the data
     }
 
+    // Check if fish needs more space than the user's tank volume provides
+    if (fishMinTankSize != null && fishMinTankSize > userVolume) {
+      print('❌ Fish $fishName needs ${fishMinTankSize}L but user has ${userVolume}L');
+      return true;
+    }
+
+    // Additional shape-specific checks
     switch (tankShape) {
       case 'bowl':
-        // BEGINNER: Bowl tanks (2-20L) - Only for nano fish
-        return (fishMaxSize != null && fishMaxSize > 8) || 
-               (fishMinTankSize != null && fishMinTankSize > 20);
-               
+        // Bowl tanks are hardcoded to 10L - Only for nano fish under 8cm
+        if (fishMaxSize != null && fishMaxSize > 8) {
+          print('❌ Fish $fishName (${fishMaxSize}cm) too large for bowl tank (max 8cm)');
+          return true;
+        }
+        // Also check if fish needs more than 10L
+        if (fishMinTankSize != null && fishMinTankSize > 10) {
+          print('❌ Fish $fishName needs ${fishMinTankSize}L but bowl is limited to 10L');
+          return true;
+        }
+        return false;
+        
       case 'cylinder':
-        // HOBBYIST: Cylinder tanks (20-200L) - Limited horizontal swimming space
-        return (fishMaxSize != null && fishMaxSize > 20) || 
-               (fishMinTankSize != null && fishMinTankSize > 200);
-               
-      case 'square':
-        // HOBBYIST: Square tanks (50-500L) - Moderate space limitations
-        return (fishMaxSize != null && fishMaxSize > 30) || 
-               (fishMinTankSize != null && fishMinTankSize > 500);
-               
+        // Cylinder tanks - Limited horizontal swimming space, fish under 20cm
+        if (fishMaxSize != null && fishMaxSize > 20) {
+          print('❌ Fish $fishName (${fishMaxSize}cm) too large for cylinder tank (max 20cm)');
+          return true;
+        }
+        // Also check volume requirement
+        if (fishMinTankSize != null && fishMinTankSize > userVolume) {
+          print('❌ Fish $fishName needs ${fishMinTankSize}L but cylinder has ${userVolume}L');
+          return true;
+        }
+        return false;
+        
       case 'rectangle':
       default:
-        // MONSTER KEEPERS: Rectangle tanks (20L-2000L+) - Most versatile for all sizes
+        // Rectangle tanks - Most versatile, only check volume
+        if (fishMinTankSize != null && fishMinTankSize > userVolume) {
+          print('❌ Fish $fishName needs ${fishMinTankSize}L but rectangle has ${userVolume}L');
+          return true;
+        }
         return false;
     }
   }
 
-  String _getTankShapeIncompatibilityReason(String fishName, dynamic maxSize, dynamic minTankSize, String tankShape) {
-    final size = maxSize?.toString() ?? 'N/A';
-    final tankVol = minTankSize?.toString() ?? 'N/A';
-    
-    switch (tankShape) {
-      case 'bowl':
-        return '$fishName (max size: ${size}cm, min tank: ${tankVol}L) is too large for a bowl tank. Bowl tanks (2-20L) are BEGINNER-friendly and designed for nano fish under 8cm like bettas, small tetras, or shrimp.';
-        
-      case 'cylinder':
-        return '$fishName (max size: ${size}cm, min tank: ${tankVol}L) needs more horizontal swimming space than a cylinder tank provides. Cylinder tanks (20-200L) are HOBBYIST-level and suitable for fish under 20cm.';
-        
-      case 'square':
-        return '$fishName (max size: ${size}cm, min tank: ${tankVol}L) requires more swimming length than a square tank offers. Square tanks (50-500L) are HOBBYIST-level and work best for fish under 30cm.';
-        
-      default:
-        return '$fishName is not suitable for the selected tank shape.';
-    }
-  }
-
-  /// Calculate smart tank size requirements considering shoaling behavior
-  Map<String, dynamic> _calculateSmartTankSize(String fishName, int quantity, Map<String, dynamic> fishData) {
-    final minTankSize = fishData['minimum_tank_size_l'] ?? fishData['min_tank_size'] ?? fishData['tank_size_required'];
-    final socialBehavior = fishData['social_behavior']?.toString().toLowerCase() ?? '';
-    final maxSize = fishData['max_size'];
-    
-    double baseTankSize = 0;
-    try {
-      baseTankSize = double.tryParse(minTankSize.toString()) ?? 0;
-    } catch (e) {
-      baseTankSize = 0;
-    }
-    
-    if (baseTankSize == 0) {
-      return {
-        'total_size': 'Unknown',
-        'explanation': 'Tank size data unavailable',
-        'is_accurate': false,
-      };
-    }
-    
-    // Smart calculation based on social behavior
-    double totalTankSize;
-    String explanation;
-    
-    if (socialBehavior.contains('shoaling') || socialBehavior.contains('schooling')) {
-      // Shoaling fish: base size + small increment per additional fish
-      if (quantity == 1) {
-        totalTankSize = baseTankSize;
-        explanation = 'Single fish needs ${baseTankSize.toInt()}L';
-      } else {
-        // For shoaling fish, add 2-3L per additional fish (not full base size)
-        final additionalSpace = (quantity - 1) * 2.5; // 2.5L per additional fish
-        totalTankSize = baseTankSize + additionalSpace;
-        explanation = 'Shoaling fish: ${baseTankSize.toInt()}L base + ${additionalSpace.toInt()}L for ${quantity - 1} additional fish';
-      }
-    } else if (socialBehavior.contains('territorial') || socialBehavior.contains('solitary')) {
-      // Territorial fish: each needs full space
-      totalTankSize = baseTankSize * quantity;
-      explanation = 'Territorial fish: each needs ${baseTankSize.toInt()}L × $quantity = ${totalTankSize.toInt()}L';
+  // Get simple warning message for user-friendly display
+  String _getSimpleWarningMessage(String fishName, String technicalMessage) {
+    if (technicalMessage.contains('bowl tank')) {
+      return 'Too big for bowl tank (max 10L)';
+    } else if (technicalMessage.contains('cylinder tank')) {
+      return 'Needs more space than cylinder tank';
+    } else if (technicalMessage.contains('needs more space')) {
+      return 'Needs bigger tank than selected';
     } else {
-      // Default: moderate sharing
-      if (quantity == 1) {
-        totalTankSize = baseTankSize;
-        explanation = 'Single fish needs ${baseTankSize.toInt()}L';
-      } else {
-        final additionalSpace = (quantity - 1) * (baseTankSize * 0.3); // 30% of base size per additional
-        totalTankSize = baseTankSize + additionalSpace;
-        explanation = 'Community fish: ${baseTankSize.toInt()}L base + ${additionalSpace.toInt()}L for ${quantity - 1} additional fish';
-      }
-    }
-    
-    return {
-      'total_size': '${totalTankSize.toInt()}L',
-      'explanation': explanation,
-      'is_accurate': true,
-      'base_size': baseTankSize.toInt(),
-      'quantity': quantity,
-    };
-  }
-
-  /// Get smart tank size information for display
-  Future<Map<String, dynamic>> _getSmartTankSizeInfo() async {
-    try {
-      // Get fish data to calculate smart tank size
-      final response = await http.get(
-        Uri.parse(ApiConfig.fishListEndpoint),
-        headers: {'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode != 200) {
-        return {'is_accurate': false};
-      }
-
-      final List<dynamic> fishList = json.decode(response.body);
-      
-      // Calculate smart tank size for the first fish (assuming similar behavior for same species)
-      for (var fishName in _fishSelections.keys) {
-        final fishData = fishList.firstWhere(
-          (fish) => fish['common_name']?.toString().toLowerCase() == fishName.toLowerCase(),
-          orElse: () => null,
-        );
-
-        if (fishData != null) {
-          final quantity = _fishSelections[fishName] ?? 1;
-          return _calculateSmartTankSize(fishName, quantity, fishData);
-        }
-      }
-      
-      return {'is_accurate': false};
-    } catch (e) {
-      print('Error getting smart tank size info: $e');
-      return {'is_accurate': false};
+      return 'Not suitable for selected tank';
     }
   }
+
+
 
   Widget _buildBowlLoadingAnimation() {
     return Container(
@@ -2570,26 +3560,6 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        title: const Text(
-          'Volume Calculator',
-          style: TextStyle(color: Color(0xFF006064), fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.help_outline, color: Color(0xFF006064)),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => const BeginnerGuideDialog(calculatorType: 'volume'),
-              );
-            },
-          ),
-        ],
-      ),
       body: Container(
         color: Colors.white,
         child: Stack(
@@ -2611,10 +3581,13 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                   _buildTankShapeSelector(),
                                   _buildVolumeInput(),
                                   _buildFishInput(),
+                                  _buildTankShapeWarningsWidget(),
                                 ],
                               )
                             else if (_calculationData!['tank_shape_issues'] != null)
                               _buildTankShapeIncompatibilityResults(_calculationData!)
+                            else if (_calculationData!['incompatible_pairs'] != null || _calculationData!['conditional_pairs'] != null)
+                              _buildCompatibilityResults(_calculationData!)
                             else if (_calculationData!['compatibility_issues'] != null && 
                                    (_calculationData!['compatibility_issues'] as List).isNotEmpty)
                               _buildIncompatibilityResult()
@@ -2636,7 +3609,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               elevation: 0,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(6),
                               ),
                             ),
                             child: const Text(
@@ -2669,7 +3642,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                   backgroundColor: Colors.grey[200],
                                   padding: const EdgeInsets.symmetric(vertical: 16),
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
                                 ),
                                 child: const Text(
@@ -2690,7 +3663,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                   padding: const EdgeInsets.symmetric(vertical: 16),
                                   elevation: 0,
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
                                 ),
                                 child: const Text(
@@ -2717,200 +3690,207 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   Widget _buildTankShapeSelector() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              color: Color(0xFFE0F7FA),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.crop_square,
-                  color: Color(0xFF006064),
-                ),
-                const SizedBox(width: 8),
                 const Text(
                   'Tank Shape',
                   style: TextStyle(
                     fontSize: 16,
-                    fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w600,
                     color: Color(0xFF006064),
                   ),
                 ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                // BEGINNER - Always visible (prioritized)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF00BCD4)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                  const SizedBox(height: 12),
                       Row(
                         children: [
-                          const Icon(Icons.school, color: Color(0xFF006064), size: 16),
-                          const SizedBox(width: 6),
-                          const Text(
-                            'BEGINNER',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
-                            ),
+              Expanded(
+                child: _buildMinimalShapeOption('bowl', 'Bowl', Icons.circle),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildMinimalShapeOption('rectangle', 'Rectangle', Icons.crop_landscape),
+              ),
+              const SizedBox(width: 8),
+                            Expanded(
+                child: _buildMinimalShapeOption('cylinder', 'Cylinder', Icons.circle_outlined),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
-                      _buildShapeOption(
-                        'bowl',
-                        'Bowl Tank',
-                        Icons.circle,
-                        '2-20L • Nano fish <8cm',
-                        isMainOption: true,
-                      ),
-                    ],
-                  ),
-                ),
-                
-                // MONSTER KEEPERS & HOBBYIST - Show if expanded
-                if (_showAllShapes) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMinimalShapeOption(String value, String label, IconData icon) {
+    final isSelected = _selectedTankShape == value;
+    return GestureDetector(
+      onTap: () async {
+        setState(() {
+          _selectedTankShape = value;
+        });
+        // Check compatibility for all selected fish when tank shape changes
+        if (_fishSelections.isNotEmpty) {
+          print('🔄 Tank shape changed to $value - checking compatibility...');
+          await _checkAllFishTankShapeCompatibility();
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF00BCD4)),
+          color: isSelected ? const Color(0xFF00BCD4).withOpacity(0.1) : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF00BCD4) : Colors.grey.shade300,
+            width: isSelected ? 2 : 1,
+          ),
                     ),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.water, color: Color(0xFF006064), size: 16),
-                            const SizedBox(width: 6),
-                            const Text(
-                              'MONSTER KEEPERS',
+            Icon(
+              icon,
+              color: isSelected ? const Color(0xFF00BCD4) : Colors.grey.shade600,
+              size: 20,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
                               style: TextStyle(
                                 fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF006064),
+                fontWeight: FontWeight.w500,
+                color: isSelected ? const Color(0xFF00BCD4) : Colors.grey.shade700,
                               ),
+              textAlign: TextAlign.center,
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        _buildShapeOption(
-                          'rectangle',
-                          'Rectangle Tank',
-                          Icons.crop_landscape,
-                          '20L-2000L+ • All fish sizes',
-                          isMainOption: true,
-                        ),
-                      ],
-                    ),
-                  ),
-                  
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF00BCD4)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(FontAwesomeIcons.fish, color: Color(0xFF006064), size: 16),
-                            const SizedBox(width: 6),
-                            const Text(
-                              'HOBBYIST',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF006064),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _buildShapeOption(
-                                'square',
-                                'Square Tank',
-                                Icons.crop_square,
-                                '50-500L • Under 30cm',
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _buildShapeOption(
-                                'cylinder',
-                                'Cylinder Tank',
-                                Icons.circle_outlined,
-                                '20-200L • Fish <20cm',
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                // Show more/less button
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _showAllShapes = !_showAllShapes;
-                    });
-                  },
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _showAllShapes ? 'See Less Options' : 'See More Tank Types',
-                        style: const TextStyle(
-                          color: Color(0xFF006064),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        _showAllShapes ? Icons.expand_less : Icons.expand_more,
-                        color: const Color(0xFF006064),
-                        size: 20,
-                      ),
-                    ],
-                  ),
+      ),
+    );
+  }
+
+  Widget _buildCompatibilityResults(Map<String, dynamic> results) {
+    final incompatiblePairs = results['incompatible_pairs'] as List<Map<String, dynamic>>? ?? [];
+    final conditionalPairs = results['conditional_pairs'] as List<Map<String, dynamic>>? ?? [];
+    final hasIncompatible = incompatiblePairs.isNotEmpty;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // Warning Card
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: hasIncompatible
+                    ? [const Color(0xFFFF6B6B), const Color(0xFFFF8585)]
+                    : [const Color(0xFFFF9800), const Color(0xFFFFB74D)],
+              ),
+              borderRadius: BorderRadius.circular(6),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.2),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
                 ),
               ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(
+                      hasIncompatible ? Icons.warning_rounded : Icons.info_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      hasIncompatible 
+                          ? 'Incompatible Fish Combinations'
+                          : 'Conditional Fish Compatibility',
+                      style: const TextStyle(
+                        fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                              ),
+                            ),
+                          ],
+                        ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // Compatibility Issues List
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(6),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 2,
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+            child: Column(
+                      children: [
+                // Show incompatible pairs first
+                ...incompatiblePairs.map((pair) => _buildCompatibilityPairCard(pair, isIncompatible: true)),
+                // Then show conditional pairs
+                ...conditionalPairs.map((pair) => _buildCompatibilityPairCard(pair, isIncompatible: false)),
+                      ],
+                    ),
+                  ),
+          const SizedBox(height: 20),
+          // Try Again Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                  _clearFishInputs();
+                  _volumeController.clear();
+                  _calculationData = null;
+                    });
+                  },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00BCD4),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              child: const Text(
+                'Try Again',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 16,
+                ),
+              ),
             ),
           ),
         ],
@@ -2918,84 +3898,89 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     );
   }
 
-  Widget _buildShapeOption(String value, String label, IconData icon, String description, {bool isMainOption = false}) {
-    final isSelected = _selectedTankShape == value;
-    return InkWell(
-      onTap: () {
-        setState(() {
-          _selectedTankShape = value;
-        });
-      },
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: isMainOption ? double.infinity : null,
-        padding: const EdgeInsets.all(12),
+  Widget _buildCompatibilityPairCard(Map<String, dynamic> pair, {required bool isIncompatible}) {
+    final pairColor = isIncompatible ? const Color(0xFFFF6B6B) : const Color(0xFFFF9800);
+    final pairIcon = isIncompatible ? Icons.cancel : Icons.warning;
+    
+    return Container(
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFE0F7FA) : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected ? const Color(0xFF00BCD4) : Colors.grey.shade300,
-            width: isSelected ? 2 : 1,
+        border: Border(
+          bottom: BorderSide(
+            color: Colors.grey.withOpacity(0.1),
+            width: 1,
           ),
         ),
-        child: isMainOption ? Row(
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
           children: [
             Icon(
-              icon,
-              color: isSelected ? const Color(0xFF006064) : Colors.grey.shade600,
-              size: 28,
+                  pairIcon,
+                  color: pairColor,
+                  size: 18,
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
+                  child: Text(
+                    '${pair['pair'][0]} + ${pair['pair'][1]}',
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 16,
                       fontWeight: FontWeight.bold,
-                      color: isSelected ? const Color(0xFF006064) : Colors.grey.shade700,
+                      color: pairColor,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    description,
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: pairColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: pairColor.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    isIncompatible ? 'Incompatible' : 'Conditional',
                     style: TextStyle(
-                      fontSize: 11,
-                      color: isSelected ? const Color(0xFF006064) : Colors.grey.shade600,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: pairColor,
+                    ),
+              ),
+            ),
+          ],
+            ),
+            const SizedBox(height: 12),
+            ...(pair['reasons'] as List).map((reason) => Padding(
+              padding: const EdgeInsets.only(left: 30, bottom: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 6),
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: pairColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      reason.toString(),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.black87,
+                        height: 1.5,
+                      ),
                     ),
                   ),
                 ],
               ),
-            ),
-          ],
-        ) : Column(
-          children: [
-            Icon(
-              icon,
-              color: isSelected ? const Color(0xFF006064) : Colors.grey.shade600,
-              size: 28,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: isSelected ? const Color(0xFF006064) : Colors.grey.shade700,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              description,
-              style: TextStyle(
-                fontSize: 10,
-                color: isSelected ? const Color(0xFF006064) : Colors.grey.shade600,
-              ),
-              textAlign: TextAlign.center,
-            ),
+            )).toList(),
           ],
         ),
       ),

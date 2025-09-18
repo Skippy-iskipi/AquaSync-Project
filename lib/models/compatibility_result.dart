@@ -2,27 +2,23 @@ import 'dart:convert';
 
 class CompatibilityResult {
   final String? id;
-  final String fish1Name;
-  final String fish1ImagePath;
-  final String fish2Name;
-  final String fish2ImagePath;
-  final bool isCompatible;
+  final Map<String, int> selectedFish; // Changed from individual fish names to map
+  final String compatibilityLevel; // Changed from bool to string
   final List<String> reasons;
+  final Map<String, dynamic> pairAnalysis; // New: stores pair-by-pair results
+  final Map<String, dynamic> tankmateRecommendations; // New: stores tankmate recommendations
   final DateTime dateChecked;
   final DateTime? createdAt;
-  final String savedPlan;
 
   CompatibilityResult({
     this.id,
-    required this.fish1Name,
-    required this.fish1ImagePath,
-    required this.fish2Name,
-    required this.fish2ImagePath,
-    required this.isCompatible,
+    required this.selectedFish,
+    required this.compatibilityLevel,
     required this.reasons,
+    required this.pairAnalysis,
+    required this.tankmateRecommendations,
     required this.dateChecked,
     this.createdAt,
-    this.savedPlan = 'free',
   });
 
   factory CompatibilityResult.fromJson(Map<String, dynamic> json) {
@@ -40,31 +36,72 @@ class CompatibilityResult {
       parsedReasons = List<String>.from(json['reasons']);
     }
 
+    // Handle selected_fish JSONB
+    Map<String, int> selectedFish = {};
+    if (json['selected_fish'] != null) {
+      if (json['selected_fish'] is Map) {
+        selectedFish = Map<String, int>.from(json['selected_fish']);
+      } else if (json['selected_fish'] is String) {
+        try {
+          final parsed = jsonDecode(json['selected_fish']);
+          selectedFish = Map<String, int>.from(parsed);
+        } catch (e) {
+          selectedFish = {};
+        }
+      }
+    }
+
+    // Handle pair_analysis JSONB
+    Map<String, dynamic> pairAnalysis = {};
+    if (json['pair_analysis'] != null) {
+      if (json['pair_analysis'] is Map) {
+        pairAnalysis = Map<String, dynamic>.from(json['pair_analysis']);
+      } else if (json['pair_analysis'] is String) {
+        try {
+          final parsed = jsonDecode(json['pair_analysis']);
+          pairAnalysis = Map<String, dynamic>.from(parsed);
+        } catch (e) {
+          pairAnalysis = {};
+        }
+      }
+    }
+
+    // Handle tankmate_recommendations JSONB
+    Map<String, dynamic> tankmateRecommendations = {};
+    if (json['tankmate_recommendations'] != null) {
+      if (json['tankmate_recommendations'] is Map) {
+        tankmateRecommendations = Map<String, dynamic>.from(json['tankmate_recommendations']);
+      } else if (json['tankmate_recommendations'] is String) {
+        try {
+          final parsed = jsonDecode(json['tankmate_recommendations']);
+          tankmateRecommendations = Map<String, dynamic>.from(parsed);
+        } catch (e) {
+          tankmateRecommendations = {};
+        }
+      }
+    }
+
     return CompatibilityResult(
       id: json['id'],
-      fish1Name: json['fish1_name'] ?? 'Unknown Fish',
-      fish1ImagePath: json['fish1_image_path'] ?? '',
-      fish2Name: json['fish2_name'] ?? 'Unknown Fish',
-      fish2ImagePath: json['fish2_image_path'] ?? '',
-      isCompatible: json['is_compatible'] ?? false,
+      selectedFish: selectedFish,
+      compatibilityLevel: json['compatibility_level'] ?? 'unknown',
       reasons: parsedReasons,
+      pairAnalysis: pairAnalysis,
+      tankmateRecommendations: tankmateRecommendations,
       dateChecked: DateTime.parse(json['date_checked']),
       createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
-      savedPlan: json['saved_plan'] ?? 'free',
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'fish1_name': fish1Name,
-      'fish1_image_path': fish1ImagePath,
-      'fish2_name': fish2Name,
-      'fish2_image_path': fish2ImagePath,
-      'is_compatible': isCompatible,
+      'selected_fish': selectedFish,
+      'compatibility_level': compatibilityLevel,
       'reasons': reasons,
+      'pair_analysis': pairAnalysis,
+      'tankmate_recommendations': tankmateRecommendations,
       'date_checked': dateChecked.toIso8601String(),
-      'saved_plan': savedPlan,
     };
   }
 } 

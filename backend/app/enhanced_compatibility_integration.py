@@ -212,7 +212,19 @@ def check_enhanced_fish_compatibility(fish1_data: Dict, fish2_data: Dict) -> Tup
             # Fall back to legacy system
             logger.info(f"Falling back to legacy compatibility for {fish1_data.get('common_name')} + {fish2_data.get('common_name')}")
             from .conditional_compatibility import check_conditional_compatibility
-            return check_conditional_compatibility(fish1_data, fish2_data)
+            compatibility, reasons, conditions = check_conditional_compatibility(fish1_data, fish2_data)
+            
+            # Make the legacy system more strict - if we don't have enough data, be more conservative
+            if not fish1_data.get('temperament') or not fish2_data.get('temperament'):
+                logger.warning(f"Insufficient data for {fish1_data.get('common_name')} + {fish2_data.get('common_name')} - being conservative")
+                if compatibility == "compatible":
+                    compatibility = "conditional"
+                    if not conditions:
+                        conditions = ["Insufficient data for full compatibility assessment - monitor closely"]
+                    if not reasons:
+                        reasons = ["Limited data available - compatibility assessment based on available information"]
+            
+            return compatibility, reasons, conditions
             
     except Exception as e:
         logger.error(f"Enhanced compatibility check failed: {str(e)}")

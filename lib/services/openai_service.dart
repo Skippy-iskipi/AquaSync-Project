@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'food_calculation_service.dart';
 
 class OpenAIService {
 
@@ -258,19 +260,47 @@ Only return the JSON. Do not include explanations or any text outside the JSON o
       return {'error': 'API key not found. Check your .env file.'};
     }
 
+    // Fetch portion_grams from fish_species table
+    double? portionGrams;
+    try {
+      final response = await Supabase.instance.client
+          .from('fish_species')
+          .select('portion_grams')
+          .or('common_name.ilike.%$commonName%,scientific_name.ilike.%$scientificName%')
+          .limit(1)
+          .single();
+      
+      portionGrams = response['portion_grams']?.toDouble();
+    } catch (e) {
+      print('Error fetching portion_grams for $commonName: $e');
+    }
+
+    // Format portion size from database or use fallback
+    String portionSizeText;
+    if (portionGrams != null && portionGrams > 0) {
+      if (portionGrams >= 1.0) {
+        portionSizeText = "${portionGrams.toStringAsFixed(1)}g per feeding";
+      } else {
+        portionSizeText = "${(portionGrams * 1000).toStringAsFixed(0)}mg per feeding";
+      }
+    } else {
+      portionSizeText = "Use database portion_grams value";
+    }
+
     final prompt = """
-You are an aquarium expert and enthusiast. Focus ONLY on aquarium care and feeding for the following fish (ignore wild/natural habitat behaviors):
+You are an aquarium expert and enthusiast. Focus ONLY on aquarium care and feeding for the following fish:
 
 Common Name: $commonName
 Scientific Name: $scientificName
+Portion Size: $portionSizeText
 
-Return a structured JSON object with short, user-friendly values for each key, based on best aquarium practices. Do NOT explain or add extra text outside JSON. Here are the required keys:
+Return a structured JSON object with these exact values:
 {
   "diet_type": "e.g. Omnivore, Carnivore, Herbivore",
-  "preferred_foods": ["e.g. Bloodworms", "Algae wafers", "Pellets"],
+  "preferred_foods": ["Specific food types for this fish species"],
   "feeding_frequency": "e.g. 2 times per day",
-  "portion_size": "e.g. 2-4 small pellets, a small pinch of flakes, or 1-2 algae wafers (give a quantity, not a time)",
-  "fasting_schedule": "e.g. Skip feeding on Wednesday and Sunday, or 1 to 2 non-consecutive days per week (give days or number of days, not a time)",
+  "portion_size": "$portionSizeText",
+  "fasting_schedule": "e.g. Skip feeding on Wednesday and Sunday",
   "oxygen_needs": "e.g. High - requires air pump",
   "filtration_needs": "e.g. Moderate - sponge filter recommended",
   "overfeeding_risks": "e.g. Can cause bloating and water fouling",
@@ -278,7 +308,7 @@ Return a structured JSON object with short, user-friendly values for each key, b
   "tankmate_feeding_conflict": "e.g. Avoid slow eaters in same tank"
 }
 
-For 'portion_size', always give a quantity (like number of pellets, wafers, or a pinch), not a time. For 'fasting_schedule', always give specific days or number of non-consecutive days per week. Do NOT include feeding style. Only return the JSON object. Do NOT mention wild/natural habitat or behaviors. All advice must be for aquarium environments only.
+CRITICAL: Use the exact portion_size provided above. Do NOT generate or modify the portion amount.
 """;
 
     final response = await http.post(
@@ -290,7 +320,7 @@ For 'portion_size', always give a quantity (like number of pellets, wafers, or a
       body: jsonEncode({
         'model': 'gpt-4',
         'messages': [
-          {'role': 'system', 'content': 'You are an aquarium expert and enthusiast. Only provide advice for aquarium care and feeding. Never mention wild or natural habitat. For portion size, always give a quantity (e.g. number of pellets, wafers, or a pinch), not a time. For fasting schedule, always give specific days or number of non-consecutive days per week. Do NOT include feeding style.'},
+          {'role': 'system', 'content': 'You are an aquarium expert. Use the EXACT portion_size provided in the prompt from the database. Do NOT generate or modify portion amounts. Focus on other care aspects like diet type, preferred foods, and feeding schedule.'},
           {'role': 'user', 'content': prompt}
         ],
         'temperature': 0.7,
@@ -322,36 +352,35 @@ For 'portion_size', always give a quantity (like number of pellets, wafers, or a
   static Future<Map<String, dynamic>> generateDietRecommendations(Map<String, int> fishSelections) async {
     final apiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
     if (apiKey.isEmpty) {
-      return await getFallbackDietRecommendations(fishSelections.keys.toList());
+      return await getFallbackDietRecommendations(fishSelections.keys.toList(), fishSelections);
     }
 
-    final fishList = fishSelections.keys.toList();
+    final fishList = fishSelections.entries.map((e) => '${e.value} ${e.key}').join(', ');
     final prompt = '''
-You are an aquarium care expert. Generate CONCISE diet recommendations for an aquarium containing these fish: ${fishList.join(', ')}.
+    You are an expert aquarist specializing in fish nutrition. For an aquarium containing: $fishList, create a detailed and practical feeding plan.
 
-REQUIREMENTS:
-- Provide group-based portion calculations (not per individual fish)
-- Consider fish age (adult/baby) - adults need smaller portions
-- Use simple measurements: "tiny pinch", "small pinch", "5-8 pellets"
-- If different fish eat same food, total their portions together
-- If different fish eat different foods, list separately
+    Return a single, clean JSON object with the following structure:
+    - "feeding_schedule": An object with "frequency" (e.g., "2 times per day") and "times" (e.g., "Morning and Evening").
+    - "portion_per_feeding": A single, well-formatted string detailing what to feed for EACH feeding session. Group foods by fish species if they have different needs. Use newlines (\n) to separate different food items.
+    - "feeding_notes": A concise string with 1-2 essential care tips for this specific group of fish.
 
-Provide the response in this format:
+    Example for 5 guppies and 3 mollies:
+    {
+      "feeding_schedule": {
+        "frequency": "2 times per day",
+        "times": "Morning and Evening"
+      },
+      "portion_per_feeding": "For Guppies & Mollies: A small pinch of high-quality flakes.\nFor Mollies: 1/4 of an algae wafer in the evening.",
+      "feeding_notes": "Mollies appreciate vegetable matter. Ensure flakes are crushed small enough for Guppies. Remove uneaten food after 5 minutes."
+    }
 
-FOOD TYPES:
-- [Food type] (for: [fish names that eat this])
-
-FEEDING SCHEDULE:
-- Frequency: [X] times per day
-- Best times: [morning/evening or specific times]
-
-FEEDING NOTES:
-- [One concise note about feeding this group]
-
-Example: 5 guppies + 3 mollies = "tiny pinch of flakes" (for guppies) + "small pinch of flakes" (for mollies) = "small pinch of flakes" (total)
-
-Be concise and group-focused. Avoid overwhelming details.
-''';
+    RULES:
+    - Be VERY specific with amounts and units (e.g., "1 small pinch of tropical flakes", "3-4 pellets", "1/4 algae wafer", "2-3 pieces of bloodworms", "1 small scoop of brine shrimp").
+    - Always include specific units: pellets, pinches, pieces, scoops, wafers, teaspoons, etc.
+    - Never use vague terms like "appropriate amount" or "small amount" without units.
+    - The "portion_per_feeding" string should be ready for display, using \n for line breaks.
+    - Provide only the JSON object, with no additional text or explanations.
+    ''';
 
     final response = await http.post(
       Uri.parse('https://api.openai.com/v1/chat/completions'),
@@ -362,7 +391,7 @@ Be concise and group-focused. Avoid overwhelming details.
       body: jsonEncode({
         'model': 'gpt-4',
         'messages': [
-          {'role': 'system', 'content': 'You are an aquarium care expert. Provide specific, practical diet recommendations for mixed fish tanks.'},
+          {'role': 'system', 'content': 'You are an aquarium care expert. Provide specific, practical diet recommendations for mixed fish tanks in JSON format.'},
           {'role': 'user', 'content': prompt}
         ],
         'temperature': 0.7,
@@ -374,17 +403,17 @@ Be concise and group-focused. Avoid overwhelming details.
       try {
         final data = jsonDecode(response.body);
         final content = data['choices'][0]['message']['content'];
-        return await _parseDietResponse(content, fishList);
+        return await _parseDietResponse(content, fishSelections.keys.toList());
       } catch (e) {
         print('Error parsing diet response: $e');
-        return await getFallbackDietRecommendations(fishList);
+        return await getFallbackDietRecommendations(fishSelections.keys.toList(), fishSelections);
       }
     } else {
-      return await getFallbackDietRecommendations(fishList);
+      return await getFallbackDietRecommendations(fishSelections.keys.toList(), fishSelections);
     }
   }
 
-  /// Generate specific portion recommendations for individual fish species
+  /// Generate specific portion recommendations with proper units and per-fish calculations
   static Future<Map<String, dynamic>> generatePortionRecommendation(String fishName, int quantity, List<String> availableFoodTypes) async {
     final apiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
     if (apiKey.isEmpty) {
@@ -399,7 +428,7 @@ Available food types: ${availableFoodTypes.join(', ')}
 REQUIREMENTS:
 - Consider fish age (adult/baby) - adults need smaller portions
 - For groups: calculate total portion for the group, not per individual
-- Use simple measurements: "tiny pinch", "small pinch", "5-8 pellets", etc.
+- Use specific measurements with units: "1 tiny pinch", "1 small pinch", "5-8 pellets", "2-3 pieces", "1/4 teaspoon", etc.
 - Choose from available food types only
 
 Provide ONLY:
@@ -496,81 +525,77 @@ IMPORTANT: Keep it simple and group-focused. Avoid overwhelming details.
     }
   }
 
-  /// Parse diet response from AI
   static Future<Map<String, dynamic>> _parseDietResponse(String response, List<String> fishList) async {
     try {
-      final lines = response.split('\n');
-      final foodTypes = <String>[];
-      final feedingSchedule = <String, dynamic>{};
-      final feedingNotes = <String>[];
-      
-      bool inFoodTypes = false;
-      bool inSchedule = false;
-      bool inNotes = false;
-      
-      for (final line in lines) {
-        final trimmed = line.trim().toLowerCase();
-        
-        if (trimmed.contains('food types') || trimmed.contains('foods')) {
-          inFoodTypes = true;
-          inSchedule = false;
-          inNotes = false;
-          continue;
+      // Clean up the response to ensure it's valid JSON
+      final cleanedResponse = response.trim().replaceAll('```json', '').replaceAll('```', '');
+      final jsonResponse = jsonDecode(cleanedResponse);
+
+      final schedule = jsonResponse['feeding_schedule'];
+      final portionDetails = jsonResponse['portion_per_feeding'] as String? ?? 'A small pinch of flakes or a few pellets.';
+      final notes = jsonResponse['feeding_notes'] as String? ?? 'Remove uneaten food after 5 minutes.';
+
+      // Basic food type extraction from portion details for consumption calculation
+      final foodTypes = <String>{};
+      if (portionDetails.toLowerCase().contains('flake')) foodTypes.add('flakes');
+      if (portionDetails.toLowerCase().contains('pellet')) foodTypes.add('pellets');
+      if (portionDetails.toLowerCase().contains('algae')) foodTypes.add('algae wafers');
+      if (portionDetails.toLowerCase().contains('frozen')) foodTypes.add('frozen food');
+      if (foodTypes.isEmpty) foodTypes.add('flakes'); // Default
+
+      final dailyConsumption = <String, double>{};
+      for (final foodType in foodTypes) {
+        double consumption = 0.3; // Default
+        if (foodType.contains('flake')) {
+          consumption = 0.5;
+        } else if (foodType.contains('pellet')) {
+          consumption = 0.3;
+        } else if (foodType.contains('algae')) {
+          consumption = 0.2;
+        } else if (foodType.contains('frozen')) {
+          consumption = 0.4;
         }
-        
-        if (trimmed.contains('feeding schedule') || trimmed.contains('schedule')) {
-          inFoodTypes = false;
-          inSchedule = true;
-          inNotes = false;
-          continue;
-        }
-        
-        if (trimmed.contains('feeding notes') || trimmed.contains('tips')) {
-          inFoodTypes = false;
-          inSchedule = false;
-          inNotes = true;
-          continue;
-        }
-        
-        if (inFoodTypes && line.trim().isNotEmpty) {
-          final food = line.trim().replaceAll(RegExp(r'^[-•*]\s*'), '');
-          if (food.isNotEmpty && !food.contains(':')) {
-            foodTypes.add(food);
-          }
-        }
-        
-        if (inSchedule && line.trim().isNotEmpty) {
-          if (line.contains('times per day') || line.contains('frequency')) {
-            final freqMatch = RegExp(r'(\d+)').firstMatch(line);
-            if (freqMatch != null) {
-              feedingSchedule['frequency'] = int.tryParse(freqMatch.group(1)!) ?? 2;
-            }
-          }
-          if (line.contains('AM') || line.contains('PM') || line.contains('morning') || line.contains('evening')) {
-            feedingSchedule['times'] = line.trim().replaceAll(RegExp(r'^[-•*]\s*'), '');
-          }
-        }
-        
-        if (inNotes && line.trim().isNotEmpty) {
-          final note = line.trim().replaceAll(RegExp(r'^[-•*]\s*'), '');
-          if (note.isNotEmpty && !note.contains(':')) {
-            feedingNotes.add(note);
-          }
-        }
+        dailyConsumption[foodType] = consumption;
       }
-      
+
+      // Add realistic food duration calculations
+      final foodDurationData = <String, dynamic>{};
+      for (final foodType in foodTypes) {
+        final containerSizes = FoodCalculationService.getStandardContainerSizes(foodType);
+        final durations = <Map<String, dynamic>>[];
+        
+        for (final container in containerSizes) {
+          final duration = await FoodCalculationService.calculateFoodDuration(
+            fishSelections: fishList.asMap().map((index, fish) => MapEntry(fish, 1)),
+            foodType: foodType,
+            containerSizeGrams: container['grams'],
+          );
+          durations.add({
+            'container_size': container['size'],
+            'duration': duration['duration_readable'],
+            'duration_days': duration['duration_days'],
+          });
+        }
+        foodDurationData[foodType] = durations;
+      }
+
       return {
-        'food_types': foodTypes.isNotEmpty ? foodTypes : ['flakes', 'pellets', 'algae wafers'],
+        'food_types': foodTypes.toList(),
         'feeding_schedule': {
-          'frequency': feedingSchedule['frequency'] ?? 2,
-          'times': feedingSchedule['times'] ?? 'Morning and evening',
+          'frequency': schedule['frequency'] ?? '2 times per day',
+          'times': schedule['times'] ?? 'Morning and evening',
         },
-        'feeding_notes': feedingNotes.isNotEmpty ? feedingNotes.join('\n') : 'Feed 2-3 times daily in small amounts. Remove uneaten food after 5 minutes.',
+        'feeding_notes': notes,
+        'daily_consumption': dailyConsumption,
+        'portion_per_feeding': portionDetails.replaceAll('\\n', '\n'),
+        'recommended_foods': foodTypes.toList(),
+        'special_considerations': 'Remove uneaten food after 5 minutes to maintain water quality.',
+        'food_duration_data': foodDurationData,
       };
-    } catch (e) {
-      print('Error parsing diet response: $e');
-      return await getFallbackDietRecommendations(fishList);
-    }
+      } catch (e) {
+        print('Error parsing JSON diet response: $e');
+        return await getFallbackDietRecommendations(fishList, fishList.asMap().map((index, fish) => MapEntry(fish, 1)));
+      }
   }
 
   /// Parse portion response from AI
@@ -611,17 +636,119 @@ IMPORTANT: Keep it simple and group-focused. Avoid overwhelming details.
     }
   }
 
-  /// Fallback diet recommendations when AI fails
-  static Future<Map<String, dynamic>> getFallbackDietRecommendations(List<String> fishList) async {
-    final foodTypes = <String>['flakes', 'pellets', 'algae wafers'];
+  /// Fallback diet recommendations with validated consumption rates and proper units
+  static Future<Map<String, dynamic>> getFallbackDietRecommendations(List<String> fishList, [Map<String, int>? fishSelections]) async {
+    print('Using fallback diet recommendations with validated consumption rates');
     
+    // Calculate total daily consumption based on validated per-fish rates (in g/day)
+    final Map<String, double> dailyConsumption = {};
+    double totalDailyConsumptionG = 0.0;
+    
+    // Use fishSelections if provided, otherwise default to 1 of each
+    final Map<String, int> quantities = fishSelections ?? 
+        {for (String fish in fishList) fish: 1};
+    
+    for (final fishName in fishList) {
+      final quantity = quantities[fishName] ?? 1;
+      final fishNameLower = fishName.toLowerCase();
+      
+      // Validated per-fish daily consumption rates (g/day) based on species data
+      double perFishConsumptionG = 0.05; // Default fallback
+      
+      if (fishNameLower.contains('guppy')) {
+        perFishConsumptionG = 0.05; // 0.04-0.06g flakes/day per fish
+      } else if (fishNameLower.contains('molly')) {
+        perFishConsumptionG = 0.10; // 0.08-0.12g flakes/day per fish
+      } else if (fishNameLower.contains('platy')) {
+        perFishConsumptionG = 0.07; // Medium livebearer
+      } else if (fishNameLower.contains('betta')) {
+        perFishConsumptionG = 0.06; // Medium-sized fish
+      } else if (fishNameLower.contains('tetra')) {
+        perFishConsumptionG = 0.02; // Very small schooling fish
+      }
+      
+      // Calculate total consumption for this species
+      final totalForSpeciesG = perFishConsumptionG * quantity;
+      totalDailyConsumptionG += totalForSpeciesG;
+      
+      print('$fishName ($quantity fish): ${perFishConsumptionG}g/fish/day × $quantity = ${totalForSpeciesG.toStringAsFixed(3)}g/day');
+      
+      // Distribute across food types based on species needs
+      if (fishNameLower.contains('molly')) {
+        // Mollies need more vegetable matter (60% flakes, 40% algae)
+        dailyConsumption['flakes'] = (dailyConsumption['flakes'] ?? 0) + (totalForSpeciesG * 0.6);
+        dailyConsumption['algae wafers'] = (dailyConsumption['algae wafers'] ?? 0) + (totalForSpeciesG * 0.4);
+      } else if (fishNameLower.contains('betta')) {
+        // Bettas prefer pellets
+        dailyConsumption['betta pellets'] = (dailyConsumption['betta pellets'] ?? 0) + totalForSpeciesG;
+      } else {
+        // Most fish primarily eat flakes
+        dailyConsumption['flakes'] = (dailyConsumption['flakes'] ?? 0) + totalForSpeciesG;
+      }
+    }
+    
+    print('Total daily consumption: ${totalDailyConsumptionG.toStringAsFixed(3)}g/day');
+    print('Daily consumption breakdown: $dailyConsumption');
+    
+    // Generate portion descriptions with proper units
+    String portionDescription = '';
+    for (final fishName in fishList) {
+      final quantity = quantities[fishName] ?? 1;
+      final fishNameLower = fishName.toLowerCase();
+      
+      if (portionDescription.isNotEmpty) portionDescription += '\n';
+      
+      if (fishNameLower.contains('guppy')) {
+        portionDescription += 'For $quantity Guppy(s): 1 small pinch of tropical flakes per feeding (~${(0.025 * quantity).toStringAsFixed(2)}g)';
+      } else if (fishNameLower.contains('molly')) {
+        portionDescription += 'For $quantity Molly(s): 1-2 pinches of tropical flakes (~${(0.03 * quantity).toStringAsFixed(2)}g) + 1/4 algae wafer in evening (~${(0.02 * quantity).toStringAsFixed(2)}g)';
+      } else if (fishNameLower.contains('platy')) {
+        portionDescription += 'For $quantity Platy(s): 1-2 pinches of tropical flakes per feeding (~${(0.035 * quantity).toStringAsFixed(2)}g)';
+      } else if (fishNameLower.contains('betta')) {
+        portionDescription += 'For $quantity Betta(s): 3-4 betta pellets per feeding (~${(0.03 * quantity).toStringAsFixed(2)}g)';
+      } else if (fishNameLower.contains('tetra')) {
+        portionDescription += 'For $quantity Tetra(s): 1 small pinch of micro flakes per feeding (~${(0.01 * quantity).toStringAsFixed(2)}g)';
+      } else {
+        portionDescription += 'For $quantity $fishName(s): 1 small pinch of appropriate food per feeding (~${(0.025 * quantity).toStringAsFixed(2)}g)';
+      }
+    }
+    
+    // Add realistic food duration calculations for fallback
+    final foodDurationData = <String, dynamic>{};
+    if (fishSelections != null) {
+      for (final foodType in dailyConsumption.keys) {
+        final containerSizes = FoodCalculationService.getStandardContainerSizes(foodType);
+        final durations = <Map<String, dynamic>>[];
+        
+        for (final container in containerSizes) {
+          final duration = await FoodCalculationService.calculateFoodDuration(
+            fishSelections: fishSelections,
+            foodType: foodType,
+            containerSizeGrams: container['grams'],
+          );
+          durations.add({
+            'container_size': container['size'],
+            'duration': duration['duration_readable'],
+            'duration_days': duration['duration_days'],
+          });
+        }
+        foodDurationData[foodType] = durations;
+      }
+    }
+
     return {
-      'food_types': foodTypes,
+      'food_types': dailyConsumption.keys.toList(),
       'feeding_schedule': {
-        'frequency': 2,
-        'times': 'Morning and evening'
+        'frequency': '2 times per day',
+        'times': 'Morning (8-9 AM) and Evening (6-7 PM)'
       },
-      'feeding_notes': 'Feed 2 times daily.\nRemove uneaten food after 5 minutes.',
+      'feeding_notes': 'Feed only what fish can consume in 2-3 minutes. Remove uneaten food promptly. Daily amounts are split across 2 feedings. Weights are approximate - adjust based on fish behavior and water quality.',
+      'daily_consumption': dailyConsumption,
+      'total_daily_consumption_g': totalDailyConsumptionG,
+      'portion_per_feeding': portionDescription,
+      'recommended_foods': dailyConsumption.keys.toList(),
+      'special_considerations': 'Remove uneaten food after 2-3 minutes to maintain water quality. Monitor fish behavior and adjust portions accordingly.',
+      'food_duration_data': foodDurationData,
     };
   }
 

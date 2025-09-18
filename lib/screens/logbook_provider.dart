@@ -5,13 +5,11 @@ import '../models/water_calculation.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_calculation.dart';
 import '../models/diet_calculation.dart';
+import '../models/fish_volume_calculation.dart';
+import '../models/tank.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/api_config.dart';
-import 'package:provider/provider.dart';
-import '../providers/user_plan_provider.dart';
-import '../services/openai_service.dart'; // OpenAI AI service
-import 'capture.dart';
 
 class LogBookProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -22,12 +20,16 @@ class LogBookProvider with ChangeNotifier {
   List<CompatibilityResult> _savedCompatibilityResults = [];
   List<FishPrediction> _savedPredictions = [];
   List<DietCalculation> _savedDietCalculations = [];
+  List<FishVolumeCalculation> _savedFishVolumeCalculations = [];
+  List<Tank> _savedTanks = [];
 
   List<WaterCalculation> get savedCalculations => _savedCalculations;
   List<FishCalculation> get savedFishCalculations => _savedFishCalculations;
   List<CompatibilityResult> get savedCompatibilityResults => _savedCompatibilityResults;
   List<FishPrediction> get savedPredictions => _savedPredictions;
   List<DietCalculation> get savedDietCalculations => _savedDietCalculations;
+  List<FishVolumeCalculation> get savedFishVolumeCalculations => _savedFishVolumeCalculations;
+  List<Tank> get savedTanks => _savedTanks;
 
   LogBookProvider() {
     init();
@@ -62,6 +64,8 @@ class LogBookProvider with ChangeNotifier {
     _savedFishCalculations.clear();
     _savedCompatibilityResults.clear();
     _savedDietCalculations.clear();
+    _savedFishVolumeCalculations.clear();
+    _savedTanks.clear();
     notifyListeners();
   }
 
@@ -126,6 +130,36 @@ class LogBookProvider with ChangeNotifier {
         _savedDietCalculations = [];
       }
 
+      // Load fish volume calculations
+      try {
+        final List<dynamic> fishVolumeCalculationsData = await _supabase
+            .from('fish_volume_calculations')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false);
+        print('Raw fish volume calculations data: $fishVolumeCalculationsData');
+        _savedFishVolumeCalculations = fishVolumeCalculationsData.map((json) => FishVolumeCalculation.fromJson(json)).toList();
+        print('Loaded ${_savedFishVolumeCalculations.length} fish volume calculations');
+      } catch (e) {
+        print('Error loading fish volume calculations: $e');
+        _savedFishVolumeCalculations = [];
+      }
+
+      // Load tanks
+      try {
+        final List<dynamic> tanksData = await _supabase
+            .from('tanks')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false);
+        print('Raw tanks data: $tanksData');
+        _savedTanks = tanksData.map((json) => Tank.fromJson(json)).toList();
+        print('Loaded ${_savedTanks.length} tanks');
+      } catch (e) {
+        print('Error loading tanks: $e');
+        _savedTanks = [];
+      }
+
     } catch (e) {
       print('Error loading data from Supabase: $e');
       _clearData(); // Clear local data on error
@@ -134,75 +168,18 @@ class LogBookProvider with ChangeNotifier {
     }
   }
 
-  // Utility methods for plan-based boundaries
-  static bool canSaveFish(String plan, int savedCount) {
-    if (plan == 'free') return savedCount < 5;
-    // Pro tier has unlimited captures
-    if (plan == 'pro') return true;
-    return true;
-  }
 
-  static bool canSyncCompatibility(String plan, int syncCount) {
-    if (plan == 'free') return syncCount < 2;
-    return true;
-  }
 
-  static bool canShowSaveCompatibility(String plan) {
-    return plan == 'pro';
-  }
 
-  static bool canShowDetailedReasons(String plan) {
-    return plan == 'pro';
-  }
-
-  static bool canShowMoreDetailedBreakdown(String plan) {
-    return plan == 'pro';
-  }
-
-  // Modified addPredictions to enforce plan boundaries
+  // Simplified methods without plan restrictions
   Future<bool> addPredictionsWithPlan(BuildContext context, List<FishPrediction> predictions) async {
-    final plan = Provider.of<UserPlanProvider>(context, listen: false).plan;
-    final savedCount = _savedPredictions.length;
-    if (!canSaveFish(plan, savedCount)) {
-      _showUpgradeDialog(context, 'You have reached the limit for saving fish in your current plan.');
-      return false;
-    }
     return await addPredictions(predictions);
   }
 
-  // Modified addCompatibilityResult to enforce plan boundaries
   Future<void> addCompatibilityResultWithPlan(BuildContext context, CompatibilityResult result) async {
-    final plan = Provider.of<UserPlanProvider>(context, listen: false).plan;
-    final syncCount = _savedCompatibilityResults.length;
-    if (!canSyncCompatibility(plan, syncCount)) {
-      _showUpgradeDialog(context, 'You have reached the limit for compatibility checks in your current plan.');
-      return;
-    }
     await addCompatibilityResult(result);
   }
 
-  void _showUpgradeDialog(BuildContext context, String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Upgrade to Pro'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushNamed(context, '/subscription');
-            },
-            child: const Text('Upgrade to Pro'),
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<bool> addPredictions(List<FishPrediction> predictions) async {
     // Sort predictions by probability in descending order
@@ -292,16 +269,17 @@ class LogBookProvider with ChangeNotifier {
         'ph_range': calculation.phRange,
         'fish_selections': calculation.fishSelections, // JSONB
         'recommended_quantities': calculation.recommendedQuantities,
-        'oxygen_needs': calculation.oxygenNeeds,
-        'filtration_needs': calculation.filtrationNeeds,
+        'tank_shape': calculation.tankShape,
+        'water_requirements': calculation.waterRequirements,
+        'tankmate_recommendations': calculation.tankmateRecommendations,
+        'feeding_information': calculation.feedingInformation,
         'date_calculated': calculation.dateCalculated.toIso8601String(),
         'created_at': DateTime.now().toIso8601String(),
-        // AI-generated content fields
+        // Keep old AI fields for backward compatibility
         'water_parameters_response': calculation.waterParametersResponse,
         'tank_analysis_response': calculation.tankAnalysisResponse,
         'filtration_response': calculation.filtrationResponse,
         'diet_care_response': calculation.dietCareResponse,
-        'tankmate_recommendations': calculation.tankmateRecommendations,
       }).select();
 
       if (response.isNotEmpty) {
@@ -338,6 +316,8 @@ class LogBookProvider with ChangeNotifier {
         'ph_range': calculation.phRange,
         'fish_selections': calculation.fishSelections, // JSONB
         'recommended_quantities': calculation.recommendedQuantities, // JSONB
+        'tankmate_recommendations': calculation.tankmateRecommendations, // TEXT[]
+        'feeding_information': calculation.feedingInformation, // JSONB
         'date_calculated': calculation.dateCalculated.toIso8601String(),
         'created_at': DateTime.now().toIso8601String(),
       }).select();
@@ -371,15 +351,13 @@ class LogBookProvider with ChangeNotifier {
     try {
       final response = await _supabase.from('compatibility_results').insert({
         'user_id': user.id,
-        'fish1_name': result.fish1Name,
-        'fish1_image_path': result.fish1ImagePath,
-        'fish2_name': result.fish2Name,
-        'fish2_image_path': result.fish2ImagePath,
-        'is_compatible': result.isCompatible,
+        'selected_fish': result.selectedFish, // JSONB
+        'compatibility_level': result.compatibilityLevel,
         'reasons': result.reasons, // TEXT[]
+        'pair_analysis': result.pairAnalysis, // JSONB
+        'tankmate_recommendations': result.tankmateRecommendations, // JSONB
         'date_checked': result.dateChecked.toIso8601String(),
         'created_at': DateTime.now().toIso8601String(),
-        'saved_plan': result.savedPlan, // Save the plan at the time of saving
       }).select();
 
       if (response.isNotEmpty) {
@@ -434,6 +412,8 @@ class LogBookProvider with ChangeNotifier {
       ..._savedFishCalculations,
       ..._savedCompatibilityResults,
       ..._savedDietCalculations,
+      ..._savedFishVolumeCalculations,
+      ..._savedTanks,
     ]..sort((a, b) {
         DateTime dateA;
         DateTime dateB;
@@ -446,6 +426,10 @@ class LogBookProvider with ChangeNotifier {
           dateA = a.dateCalculated;
         } else if (a is DietCalculation) {
           dateA = a.dateCalculated;
+        } else if (a is FishVolumeCalculation) {
+          dateA = a.dateCalculated;
+        } else if (a is Tank) {
+          dateA = a.createdAt ?? a.dateCreated;
         } else {
           dateA = (a as CompatibilityResult).createdAt ?? DateTime(0);
         }
@@ -458,6 +442,10 @@ class LogBookProvider with ChangeNotifier {
           dateB = b.dateCalculated;
         } else if (b is DietCalculation) {
           dateB = b.dateCalculated;
+        } else if (b is FishVolumeCalculation) {
+          dateB = b.dateCalculated;
+        } else if (b is Tank) {
+          dateB = b.createdAt ?? b.dateCreated;
         } else {
           dateB = (b as CompatibilityResult).createdAt ?? DateTime(0);
         }
@@ -465,7 +453,7 @@ class LogBookProvider with ChangeNotifier {
         return dateB.compareTo(dateA);
       });
     
-    print('AllItems count: ${allItems.length} (Predictions: ${_savedPredictions.length}, Water: ${_savedCalculations.length}, Fish: ${_savedFishCalculations.length}, Compatibility: ${_savedCompatibilityResults.length}, Diet: ${_savedDietCalculations.length})');
+    print('AllItems count: ${allItems.length} (Predictions: ${_savedPredictions.length}, Water: ${_savedCalculations.length}, Fish: ${_savedFishCalculations.length}, Compatibility: ${_savedCompatibilityResults.length}, Diet: ${_savedDietCalculations.length}, Fish Volume: ${_savedFishVolumeCalculations.length}, Tanks: ${_savedTanks.length})');
     return allItems;
   }
 
@@ -507,10 +495,39 @@ class LogBookProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  void addDietCalculation(DietCalculation calculation) {
-    _savedDietCalculations.insert(0, calculation);
-    print('Diet calculation added to provider. Total count: ${_savedDietCalculations.length}');
-    notifyListeners();
+  Future<void> addDietCalculation(DietCalculation calculation) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final response = await _supabase.from('diet_calculations').insert({
+        'user_id': user.id,
+        'fish_selections': calculation.fishSelections,
+        'total_portion': calculation.totalPortion,
+        'portion_details': calculation.portionDetails,
+        'compatibility_issues': calculation.compatibilityIssues,
+        'feeding_notes': calculation.feedingNotes,
+        'feeding_schedule': calculation.feedingSchedule,
+        'total_food_per_feeding': calculation.totalFoodPerFeeding,
+        'per_fish_breakdown': calculation.perFishBreakdown,
+        'recommended_food_types': calculation.recommendedFoodTypes,
+        'feeding_tips': calculation.feedingTips,
+        'date_calculated': calculation.dateCalculated.toIso8601String(),
+        'created_at': DateTime.now().toIso8601String(),
+        'saved_plan': calculation.savedPlan,
+      }).select();
+
+      if (response.isNotEmpty) {
+        _savedDietCalculations.insert(0, DietCalculation.fromJson(response.first));
+        print('Diet calculation added to provider. Total count: ${_savedDietCalculations.length}');
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error adding diet calculation to Supabase: $e');
+      // Still add to local list as fallback
+      _savedDietCalculations.insert(0, calculation);
+      notifyListeners();
+    }
   }
 
   Future<void> removeDietCalculation(DietCalculation calculation) async {
@@ -524,6 +541,12 @@ class LogBookProvider with ChangeNotifier {
     } catch (e) {
       print('Error removing diet calculation from Supabase: $e');
     }
+  }
+
+  // Method to add diet calculation to local list without saving to Supabase
+  void addDietCalculationLocally(DietCalculation calculation) {
+    _savedDietCalculations.insert(0, calculation);
+    notifyListeners();
   }
 
   Future<void> fetchDietCalculations() async {
@@ -547,23 +570,71 @@ class LogBookProvider with ChangeNotifier {
     return _savedCompatibilityResults.length;
   }
 
-  // Generate care recommendations for fish - uses cache first, then API
-  Future<Map<String, dynamic>> generateCareRecommendations(String commonName, String scientificName) async {
-    // First try to get from cache
-    final cachedRecommendations = CaptureScreenState.getCachedCareRecommendations(commonName, scientificName);
-    if (cachedRecommendations != null) {
-      print('Using cached care recommendations for $commonName');
-      return cachedRecommendations;
-    }
+  // Fish Volume Calculation methods
+  Future<void> addFishVolumeCalculation(FishVolumeCalculation calculation) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return;
 
-    // If not in cache, call OpenAI API
-    print('Generating new care recommendations for $commonName');
     try {
-              final recommendations = await OpenAIService.generateCareRecommendations(commonName, scientificName);
-      return recommendations;
+      final response = await _supabase.from('fish_volume_calculations').insert({
+        'user_id': user.id,
+        'tank_shape': calculation.tankShape,
+        'tank_volume': calculation.tankVolume,
+        'fish_selections': calculation.fishSelections,
+        'recommended_quantities': calculation.recommendedQuantities,
+        'tankmate_recommendations': calculation.tankmateRecommendations,
+        'water_requirements': calculation.waterRequirements,
+        'feeding_information': calculation.feedingInformation,
+        'date_calculated': calculation.dateCalculated.toIso8601String(),
+        'created_at': DateTime.now().toIso8601String(),
+      }).select();
+
+      if (response.isNotEmpty) {
+        _savedFishVolumeCalculations.insert(0, FishVolumeCalculation.fromJson(response.first));
+        print('Fish volume calculation added to provider. Total count: ${_savedFishVolumeCalculations.length}');
+        notifyListeners();
+      }
     } catch (e) {
-      print('Error generating care recommendations: $e');
-      return {'error': 'Failed to generate care recommendations'};
+      print('Error adding fish volume calculation to Supabase: $e');
+      // Still add to local list as fallback
+      _savedFishVolumeCalculations.insert(0, calculation);
+      notifyListeners();
     }
   }
+
+  Future<void> removeFishVolumeCalculation(FishVolumeCalculation calculation) async {
+    try {
+      await _supabase
+          .from('fish_volume_calculations')
+          .delete()
+          .eq('id', calculation.id!);
+      _savedFishVolumeCalculations.removeWhere((c) => c.id == calculation.id);
+      notifyListeners();
+    } catch (e) {
+      print('Error removing fish volume calculation from Supabase: $e');
+    }
+  }
+
+  // Method to add fish volume calculation to local list without saving to Supabase
+  void addFishVolumeCalculationLocally(FishVolumeCalculation calculation) {
+    _savedFishVolumeCalculations.insert(0, calculation);
+    notifyListeners();
+  }
+
+  Future<void> fetchFishVolumeCalculations() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    final response = await Supabase.instance.client
+        .from('fish_volume_calculations')
+        .select()
+        .eq('user_id', userId)
+        .order('date_calculated', ascending: false);
+
+    _savedFishVolumeCalculations = response
+        .map((json) => FishVolumeCalculation.fromJson(json))
+        .toList();
+    notifyListeners();
+  }
+
 }

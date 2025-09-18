@@ -44,14 +44,6 @@ class _InAppPasswordResetScreenState extends State<InAppPasswordResetScreen> {
 
       // Show success message and navigate to verification screen
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Check your email for the verification code'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 3),
-          ),
-        );
-
         // Navigate to verification screen
         Navigator.pushReplacement(
           context,
@@ -76,138 +68,181 @@ class _InAppPasswordResetScreenState extends State<InAppPasswordResetScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Reset Password',
-          style: TextStyle(
-            color: Color(0xFF006064),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-      ),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Logo
-                  Image.asset(
-                    'lib/icons/AquaSync_Logo.png',
-                    height: 120,
-                    width: 120,
-                  ),
-                  const SizedBox(height: 24),
-                  
-                  // Title
-                  const Text(
-                    'Reset Your Password',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF006064),
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  
-                  const Text(
-                    'Enter your email address and we\'ll send you a verification code.',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 32),
-
-                  // Email field
-                  TextFormField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: InputDecoration(
-                      labelText: 'Email',
-                      prefixIcon: const Icon(Icons.email_outlined),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your email';
-                      }
-                      if (!value.contains('@')) {
-                        return 'Please enter a valid email';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Error message
-                  if (_errorMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Text(
-                        _errorMessage!,
-                        style: const TextStyle(
-                          color: Colors.red,
-                          fontSize: 14,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-
-                  // Success message
-                  if (_successMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Text(
-                        _successMessage!,
-                        style: const TextStyle(
-                          color: Colors.green,
-                          fontSize: 14,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-
-                  // Send Code button
-                  ElevatedButton(
-                    onPressed: _isLoading ? null : _sendVerificationCode,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00ACC1),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: _isLoading
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text(
-                            'Send Verification Code',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                  ),
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          // Background gradient
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white,
+                  const Color(0xFF00BFB3).withOpacity(0.1),
+                  const Color(0xFF4DD0E1).withOpacity(0.1),
+                  Colors.white,
                 ],
+                stops: const [0.0, 0.3, 0.7, 1.0],
               ),
             ),
           ),
-        ),
+          SafeArea(
+            child: Column(
+              children: [
+                // Custom AppBar
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Color(0xFF00BFB3)),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      const Expanded(
+                        child: Text(
+                          'Reset Password',
+                          style: TextStyle(
+                            color: Color(0xFF00BFB3),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      const SizedBox(width: 48), // Balance the back button
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Logo
+                            Image.asset(
+                              'lib/icons/AquaSync_Logo.png',
+                              height: 120,
+                              width: 120,
+                            ),
+                            const SizedBox(height: 24),
+                            
+                            // Title
+                            const Text(
+                              'Reset Your Password',
+                              style: TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF00BFB3),
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 8),
+                            
+                            const Text(
+                              'Enter your email address and we\'ll send you a verification code.',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 32),
+
+                            // Email field
+                            TextFormField(
+                              controller: _emailController,
+                              keyboardType: TextInputType.emailAddress,
+                              decoration: InputDecoration(
+                                labelText: 'Email',
+                                prefixIcon: const Icon(Icons.email_outlined),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: const BorderSide(
+                                    color: Color(0xFF00BFB3),
+                                    width: 2,
+                                  ),
+                                ),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please enter your email';
+                                }
+                                if (!value.contains('@')) {
+                                  return 'Please enter a valid email';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 24),
+
+                            // Error message
+                            if (_errorMessage != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: Text(
+                                  _errorMessage!,
+                                  style: const TextStyle(
+                                    color: Colors.red,
+                                    fontSize: 14,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+
+                            // Success message
+                            if (_successMessage != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: Text(
+                                  _successMessage!,
+                                  style: const TextStyle(
+                                    color: Colors.green,
+                                    fontSize: 14,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+
+                            // Send Code button
+                            ElevatedButton(
+                              onPressed: _isLoading ? null : _sendVerificationCode,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF00BFB3),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: _isLoading
+                                  ? const CircularProgressIndicator(color: Colors.white)
+                                  : const Text(
+                                      'Send Verification Code',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

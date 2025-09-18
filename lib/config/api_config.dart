@@ -9,8 +9,8 @@ class ApiConfig {
   static const List<String> serverUrls = [
     //'https://aquasync.onrender.com',
     //'http://192.168.7.114:8000',
-    //'http://192.168.7.114:8000',
-    'http://172.20.10.2:8000',
+    'http://192.168.7.114:8000',
+    //'http://172.20.10.2:8000',
   ];
   
   // Current active server URL index (starts with the first one)

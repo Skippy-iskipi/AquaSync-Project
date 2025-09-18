@@ -51,32 +51,33 @@ class _ExpandableReasonState extends State<ExpandableReason> {
       return;
     }
 
-    // Check if we need to truncate
-    _needsTruncation = trimmed.length > widget.maxChars || 
-                      trimmed.split(RegExp(r'[.!?]+')).length > widget.maxSentences;
+    // Split into sentences using a more robust approach
+    final sentences = trimmed.split(RegExp(r'(?<=[.!?])\s+'))
+        .where((s) => s.trim().isNotEmpty)
+        .toList();
+    
+    // Check if we need to truncate based on character count or sentence count
+    _needsTruncation = trimmed.length > widget.maxChars || sentences.length > widget.maxSentences;
 
     if (!_needsTruncation) {
       _displayText = trimmed;
       return;
     }
 
-    // Split into sentences (naive approach)
-    final sentences = trimmed.split(RegExp(r'(?<=[.!?])\s+'));
-    
     // Take up to maxSentences sentences
-    String result = sentences.take(widget.maxSentences).join(' ');
+    String result = sentences.take(widget.maxSentences).join(' ').trim();
     
-    // If we have more sentences, add ellipsis
+    // If we have more sentences than maxSentences, add ellipsis
     if (sentences.length > widget.maxSentences) {
-      result = result.trim() + '...';
+      if (!result.endsWith('.') && !result.endsWith('!') && !result.endsWith('?')) {
+        result += '.';
+      }
+      result += '..';
     }
     
     // Enforce max character limit
     if (result.length > widget.maxChars) {
-      result = result.substring(0, widget.maxChars).trim();
-      if (!result.endsWith('...')) {
-        result += '...';
-      }
+      result = result.substring(0, widget.maxChars - 3).trim() + '...';
     }
     
     _displayText = result;
@@ -97,22 +98,26 @@ class _ExpandableReasonState extends State<ExpandableReason> {
           _isExpanded ? widget.text : _displayText,
           style: widget.textStyle ?? defaultStyle,
           textAlign: widget.textAlign ?? TextAlign.justify,
-          maxLines: _isExpanded ? null : 2,
-          overflow: _isExpanded ? null : TextOverflow.ellipsis,
+          maxLines: _isExpanded ? null : null,
+          overflow: _isExpanded ? null : null,
         ),
         if (_needsTruncation)
-          GestureDetector(
-            onTap: () {
-              setState(() {
-                _isExpanded = !_isExpanded;
-              });
-            },
-            child: Text(
-              _isExpanded ? 'Show less' : 'Show more',
-              style: TextStyle(
-                color: widget.linkColor ?? theme.colorScheme.primary,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _isExpanded = !_isExpanded;
+                });
+              },
+              child: Text(
+                _isExpanded ? 'Show less' : 'Show more',
+                style: TextStyle(
+                  color: widget.linkColor ?? theme.colorScheme.primary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                ),
               ),
             ),
           ),

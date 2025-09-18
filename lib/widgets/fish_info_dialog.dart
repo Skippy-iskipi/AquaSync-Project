@@ -20,8 +20,12 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
   DetailedTankmateInfo? tankmateInfo;
   bool isLoading = true;
   String? error;
-  bool _showAllCompatibility = false;
   late TabController _tabController;
+  
+  // Collapsible state for tankmate sections (initially collapsed)
+  bool _showGreatTankmates = false;
+  bool _showMaybeCompatible = false;
+  bool _showAvoidFish = false;
   
   // Animation controllers for smooth transitions
   late AnimationController _fadeController;
@@ -95,182 +99,240 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.all(16),
+      insetPadding: EdgeInsets.zero,
       child: Container(
-        width: MediaQuery.of(context).size.width - 32,
-        height: MediaQuery.of(context).size.height * 0.9,
-        decoration: BoxDecoration(
+        width: MediaQuery.of(context).size.width,
+        height: MediaQuery.of(context).size.height,
+        decoration: const BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 20,
-              offset: const Offset(0, 10),
-            ),
-          ],
         ),
-        child: Column(
-          children: [
-            // Enhanced Header with gradient and better spacing
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF006064), Color(0xFF00ACC1)],
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Enhanced Header with fish image background
+              Container(
+                height: 220,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF006064),
+                      Color(0xFF00838F),
+                      Color(0xFF00ACC1),
+                    ],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF006064).withOpacity(0.3),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(20),
-                  topRight: Radius.circular(20),
-                ),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(FontAwesomeIcons.fish, color: Colors.white, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.fishName,
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                            if (fishInfo?['scientific_name'] != null)
-                              Text(
-                                fishInfo!['scientific_name'].toString(),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.white.withOpacity(0.8),
-                                  fontStyle: FontStyle.italic,
-                                ),
-                              ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Fish image background
+                    _buildFishHeaderImage(),
+                    // Dark overlay for better text readability
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.2),
+                            Colors.black.withOpacity(0.7),
                           ],
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white, size: 24),
-                        onPressed: () => Navigator.of(context).pop(),
+                    ),
+                    // Header content
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                      child: Column(
+                        children: [
+                          // Close button at top-right
+                          Row(
+                            children: [
+                              const Spacer(),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.3),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: IconButton(
+                                  icon: const Icon(Icons.close, color: Colors.white, size: 24),
+                                  onPressed: () => Navigator.of(context).pop(),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Spacer(),
+                          // Fish name and scientific name at bottom-left
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      widget.fishName,
+                                      style: const TextStyle(
+                                        fontSize: 32,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                        letterSpacing: 0.5,
+                                        shadows: [
+                                          Shadow(
+                                            offset: Offset(2, 2),
+                                            blurRadius: 8,
+                                            color: Colors.black54,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (fishInfo?['scientific_name'] != null) ...[
+                                      const SizedBox(height: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.2),
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(
+                                            color: Colors.white.withOpacity(0.3),
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          fishInfo!['scientific_name'].toString(),
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            color: Colors.white,
+                                            fontStyle: FontStyle.italic,
+                                            fontWeight: FontWeight.w500,
+                                            shadows: [
+                                              Shadow(
+                                                offset: Offset(1, 1),
+                                                blurRadius: 4,
+                                                color: Colors.black54,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Key stats row for quick overview
-                  if (!isLoading && fishInfo != null) _buildQuickStats(),
-                ],
-              ),
-            ),
-            
-            // Tab Navigation
-            if (!isLoading && error == null)
-              Container(
-                color: Colors.grey[50],
-                child: TabBar(
-                  controller: _tabController,
-                  labelColor: const Color(0xFF006064),
-                  unselectedLabelColor: Colors.grey,
-                  indicatorColor: const Color(0xFF00ACC1),
-                  indicatorWeight: 3,
-                  tabs: const [
-                    Tab(text: 'Care Guide', icon: Icon(FontAwesomeIcons.fish, size: 18)),
-                    Tab(text: 'Tankmates', icon: Icon(Icons.group, size: 18)),
-                    Tab(text: 'Images', icon: Icon(Icons.photo_library, size: 18)),
+                    ),
                   ],
                 ),
               ),
-            
-            // Content
-            Expanded(
-              child: isLoading
-                  ? _buildLoadingState()
-                  : error != null
-                      ? _buildErrorState()
-                      : FadeTransition(
-                          opacity: _fadeAnimation,
-                          child: TabBarView(
-                            controller: _tabController,
-                            children: [
-                              _buildCareGuideTab(),
-                              _buildTankmatesTab(),
-                              _buildImagesTab(),
-                            ],
+              
+              // Tab Navigation
+              if (!isLoading && error == null)
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withOpacity(0.1),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: TabBar(
+                    controller: _tabController,
+                    labelColor: const Color(0xFF006064),
+                    unselectedLabelColor: Colors.grey[600],
+                    indicatorColor: const Color(0xFF00ACC1),
+                    indicatorWeight: 3,
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    labelStyle: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                    unselectedLabelStyle: const TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                    ),
+                    tabs: const [
+                      Tab(text: 'Care Guide', icon: Icon(FontAwesomeIcons.fish, size: 18)),
+                      Tab(text: 'Tankmates', icon: Icon(Icons.group, size: 18)),
+                      Tab(text: 'Images', icon: Icon(Icons.photo_library, size: 18)),
+                    ],
+                  ),
+                ),
+              
+              // Content
+              Expanded(
+                child: isLoading
+                    ? _buildLoadingState()
+                    : error != null
+                        ? _buildErrorState()
+                        : FadeTransition(
+                            opacity: _fadeAnimation,
+                            child: TabBarView(
+                              controller: _tabController,
+                              children: [
+                                _buildCareGuideTab(),
+                                _buildTankmatesTab(),
+                                _buildImagesTab(),
+                              ],
+                            ),
                           ),
-                        ),
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildQuickStats() {
-    if (fishInfo == null) return const SizedBox();
-    
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceAround,
-      children: [
-        _buildQuickStat(Icons.straighten, 'Size', fishInfo!['max_size']?.toString() ?? 'N/A'),
-        _buildQuickStat(Icons.water, 'Water Type', fishInfo!['water_type']?.toString() ?? 'N/A'),
-        _buildQuickStat(Icons.schedule, 'Lifespan', fishInfo!['lifespan']?.toString() ?? 'N/A'),
-      ],
-    );
-  }
-
-  Widget _buildQuickStat(IconData icon, String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: Colors.white, size: 16),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.8),
-              fontSize: 10,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildLoadingState() {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(color: Color(0xFF00BCD4)),
-          SizedBox(height: 16),
-          Text('Loading fish information...', style: TextStyle(color: Colors.grey)),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE0F7FA),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF00ACC1).withOpacity(0.2),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const CircularProgressIndicator(
+              color: Color(0xFF00ACC1),
+              strokeWidth: 3,
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'Loading fish information...',
+            style: TextStyle(
+              color: Color(0xFF006064),
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ],
       ),
     );
@@ -284,34 +346,93 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.red.withOpacity(0.1),
+                    Colors.red.withOpacity(0.05),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Colors.red.withOpacity(0.2),
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.red.withOpacity(0.1),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
-              child: const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              child: const Icon(
+                Icons.error_outline_rounded,
+                size: 48,
+                color: Colors.red,
+              ),
             ),
-            const SizedBox(height: 16),
-            Text(
+            const SizedBox(height: 20),
+            const Text(
               'Oops! Something went wrong',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1F2937),
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               error!,
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600]),
+              style: const TextStyle(
+                color: Color(0xFF6B7280),
+                fontSize: 14,
+                height: 1.5,
+              ),
             ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: _loadFishInfo,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try Again'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00ACC1),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            const SizedBox(height: 24),
+            Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF00ACC1),
+                    Color(0xFF26C6DA),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00ACC1).withOpacity(0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: ElevatedButton.icon(
+                onPressed: _loadFishInfo,
+                icon: const Icon(Icons.refresh_rounded, size: 20),
+                label: const Text(
+                  'Try Again',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  foregroundColor: Colors.white,
+                  shadowColor: Colors.transparent,
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
             ),
           ],
@@ -323,35 +444,69 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
 
 
   Widget _buildDescriptionCard() {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+            spreadRadius: 0,
+          ),
+        ],
+        border: Border.all(
+          color: const Color(0xFF00ACC1).withOpacity(0.1),
+          width: 1,
+        ),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.info, color: const Color(0xFF006064), size: 20),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF00ACC1),
+                        Color(0xFF26C6DA),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.info_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
                 const Text(
                   'About This Fish',
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF006064),
+                    color: Color(0xFF1F2937),
+                    letterSpacing: 0.5,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             Text(
               fishInfo!['description'].toString(),
               style: const TextStyle(
-                fontSize: 15,
-                height: 1.5,
-                color: Colors.black87,
+                fontSize: 16,
+                height: 1.6,
+                color: Color(0xFF374151),
+                fontWeight: FontWeight.w400,
               ),
             ),
           ],
@@ -378,15 +533,28 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
 
   Widget _buildBasicInfoCard() {
     if (fishInfo == null) {
-      return Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(24),
           child: Center(
             child: Text(
               'Basic information not available for ${widget.fishName}',
-              style: TextStyle(color: Colors.grey[600]),
+              style: const TextStyle(
+                color: Color(0xFF6B7280),
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
               textAlign: TextAlign.center,
             ),
           ),
@@ -394,29 +562,61 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
       );
     }
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        border: Border.all(
+          color: const Color(0xFF00ACC1).withOpacity(0.1),
+          width: 1,
+        ),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.summarize, color: const Color(0xFF006064), size: 20),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF006064),
+                        Color(0xFF00838F),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.summarize_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
                 const Text(
-                  'Quick Facts',
+                  'Fish Details',
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF006064),
+                    color: Color(0xFF1F2937),
+                    letterSpacing: 0.5,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             _buildInfoGrid(),
           ],
         ),
@@ -426,7 +626,7 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
 
   Widget _buildInfoGrid() {
     final info = [
-      {'icon': Icons.straighten, 'label': 'Max Size', 'value': fishInfo!['max_size']?.toString() ?? 'N/A'},
+      {'icon': Icons.straighten, 'label': 'Max Size', 'value': fishInfo!['max_size' ] != null ? '${fishInfo!['max_size']} cm' : 'N/A'},
       {'icon': Icons.mood, 'label': 'Temperament', 'value': fishInfo!['temperament']?.toString() ?? 'N/A'},
       {'icon': Icons.water, 'label': 'Water Type', 'value': fishInfo!['water_type']?.toString() ?? 'N/A'},
       {'icon': Icons.schedule, 'label': 'Lifespan', 'value': fishInfo!['lifespan']?.toString() ?? 'N/A'},
@@ -455,38 +655,68 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
 
   Widget _buildInfoGridItem(Map<String, dynamic> item) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFFF8FAFC),
+            const Color(0xFFE0F7FA).withOpacity(0.5),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFF00ACC1).withOpacity(0.2),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00ACC1).withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(item['icon'] as IconData, size: 16, color: const Color(0xFF006064)),
-              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00ACC1).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(
+                  item['icon'] as IconData,
+                  size: 16,
+                  color: const Color(0xFF00ACC1),
+                ),
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   item['label'] as String,
                   style: const TextStyle(
-                    fontSize: 11, 
-                    color: Colors.grey, 
-                    fontWeight: FontWeight.w500
+                    fontSize: 12,
+                    color: Color(0xFF6B7280),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(
             item['value'] as String,
             style: const TextStyle(
-              fontSize: 13, 
-              fontWeight: FontWeight.w600
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1F2937),
             ),
             overflow: TextOverflow.ellipsis,
             maxLines: 2,
@@ -499,58 +729,90 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
   Widget _buildCareRequirementsCard() {
     if (fishInfo == null) return const SizedBox();
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        border: Border.all(
+          color: const Color(0xFF00ACC1).withOpacity(0.1),
+          width: 1,
+        ),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(FontAwesomeIcons.fish, color: const Color(0xFF006064), size: 20),
-                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF00ACC1),
+                        Color(0xFF26C6DA),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    FontAwesomeIcons.fish,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
                 const Text(
                   'Care Requirements',
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF006064),
+                    color: Color(0xFF1F2937),
+                    letterSpacing: 0.5,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             _buildCareRequirement(
-              Icons.thermostat,
+              Icons.thermostat_rounded,
               'Temperature',
               _getTemperatureRange(),
-              Colors.orange,
+              const Color(0xFF00ACC1),
             ),
             _buildCareRequirement(
-              Icons.science_outlined,
+              Icons.science_rounded,
               'pH Level',
               fishInfo!['ph_range']?.toString() ?? 'N/A',
-              Colors.blue,
+              const Color(0xFF00ACC1),
             ),
             _buildCareRequirement(
-              Icons.home,
+              null,
               'Minimum Tank Size',
-              fishInfo!['minimum_tank_size_l']?.toString() ?? 'N/A',
-              Colors.green,
+              _getTankSizeDisplay(),
+              const Color(0xFF00ACC1),
             ),
             _buildCareRequirement(
-              Icons.restaurant,
+              Icons.restaurant_rounded,
               'Diet',
               fishInfo!['diet']?.toString() ?? 'N/A',
-              Colors.purple,
+              const Color(0xFF00ACC1),
             ),
             _buildCareRequirement(
-              Icons.star,
+              Icons.star_rounded,
               'Care Level',
               fishInfo!['care_level']?.toString() ?? 'N/A',
-              Colors.red,
+              const Color(0xFF00ACC1),
             ),
           ],
         ),
@@ -558,25 +820,39 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
     );
   }
 
-  Widget _buildCareRequirement(IconData icon, String label, String value, Color color) {
+  Widget _buildCareRequirement(IconData? icon, String label, String value, Color color) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.05),
+          color: const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: color.withOpacity(0.2)),
+          border: Border.all(
+            color: const Color(0xFFE2E8F0),
+            width: 1,
+          ),
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
+                color: const Color(0xFFE0F7FA),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: const Color(0xFF00ACC1).withOpacity(0.2),
+                  width: 1,
+                ),
               ),
-              child: Icon(icon, size: 20, color: color),
+              child: icon != null 
+                ? Icon(icon, size: 18, color: const Color(0xFF00ACC1))
+                : Image.asset(
+                    'lib/icons/Create_Aquarium.png',
+                    width: 18,
+                    height: 18,
+                    color: const Color(0xFF00ACC1),
+                  ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -585,18 +861,21 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
                 children: [
                   Text(
                     label,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontWeight: FontWeight.w600,
-                      color: color,
+                      color: Color(0xFF006064),
                       fontSize: 14,
+                      letterSpacing: 0.3,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(
                     value,
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w500,
+                      color: Color(0xFF374151),
+                      height: 1.3,
                     ),
                   ),
                 ],
@@ -610,13 +889,35 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
 
   Widget _buildTankmatesTab() {
     if (tankmateInfo == null) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(32),
-          child: Text(
-            'Tankmate information not available',
-            style: TextStyle(color: Colors.grey),
-            textAlign: TextAlign.center,
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0F7FA),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.group_off_rounded,
+                  size: 48,
+                  color: Color(0xFF00ACC1),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Tankmate information not available',
+                style: TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
         ),
       );
@@ -626,28 +927,40 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
+          // Fully Compatible Tankmates
           if (tankmateInfo!.fullyCompatibleTankmates.isNotEmpty)
-            _buildCompatibilitySection(
-              'Great Tankmates',
+            _buildSimpleTankmateSection(
+              'Compatible Tankmates',
               tankmateInfo!.fullyCompatibleTankmates,
-              Colors.green,
-              Icons.check_circle,
-              6,
+              const Color(0xFF4CAF50),
+              Icons.check_circle_outline_rounded,
+              _showGreatTankmates,
+              () => setState(() => _showGreatTankmates = !_showGreatTankmates),
             ),
           
+          // Conditional Tankmates
           if (tankmateInfo!.conditionalTankmates.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildConditionalSection(),
+            const SizedBox(height: 20),
+            _buildSimpleTankmateSection(
+              'Compatible with Conditions',
+              tankmateInfo!.conditionalTankmates.map((t) => t.name).toList(),
+              const Color(0xFFFF9800),
+              Icons.warning_outlined,
+              _showMaybeCompatible,
+              () => setState(() => _showMaybeCompatible = !_showMaybeCompatible),
+            ),
           ],
           
+          // Incompatible Tankmates
           if (tankmateInfo!.incompatibleTankmates.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildCompatibilitySection(
-              'Avoid These Fish',
+            const SizedBox(height: 20),
+            _buildSimpleTankmateSection(
+              'Incompatible Tankmates',
               tankmateInfo!.incompatibleTankmates,
-              Colors.red,
-              Icons.cancel,
-              4,
+              const Color(0xFFF44336),
+              Icons.cancel_outlined,
+              _showAvoidFish,
+              () => setState(() => _showAvoidFish = !_showAvoidFish),
             ),
           ],
         ],
@@ -655,192 +968,176 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
     );
   }
 
-  Widget _buildCompatibilitySection(String title, List<String> fish, Color color, IconData icon, int initialCount) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: fish
-                  .take(_showAllCompatibility ? fish.length : initialCount)
-                  .map((fishName) => Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: color.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: color.withOpacity(0.3)),
-                        ),
-                        child: Text(
-                          fishName,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: color.withOpacity(0.8),
-                          ),
-                        ),
-                      )).toList(),
-            ),
-            if (fish.length > initialCount)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _showAllCompatibility = !_showAllCompatibility;
-                    });
-                  },
-                  child: Text(
-                    _showAllCompatibility 
-                        ? 'Show Less' 
-                        : '+ ${fish.length - initialCount} more',
-                    style: TextStyle(color: color, fontWeight: FontWeight.w500),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildConditionalSection() {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.warning_amber, color: Colors.orange, size: 20),
-                const SizedBox(width: 8),
-                const Text(
-                  'Maybe Compatible',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.orange,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'These fish may work under the right conditions',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 16),
-            ...(_showAllCompatibility 
-                ? tankmateInfo!.conditionalTankmates 
-                : tankmateInfo!.conditionalTankmates.take(2)
-              ).map((tankmate) => _buildTankmateRecommendation(tankmate)),
-            if (tankmateInfo!.conditionalTankmates.length > 2)
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    _showAllCompatibility = !_showAllCompatibility;
-                  });
-                },
-                child: Text(
-                  _showAllCompatibility 
-                      ? 'Show Less' 
-                      : '+ ${tankmateInfo!.conditionalTankmates.length - 2} more',
-                  style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.w500),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTankmateRecommendation(TankmateRecommendation tankmate) {
+  Widget _buildSimpleTankmateSection(String title, List<String> fish, Color color, IconData icon, bool isExpanded, VoidCallback onToggle) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-        backgroundColor: Colors.orange.withOpacity(0.05),
-        collapsedBackgroundColor: Colors.orange.withOpacity(0.05),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        collapsedShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        title: Text(
-          tankmate.name,
-          style: const TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 15,
-          ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withOpacity(0.2),
+          width: 1,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Requirements for compatibility:',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.orange,
+          // Header (clickable to toggle)
+          InkWell(
+            onTap: onToggle,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(12),
+              topRight: Radius.circular(12),
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    color.withOpacity(0.1),
+                    color.withOpacity(0.05),
+                  ],
+                ),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(12),
+                  topRight: Radius.circular(12),
+                ),
+                border: Border(
+                  bottom: BorderSide(
+                    color: color.withOpacity(0.2),
+                    width: 1,
                   ),
                 ),
-                const SizedBox(height: 8),
-                ...tankmate.conditions.map((condition) => Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        margin: const EdgeInsets.only(top: 6),
-                        width: 4,
-                        height: 4,
-                        decoration: const BoxDecoration(
-                          color: Colors.orange,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          condition,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                      ),
-                    ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(icon, color: color, size: 16),
                   ),
-                )),
-              ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                        letterSpacing: 0.3,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '${fish.length}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: color,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: color,
+                    size: 18,
+                  ),
+                ],
+              ),
             ),
           ),
+          
+          // Fish list (collapsible)
+          if (isExpanded) ...[
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: fish.map((fishName) => _buildSimpleFishItem(fishName, color)).toList(),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  Widget _buildSimpleFishItem(String fishName, Color color) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () => _showFishInfoDialog(fishName),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: color.withOpacity(0.15),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              // Fish icon
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Icon(
+                  FontAwesomeIcons.fish,
+                  size: 12,
+                  color: color,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Fish name
+              Expanded(
+                child: Text(
+                  fishName,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: color.withOpacity(0.9),
+                    letterSpacing: 0.2,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              // Eye icon
+              Icon(
+                Icons.remove_red_eye,
+                size: 14,
+                color: color.withOpacity(0.6),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
 
   Widget _buildImagesTab() {
     return SingleChildScrollView(
@@ -862,10 +1159,70 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
     final tempRange = fishInfo!['temperature_range']?.toString();
     
     if (tempRange != null && tempRange.isNotEmpty && tempRange != 'null') {
-      return '${tempRange}°F';
+      return tempRange.contains('°C') ? tempRange : '${tempRange}°C';
     }
     
     return 'N/A';
+  }
+
+  String _getTankSizeDisplay() {
+    if (fishInfo == null) return 'N/A';
+    
+    // Try different possible field names for tank size
+    final tankSizeL = fishInfo!['minimum_tank_size_l'] ?? 
+                      fishInfo!['minimum_tank_size_(l)'] ?? 
+                      fishInfo!['min_tank_size'] ?? 
+                      fishInfo!['tank_size'];
+    
+    if (tankSizeL != null && tankSizeL.toString().isNotEmpty && tankSizeL.toString() != 'null') {
+      return '${tankSizeL} L';
+    }
+    
+    return 'N/A';
+  }
+
+  Widget _buildFishHeaderImage() {
+    // Try to get fish image from API
+    final imageUrl = '${ApiConfig.baseUrl}/fish-image/${widget.fishName}';
+    
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return Container(
+          color: const Color(0xFF006064),
+          child: const Center(
+            child: CircularProgressIndicator(
+              color: Colors.white,
+              strokeWidth: 2,
+            ),
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) {
+        // Fallback to gradient background if image fails to load
+        return Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF006064), Color(0xFF00ACC1)],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Show fish info dialog for tankmate fish
+  void _showFishInfoDialog(String fishName) {
+    showDialog(
+      context: context,
+      builder: (context) => FishInfoDialog(fishName: fishName),
+    );
   }
 }
 

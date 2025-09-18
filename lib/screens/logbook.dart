@@ -6,22 +6,24 @@ import 'logbook_provider.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/fish_prediction.dart';
+import 'tank_management.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/auth_service.dart';
+import 'auth_screen.dart';
 
 import 'package:intl/intl.dart';
 import '../models/compatibility_result.dart';
 import '../models/fish_calculation.dart';
 import '../models/water_calculation.dart';
 import '../models/diet_calculation.dart';
+import '../models/fish_volume_calculation.dart';
 import '../widgets/custom_notification.dart';
-import '../widgets/description_widget.dart';
-import '../widgets/fish_images_grid.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import '../widgets/fish_info_dialog.dart';
+import '../widgets/fish_details_screen.dart';
 import '../config/api_config.dart';
-import 'package:flutter_cache_manager/flutter_cache_manager.dart';
-import 'dart:typed_data';
 
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../widgets/calculation_result_widget.dart';
 
 
 
@@ -38,189 +40,49 @@ class LogBook extends StatefulWidget {
   _LogBookState createState() => _LogBookState();
 }
 
-class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  Map<int, bool> _showOxygenNeeds = {};
-  Map<int, bool> _showFiltrationNeeds = {};
-  // Cache resolved direct image URLs per fish name to avoid refetching
-  final Map<String, String> _fishImageUrlCache = {};
+class _LogBookState extends State<LogBook> {
+  String _selectedSection = 'My Tanks';
+  
+  final List<String> _sections = [
+    'My Tanks',
+    'Collection',
+    'Calculator',
+    'Compatibility',
+  ];
 
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(
-      length: 3,
-      vsync: this,
-      initialIndex: widget.initialTabIndex,
-    );
+    // Set initial section based on the initialTabIndex
+    if (widget.initialTabIndex < _sections.length) {
+      _selectedSection = _sections[widget.initialTabIndex];
+    }
   }
 
-  // Resolve a fish image from a fish name using the same approach as fish_list_screen.dart
-  Widget _buildResolvedFishImage(String fishName, {double height = 200}) {
-    final name = fishName.trim();
-    if (name.isEmpty) {
-      return Container(
-        height: height,
-        width: double.infinity,
-        color: Colors.grey[200],
-        child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 40),
-      );
-    }
-
-    // Use the same caching approach as fish_list_screen.dart
-    final cachedUrl = _fishImageUrlCache[name];
-    if (cachedUrl != null && cachedUrl.isNotEmpty) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Image.network(
-          cachedUrl,
-          height: height,
-          width: double.infinity,
-          fit: BoxFit.cover,
-          cacheWidth: (height * MediaQuery.of(context).devicePixelRatio).round(),
-          cacheHeight: (height * MediaQuery.of(context).devicePixelRatio).round(),
-          filterQuality: FilterQuality.low,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return Container(
-              height: height,
-              color: Colors.grey[200],
-              child: const Center(child: CircularProgressIndicator()),
-            );
-          },
-          errorBuilder: (context, error, stackTrace) => Container(
-            height: height,
-            color: Colors.grey[200],
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.image_not_supported_outlined, size: 40, color: Colors.grey),
-                const SizedBox(height: 8),
-                Text(
-                  fishName,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    // Use the same direct URL approach as fish_list_screen.dart
-    final String imageUrl = ApiConfig.getFishImageUrl(name);
-    
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Image.network(
-        imageUrl,
-        height: height,
-        width: double.infinity,
-        fit: BoxFit.cover,
-        cacheWidth: (height * MediaQuery.of(context).devicePixelRatio).round(),
-        cacheHeight: (height * MediaQuery.of(context).devicePixelRatio).round(),
-        filterQuality: FilterQuality.low,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return Container(
-            height: height,
-            color: Colors.grey[200],
-            child: const Center(child: CircularProgressIndicator()),
-          );
-        },
-        errorBuilder: (context, error, stackTrace) {
-          // Cache the URL even if it fails, to avoid repeated failed requests
-          _fishImageUrlCache[name] = imageUrl;
-          return Container(
-            height: height,
-            color: Colors.grey[200],
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.image_not_supported_outlined, size: 40, color: Colors.grey),
-                const SizedBox(height: 8),
-                Text(
-                  fishName,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          );
-        },
-        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-          if (wasSynchronouslyLoaded) return child;
-          return AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child: frame != null
-                ? child
-                : Container(
-                    height: height,
-                    color: Colors.grey[200],
-                    child: const Center(child: CircularProgressIndicator()),
-                  ),
-          );
-        },
-      ),
-    );
-  }
 
   @override
   void dispose() {
-    _tabController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.white,
+      color: Colors.grey[50],
       child: Column(
         children: [
-          Material(
-            color: Colors.white,
-            child: TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              labelColor: const Color(0xFF006064),
-              unselectedLabelColor: Colors.grey,
-              indicatorColor: const Color(0xFF4DD0E1),
-              labelStyle: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-              unselectedLabelStyle: const TextStyle(
-                fontWeight: FontWeight.normal,
-                fontSize: 14,
-              ),
-              tabs: const [
-                Tab(text: 'Fish Collection'),
-                Tab(text: 'Fish Calculator'),
-                Tab(text: 'Fish Compatibility'),
-              ],
-            ),
-          ),
+          // Always show profile header
+          _buildCompactProfileHeader(),
+          
+          // Tab selector
+          _buildSectionSelector(),
+          
+          // Content area
           Expanded(
             child: Container(
               color: Colors.white,
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildFishCollectionTab(),
-                  _buildCalculatorTab(),
-                  _buildFishCompatibilityTab(),
-                ],
-              ),
+              child: _buildSelectedSection(),
             ),
           ),
         ],
@@ -228,365 +90,244 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 
-  void _showFishDetails(FishPrediction prediction) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (BuildContext context) {
-          return Scaffold(
-            backgroundColor: Colors.white,
-            appBar: AppBar(
-              backgroundColor: Colors.white,
-              elevation: 0,
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-              title: const Text(
-                'Fish Details',
-                style: TextStyle(
-                  color: Color(0xFF006064),
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+  Widget _buildSectionSelector() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: const Color(0xFFE0E0E0),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: _sections.map((section) {
+          final isSelected = _selectedSection == section;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _selectedSection = section;
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFF00BFB3) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Center(
+                  child: Text(
+                      section,
+                      style: TextStyle(
+                      color: isSelected ? Colors.white : const Color(0xFF666666),
+                        fontSize: 12,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                 ),
               ),
             ),
-            body: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+
+
+  Widget _buildCompactProfileHeader() {
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF00BFB3),
+            const Color(0xFF4DD0E1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(6),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00BFB3).withOpacity(0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
                 children: [
-                  SizedBox(
-                    width: double.infinity,
-                    height: 300,
-                    child: prediction.imagePath.isNotEmpty
-                      ? kIsWeb
-                          ? Image.network(
-                              prediction.imagePath,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  color: Colors.grey.shade200,
-                                  child: const Icon(
-                                    Icons.image_not_supported,
-                                    size: 50,
-                                    color: Colors.grey,
-                                  ),
-                                );
-                              },
-                            )
-                          : Image.file(
-                              File(prediction.imagePath),
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  color: Colors.grey.shade200,
-                                  child: const Icon(
-                                    Icons.image_not_supported,
-                                    size: 50,
-                                    color: Colors.grey,
-                                  ),
-                                );
-                              },
-                            )
-                      : Container(
-                          color: Colors.grey.shade200,
+          // Profile Avatar
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
                           child: const Icon(
-                            Icons.photo,
-                            size: 50,
-                            color: Colors.grey,
-                          ),
-                        ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.all(20),
+              Icons.person,
+              size: 24,
+              color: Color(0xFF00BFB3),
+            ),
+          ),
+          const SizedBox(width: 16),
+          // User Info
+          Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          prediction.commonName,
+                Consumer<LogBookProvider>(
+                  builder: (context, logBookProvider, child) {
+                    final user = Supabase.instance.client.auth.currentUser;
+                    return Text(
+                      user?.email ?? 'Guest User',
                           style: const TextStyle(
-                            fontSize: 32,
+                        fontSize: 18,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF006064),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          prediction.scientificName,
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontStyle: FontStyle.italic,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        
-                        // Add description widget
-                        if (prediction.description.isNotEmpty)
-                          DescriptionWidget(
-                            description: prediction.description,
-                            maxLines: 3,
-                          ),
-                        
-                        // Add fish images grid right after description
-                        const SizedBox(height: 20),
-                        FishImagesGrid(fishName: prediction.commonName),
-                        
-                        const SizedBox(height: 20),
-                        
-                        const Text(
-                          'Basic Information',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF006064),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        _buildDetailRow('Water Type', prediction.waterType),
-                        _buildDetailRow('Maximum Size', prediction.maxSize),
-                        _buildDetailRow('Temperament', prediction.temperament),
-                        _buildDetailRow('Care Level', prediction.careLevel),
-                        _buildDetailRow('Lifespan', prediction.lifespan),
-                        const SizedBox(height: 40),
-                        
-                        // Add Habitat Information section
-                        const Text(
-                          'Habitat Information',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF006064),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        _buildDetailRow('Temperature Range', prediction.temperatureRange.isNotEmpty ? prediction.temperatureRange : 'Unknown'),
-                        _buildDetailRow('pH Range', prediction.phRange.isNotEmpty ? prediction.phRange : 'Unknown'),
-                        _buildDetailRow('Minimum Tank Size', prediction.minimumTankSize.isNotEmpty ? prediction.minimumTankSize : 'Unknown'),
-                        _buildDetailRow('Social Behavior', prediction.socialBehavior.isNotEmpty ? prediction.socialBehavior : 'Unknown'),
-                        const SizedBox(height: 40),
-                        
-                        const Text(
-                          'Diet Recommendation',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF006064),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        // Diet recommendation with expandable groups like capture.dart
-                        _buildDietRecommendationSection(prediction),
+                        color: Colors.white,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    );
+                  },
+                ),
                       ],
                     ),
                   ),
-                ],
+          // Auth Button
+          Consumer<AuthService>(
+            builder: (context, authService, child) {
+              final user = authService.currentUser;
+              return GestureDetector(
+                onTap: () async {
+                  if (user != null) {
+                    // Sign out
+                    await authService.signOut();
+                    if (mounted) {
+                      setState(() {});
+                    }
+                  } else {
+                    // Sign in
+                    if (mounted) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AuthScreen(
+                            showBackButton: true,
+                            initialMode: true, // Start in sign-in mode
               ),
             ),
+          );
+                    }
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+      child: Row(
+                    mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+                        user != null ? Icons.logout : Icons.login,
+          size: 16,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 6),
+              Text(
+                        user != null ? 'Sign Out' : 'Sign In',
+                style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  Widget _buildSelectedSection() {
+    switch (_selectedSection) {
+      case 'My Tanks':
+        return const TankManagement();
+      case 'Collection':
+        return _buildFishCollectionTab();
+      case 'Calculator':
+        return _buildCalculatorTab();
+      case 'Compatibility':
+        return _buildFishCompatibilityTab();
+      default:
+        return _buildFishCollectionTab();
+    }
+  }
+
+  void _showFishDetails(FishPrediction prediction) {
+    // Convert FishPrediction to fish data format
+    final fishData = {
+      'common_name': prediction.commonName,
+      'scientific_name': prediction.scientificName,
+      'water_type': prediction.waterType,
+      'max_size': prediction.maxSize,
+      'temperament': prediction.temperament,
+      'care_level': prediction.careLevel,
+      'lifespan': prediction.lifespan,
+      'temperature_range': prediction.temperatureRange,
+      'ph_range': prediction.phRange,
+      'minimum_tank_size': prediction.minimumTankSize,
+      'social_behavior': prediction.socialBehavior,
+      'diet': prediction.diet,
+      'preferred_food': prediction.preferredFood,
+      'feeding_frequency': prediction.feedingFrequency,
+      'description': prediction.description,
+    };
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (BuildContext context) {
+          return FishDetailsScreen(
+            commonName: prediction.commonName,
+            scientificName: prediction.scientificName,
+            capturedImagePath: prediction.imagePath,
+            fishData: fishData,
+            useCapturedImage: true,
           );
         },
       ),
     );
   }
 
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF006064),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value.isEmpty ? 'Not specified' : value,
-              style: const TextStyle(
-                fontSize: 16,
-                color: Colors.black87,
-              ),
-              textAlign: TextAlign.right,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildDietRecommendationSection(FishPrediction prediction) {
-    return FutureBuilder<Map<String, dynamic>>(
-      future: _getCareRecommendations(prediction.commonName, prediction.scientificName),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF006064)),
-            ),
-          );
-        }
 
-        final careData = snapshot.hasData && !snapshot.data!.containsKey('error') 
-            ? snapshot.data! 
-            : {
-                'diet_type': prediction.diet,
-                'preferred_foods': prediction.preferredFood,
-                'feeding_frequency': prediction.feedingFrequency,
-                'portion_size': 'N/A',
-                'fasting_schedule': 'N/A',
-                'overfeeding_risks': 'N/A',
-                'behavioral_notes': 'N/A',
-                'tankmate_feeding_conflict': 'N/A',
-              };
 
-        if (snapshot.hasError || (snapshot.hasData && snapshot.data!.containsKey('error'))) {
-          // Show error but still display basic diet info
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (snapshot.data!.containsKey('error'))
-                Text(snapshot.data!['error'], style: const TextStyle(color: Colors.red)),
-              const SizedBox(height: 10),
-              _buildDietRecommendationGroups(careData),
-            ],
-          );
-        }
 
-        return _buildDietRecommendationGroups(careData);
-      },
-    );
-  }
-
-  Widget _buildDietRecommendationGroups(Map<String, dynamic> dietData) {
-    final fields = [
-      {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
-      {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
-      {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
-      {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
-      {'label': 'Fasting Schedule', 'key': 'fasting_schedule', 'icon': Icons.calendar_today},
-      {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
-      {'label': 'Behavioral Notes', 'key': 'behavioral_notes', 'icon': Icons.psychology},
-      {'label': 'Tankmate Feeding Conflict', 'key': 'tankmate_feeding_conflict', 'icon': Icons.warning},
-    ];
-    
-    final List<List<Map<String, dynamic>>> fieldGroups = [
-      fields.sublist(0, 2),
-      fields.sublist(2, 5),
-      fields.sublist(5, 8),
-    ];
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ...fieldGroups.map((group) => _buildRecommendationExpansionGroup(group, dietData)).toList(),
-      ],
-    );
-  }
-
-  Widget _buildRecommendationExpansionGroup(List<Map<String, dynamic>> fields, Map<String, dynamic> data) {
-    final firstField = fields.first;
-    final remainingCount = fields.length - 1;
-    
-    return ExpansionTile(
-      initiallyExpanded: false,
-      title: Row(
-        children: [
-          Icon(firstField['icon'] as IconData, size: 22, color: const Color(0xFF006064)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              firstField['label'],
-              style: const TextStyle(
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF006064),
-                overflow: TextOverflow.ellipsis,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (remainingCount > 0)
-            Flexible(
-              child: Padding(
-                padding: const EdgeInsets.only(left: 8.0),
-                child: Text(
-                  '+$remainingCount more',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-      children: fields.map((field) {
-        final value = data[field['key']] ?? 'N/A';
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Card(
-            elevation: 1,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(field['icon'] as IconData, color: const Color(0xFF006064), size: 22),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          field['label'],
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF006064),
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        value is List
-                            ? Wrap(
-                                spacing: 6,
-                                runSpacing: 4,
-                                children: value.map<Widget>((v) => Chip(
-                                  label: Text(
-                                    v.toString(),
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                  backgroundColor: const Color(0xFF006064).withOpacity(0.1),
-                                  labelStyle: const TextStyle(color: Color(0xFF006064)),
-                                )).toList(),
-                              )
-                            : Text(
-                                value.toString(),
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Future<Map<String, dynamic>> _getCareRecommendations(String commonName, String scientificName) async {
-    final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
-    return await logBookProvider.generateCareRecommendations(commonName, scientificName);
-  }
 
   void _showCalculationDetails(dynamic calculation) {
     Navigator.of(context).push(
@@ -605,7 +346,9 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   ? 'Water Requirements' 
                   : calculation is FishCalculation
                     ? 'Fish Requirements'
-                    : 'Diet Calculation',
+                    : calculation is FishVolumeCalculation
+                      ? 'Fish Volume Calculation'
+                      : 'Diet Calculation',
               style: const TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -617,105 +360,16 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
             child: calculation is WaterCalculation
                 ? _buildWaterCalculationDetails(calculation)
                 : calculation is FishCalculation
-                  ? _buildFishCalculationDetails(calculation as FishCalculation)
-                  : _buildDietCalculationDetails(calculation as DietCalculation),
+                  ? _buildFishCalculationDetails(calculation)
+                  : calculation is FishVolumeCalculation
+                    ? _buildFishVolumeCalculationDetails(calculation)
+                    : _buildDietCalculationDetails(calculation),
           ),
         ),
       ),
     );
   }
 
-  Future<Map<String, dynamic>?> _fetchFishDetails(String fishName) async {
-    try {
-      final response = await http.get(Uri.parse('${ApiConfig.baseUrl}/fish-list'));
-      
-      if (response.statusCode == 200) {
-        final List<dynamic> fishList = json.decode(response.body);
-        final fishDetails = fishList.firstWhere(
-          (fish) => fish['Common Name'] == fishName,
-          orElse: () => null,
-        );
-        
-        if (fishDetails != null) {
-          // Add image URL to fish details using the same approach as fish_list_screen.dart
-          fishDetails['ImageURL'] = ApiConfig.getFishImageUrl(fishName);
-          
-          // Ensure all required fields are present with default values if missing or empty
-          final fieldsToCheck = [
-            'Water Type',
-            'Max Size (cm)',
-            'Temperament',
-            'Care Level',
-            'Lifespan',
-            'Diet',
-            'Preferred Food',
-            'Feeding Frequency',
-          ];
-
-          for (final field in fieldsToCheck) {
-            if (fishDetails[field] == null || fishDetails[field].toString().trim().isEmpty) {
-              fishDetails[field] = 'Not specified';
-            }
-          }
-          
-          // Cache the fish details
-          final jsonString = json.encode(fishDetails);
-          final encodedName = Uri.encodeComponent(fishName.trim().replaceAll(' ', ''));
-          DefaultCacheManager().putFile(
-            '${ApiConfig.baseUrl}/fish-details/$encodedName',
-            Uint8List.fromList(utf8.encode(jsonString)),
-            maxAge: const Duration(days: 7), // Cache for 7 days
-          );
-          
-          return fishDetails;
-        }
-        
-        print('Fish details not found for: $fishName');
-        return null;
-      } else {
-        print('Error fetching fish details: ${response.statusCode}');
-        print('Response body: ${response.body}');
-        
-        // Try to get cached data if API call fails
-        try {
-          final fileInfo = await DefaultCacheManager().getFileFromCache(
-            '${ApiConfig.baseUrl}/fish-details/${Uri.encodeComponent(fishName.trim().replaceAll(' ', '_'))}'
-          );
-          if (fileInfo != null) {
-            final cachedData = await fileInfo.file.readAsString();
-            final decodedData = json.decode(cachedData);
-            
-            // Ensure cached data also has default values
-            final fieldsToCheck = [
-              'Water Type',
-              'Max Size (cm)',
-              'Temperament',
-              'Care Level',
-              'Lifespan',
-              'Diet',
-              'Preferred Food',
-              'Feeding Frequency',
-            ];
-
-            for (final field in fieldsToCheck) {
-              if (decodedData[field] == null || decodedData[field].toString().trim().isEmpty) {
-                decodedData[field] = 'Not specified';
-              }
-            }
-            
-            return decodedData;
-          }
-        } catch (cacheError) {
-          print('Error reading from cache: $cacheError');
-        }
-        
-        return null;
-      }
-    } catch (e) {
-      print('Error fetching fish details: $e');
-      return null;
-    }
-  }
 
   Widget _buildWaterCalculationDetails(WaterCalculation calculation) {
     return Padding(
@@ -724,736 +378,212 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 24),
-          // Fish Details Cards
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: calculation.fishSelections.length,
-            itemBuilder: (context, index) {
-              final fishName = calculation.fishSelections.keys.elementAt(index);
-              final quantity = calculation.fishSelections[fishName];
-              final oxygen = calculation.oxygenNeeds != null ? calculation.oxygenNeeds![fishName] : null;
-              final filtration = calculation.filtrationNeeds != null ? calculation.filtrationNeeds![fishName] : null;
-              return Card(
-                margin: const EdgeInsets.only(bottom: 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Fish image
-                    ClipRRect(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                      child: _buildResolvedFishImage(fishName, height: 200),
-                    ),
-                    // Fish details
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                fishName,
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF006064),
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Text(
-                                  'Recommended: ${quantity ?? 1}',
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Color(0xFF006064),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+          
+          // Tank Shape Card
+          if (calculation.tankShape != null) ...[
+            CalculationResultWidget(
+              title: 'Tank Shape',
+              subtitle: 'Selected aquarium configuration',
+              icon: Icons.rectangle_rounded,
+              infoRows: [
+                CalculationInfoRow(
+                  icon: Icons.rectangle_rounded,
+                  label: 'Shape',
+                  value: calculation.tankShape!,
                 ),
-              );
-            },
+              ],
+            ),
+            const SizedBox(height: 20),
+          ],
+          
+          // Selected Fish Card
+          FishSelectionCard(
+            fishSelections: calculation.fishSelections,
+            cardTitle: 'Selected Fish',
+            cardSubtitle: 'Fish species for water calculation',
           ),
           const SizedBox(height: 20),
-          // Tank Volume Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  const Color(0xFF006064),
-                  const Color(0xFF00ACC1),
-                ],
+          
+          // Tank Dimensions Card
+          CalculationResultWidget(
+            title: 'Tank Dimensions',
+            subtitle: 'Aquarium size and volume information',
+            icon: Icons.rectangle_rounded,
+            infoRows: [
+              CalculationInfoRow(
+                icon: Icons.water,
+                label: 'Minimum Tank Volume',
+                value: calculation.minimumTankVolume,
               ),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.2),
-                  spreadRadius: 2,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Stack(
-              children: [
-                // Background wave pattern
-                Positioned(
-                  right: -20,
-                  bottom: -20,
-                  child: Icon(
-                    Icons.water,
-                    size: 100,
-                    color: Colors.white.withOpacity(0.1),
-                  ),
-                ),
-                // Content
-                Padding(
-                  padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                        'Minimum Tank Volume',
-                      style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.white70,
-                      ),
-                    ),
-                      const SizedBox(height: 8),
-                    Text(
-                        calculation.minimumTankVolume ?? 'Not specified',
-                      style: const TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          
+          // Water Requirements Card
+          CalculationResultWidget(
+            title: 'Water Requirements',
+            subtitle: 'Optimal water parameters for your fish',
+            icon: Icons.water_drop_rounded,
+            infoRows: calculation.waterRequirements != null ? [
+              CalculationInfoRow(
+                icon: Icons.thermostat,
+                label: 'Temperature Range',
+                value: (calculation.waterRequirements!['temperature_range'] as String?) ?? calculation.temperatureRange,
               ),
-              ],
-            ),
+              CalculationInfoRow(
+                icon: Icons.science,
+                label: 'pH Range',
+                value: (calculation.waterRequirements!['pH_range'] as String?) ?? 
+                          (calculation.waterRequirements!['ph_range'] as String?) ?? 
+                          (calculation.waterRequirements!['pH'] as String?) ?? 
+                          calculation.phRange,
+                        ),
+              CalculationInfoRow(
+                icon: Icons.water,
+                label: 'Minimum Tank Volume',
+                value: '${(calculation.waterRequirements!['minimum_tank_volume'] as String?) ?? calculation.minimumTankVolume}',
+              ),
+            ] : [
+              CalculationInfoRow(
+                icon: Icons.thermostat,
+                label: 'Temperature Range',
+                value: calculation.temperatureRange.replaceAll('Â', ''),
+              ),
+              CalculationInfoRow(
+                icon: Icons.science,
+                label: 'pH Range',
+                value: calculation.phRange,
+              ),
+              CalculationInfoRow(
+                icon: Icons.water,
+                label: 'Minimum Tank Volume',
+                value: '${calculation.minimumTankVolume} L',
+              ),
+            ],
           ),
           const SizedBox(height: 20),
-          // Water Parameters Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
-                  spreadRadius: 2,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.water_drop,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                    const Text(
-                      'Water Parameters',
-                      style: TextStyle(
-                              fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                        ],
-                      ),
-                                             const SizedBox(height: 16),
-                                              if (calculation.waterParametersResponse != null && calculation.waterParametersResponse!.isNotEmpty) ...[
-                         // Display stored AI-generated water parameters in bullet points
-                         ...calculation.waterParametersResponse!.split('\n').where((line) => line.trim().isNotEmpty).map((line) {
-                           if (line.trim().startsWith('•')) {
-                             return Padding(
-                               padding: const EdgeInsets.only(bottom: 8),
-                               child: Row(
-                                 crossAxisAlignment: CrossAxisAlignment.start,
-                                 children: [
-                                   const Text(
-                                     '• ',
-                                     style: TextStyle(
-                                       color: Color(0xFF006064),
-                                       fontSize: 16,
-                                       fontWeight: FontWeight.bold,
-                                     ),
-                                   ),
-                                   Expanded(
-                                     child: Text(
-                                       line.trim().substring(1).trim(),
-                                       style: const TextStyle(
-                                         fontSize: 14,
-                                         color: Colors.black87,
-                                         height: 1.5,
-                                       ),
-                                     ),
-                                   ),
-                                 ],
-                               ),
-                             );
-                           } else {
-                             return Padding(
-                               padding: const EdgeInsets.only(bottom: 8),
-                               child: Text(
-                                 line.trim(),
-                                 style: const TextStyle(
-                                   fontSize: 14,
-                                   color: Colors.black87,
-                                   height: 1.5,
-                                 ),
-                               ),
-                             );
-                           }
-                         }).toList(),
-                       ] else ...[
-                         // Fallback to basic parameters if AI response is not available
-                         Text(
-                           'Temperature Range: ${calculation.temperatureRange.replaceAll('Â', '')}',
-                           style: const TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                         const SizedBox(height: 8),
-                         Text(
-                           'pH Range: ${calculation.phRange}',
-                           style: const TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                       ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
+          
           // Tankmate Recommendations Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
-                  spreadRadius: 2,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+          if (calculation.tankmateRecommendations != null && calculation.tankmateRecommendations!.isNotEmpty) ...[
+            TankmateRecommendationsCard(
+              tankmates: calculation.tankmateRecommendations!,
+              compatibleWithConditions: null, // Add this data if available
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.people,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Tankmate Recommendations',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                        ],
-                      ),
-                                             const SizedBox(height: 16),
-                       if (calculation.tankmateRecommendations != null && calculation.tankmateRecommendations!.isNotEmpty) ...[
-                         ...calculation.tankmateRecommendations!.map((recommendation) => Padding(
-                           padding: const EdgeInsets.only(bottom: 8),
-                           child: Text(
-                             '• $recommendation',
-                             style: const TextStyle(
-                               fontSize: 14,
-                               color: Colors.black87,
-                               height: 1.5,
-                             ),
-                           ),
-                         )).toList(),
-                       ] else ...[
-                         const Text(
-                           'Consider peaceful community fish like tetras, rasboras, or corydoras.',
-                           style: TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                       ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
           const SizedBox(height: 20),
-          // Tank & Environment Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
-                  spreadRadius: 2,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.home,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Tank & Environment',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                        ],
-                      ),
-                                             const SizedBox(height: 16),
-                       if (calculation.tankAnalysisResponse != null && calculation.tankAnalysisResponse!.isNotEmpty) ...[
-                         Text(
-                           calculation.tankAnalysisResponse!,
-                           style: const TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                       ] else ...[
-                         const Text(
-                           'Optimal tank provides adequate space and surface area for gas exchange. Consider the fish species requirements for optimal health.',
-                           style: TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                       ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Filtration & Equipment Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
-                  spreadRadius: 2,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.filter_alt,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Filtration & Equipment',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                        ],
-                      ),
-                                             const SizedBox(height: 16),
-                       if (calculation.filtrationResponse != null && calculation.filtrationResponse!.isNotEmpty) ...[
-                         Text(
-                           calculation.filtrationResponse!,
-                           style: const TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                       ] else ...[
-                         Text(
-                           'Use a filter rated for ${calculation.minimumTankVolume} or larger with 4-6x tank volume turnover per hour. Clean filter media monthly and monitor water quality weekly for optimal fish health.',
-                           style: const TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                       ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Diet & Care Tips Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
-                  spreadRadius: 2,
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE0F7FA),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.restaurant,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Diet & Care Tips',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                        ],
-                      ),
-                                             const SizedBox(height: 16),
-                       if (calculation.dietCareResponse != null && calculation.dietCareResponse!.isNotEmpty) ...[
-                         Text(
-                           calculation.dietCareResponse!,
-                           style: const TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                       ] else ...[
-                         const Text(
-                           'Feed 1-2 times daily, only what fish eat in 2-3 minutes. Use high-quality flakes or pellets as staple diet. Perform 25% water changes weekly and monitor fish behavior daily for signs of stress or illness.',
-                           style: TextStyle(
-                             fontSize: 14,
-                             color: Colors.black87,
-                             height: 1.5,
-                           ),
-                         ),
-                       ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+          ],
+          
+          // Feeding Information Card
+          if (calculation.feedingInformation != null && calculation.feedingInformation!.isNotEmpty) ...[
+            FeedingInformationCard(feedingInformation: calculation.feedingInformation!),
+            const SizedBox(height: 20),
+          ],
         ],
       ),
     );
   }
-
   Widget _buildFishCalculationDetails(FishCalculation calculation) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ListView.builder(
-            shrinkWrap: true,
-            physics: NeverScrollableScrollPhysics(),
-            itemCount: calculation.fishSelections.length,
-            itemBuilder: (context, index) {
-              final fishName = calculation.fishSelections.keys.elementAt(index);
-              final recommendedQuantity = calculation.recommendedQuantities[fishName];
-              
-              return Card(
-                margin: const EdgeInsets.only(top: 8, bottom: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Fish image
-                    ClipRRect(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                      child: _buildResolvedFishImage(fishName, height: 200),
-                    ),
-                    // Fish details
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                fishName,
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF006064),
-                                ),
-                              ),
-                              if (recommendedQuantity != null)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[200],
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Text(
-                                    'Recommended: $recommendedQuantity',
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Color(0xFF006064),
-                                    ),
-                                  ),
+          const SizedBox(height: 24),
+          
+          // Selected Fish Card
+          FishSelectionCard(
+            fishSelections: calculation.fishSelections,
+            cardTitle: 'Selected Fish',
+            cardSubtitle: 'Fish species for dimension calculation',
+          ),
+          const SizedBox(height: 20),
+          
+          // Tank Dimensions Card
+          CalculationResultWidget(
+            title: 'Tank Dimensions',
+            subtitle: 'Aquarium size and volume information',
+            icon: Icons.rectangle_rounded,
+            infoRows: [
+              CalculationInfoRow(
+                icon: Icons.water,
+                label: 'Tank Volume',
+                value: calculation.tankVolume,
                                 ),
                             ],
                           ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-          // Tank Requirements Card
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: Card(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Tank Requirements',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Tank Volume: ${calculation.tankVolume}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
+          
           // Water Parameters Card
-          SizedBox(
-            width: double.infinity,
-            child: Card(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Water Parameters',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Temperature Range: ${calculation.temperatureRange.replaceAll('Â', '')}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'pH Range: ${calculation.phRange}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: Colors.black87,
-                      ),
+          CalculationResultWidget(
+            title: 'Water Parameters',
+            subtitle: 'Optimal water conditions for your fish',
+            icon: Icons.thermostat_rounded,
+            infoRows: [
+              CalculationInfoRow(
+                icon: Icons.thermostat_rounded,
+                label: 'Temperature Range',
+                value: calculation.temperatureRange.replaceAll('Â', ''),
+              ),
+              CalculationInfoRow(
+                icon: Icons.science_rounded,
+                label: 'pH Range',
+                value: calculation.phRange,
                     ),
                   ],
                 ),
-              ),
-            ),
-          ),
+          const SizedBox(height: 20),
+          
           // AI-generated content cards
           if (calculation.waterParametersResponse != null) ...[
-            const SizedBox(height: 16),
             _buildAIContentCard(
               'Water Parameters',
               Icons.water_drop,
               calculation.waterParametersResponse!,
             ),
+            const SizedBox(height: 20),
           ],
           if (calculation.tankAnalysisResponse != null) ...[
-            const SizedBox(height: 16),
             _buildAIContentCard(
               'Tank & Environment',
-              Icons.home,
+              null,
               calculation.tankAnalysisResponse!,
             ),
+            const SizedBox(height: 20),
           ],
           if (calculation.filtrationResponse != null) ...[
-            const SizedBox(height: 16),
             _buildAIContentCard(
               'Filtration & Equipment',
               Icons.filter_alt,
               calculation.filtrationResponse!,
             ),
+            const SizedBox(height: 20),
           ],
           if (calculation.dietCareResponse != null) ...[
-            const SizedBox(height: 16),
             _buildAIContentCard(
               'Diet & Care Tips',
               Icons.restaurant,
               calculation.dietCareResponse!,
             ),
+            const SizedBox(height: 20),
           ],
           if (calculation.tankmateRecommendations != null && calculation.tankmateRecommendations!.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildTankmateRecommendationsCard(calculation.tankmateRecommendations!),
+            TankmateRecommendationsCard(
+              tankmates: calculation.tankmateRecommendations!,
+              compatibleWithConditions: null, // Add this data if available
+            ),
+            const SizedBox(height: 20),
+          ],
+          
+          // Feeding Information Card
+          if (calculation.feedingInformation != null && calculation.feedingInformation!.isNotEmpty) ...[
+            FeedingInformationCard(feedingInformation: calculation.feedingInformation!),
+            const SizedBox(height: 20),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildAIContentCard(String title, IconData icon, String content) {
+  Widget _buildAIContentCard(String title, IconData? icon, String content) {
     return SizedBox(
       width: double.infinity,
       child: Card(
@@ -1469,12 +599,26 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       color: const Color(0xFFE0F7FA),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Icon(
-                      icon,
-                      color: const Color(0xFF006064),
-                    ),
+                    child: icon != null 
+                      ? (icon == Icons.water_drop 
+                          ? Image.asset(
+                              'lib/icons/Create_Aquarium.png',
+                              width: 20,
+                              height: 20,
+                              color: const Color(0xFF006064),
+                            )
+                          : Icon(
+                              icon,
+                              color: const Color(0xFF006064),
+                            ))
+                      : Image.asset(
+                          'lib/icons/Create_Aquarium.png',
+                          width: 20,
+                          height: 20,
+                          color: const Color(0xFF006064),
+                        ),
                   ),
                   const SizedBox(width: 12),
                   Text(
@@ -1503,56 +647,102 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
 
-  Widget _buildTankmateRecommendationsCard(List<String> recommendations) {
-    return SizedBox(
-      width: double.infinity,
-      child: Card(
-        elevation: 2,
-        child: Padding(
+
+  Widget _buildFishVolumeCalculationDetails(FishVolumeCalculation calculation) {
+    return Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE0F7FA),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      FontAwesomeIcons.users,
-                      color: Color(0xFF006064),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Tankmate Recommendations',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF006064),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: recommendations.map((recommendation) => Chip(
-                  label: Text(
-                    recommendation,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  backgroundColor: const Color(0xFFE0F7FA),
-                  labelStyle: const TextStyle(color: Color(0xFF006064)),
-                )).toList(),
+          const SizedBox(height: 24),
+          
+          // Tank Shape Card
+          CalculationResultWidget(
+            title: 'Tank Shape',
+            subtitle: 'Selected aquarium configuration',
+            icon: Icons.rectangle_rounded,
+            infoRows: [
+              CalculationInfoRow(
+                icon: Icons.rectangle_rounded,
+                label: 'Shape',
+                value: calculation.tankShape,
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 20),
+          
+          // Tank Dimensions Card
+          CalculationResultWidget(
+            title: 'Tank Dimensions',
+            subtitle: 'Aquarium size and volume information',
+            icon: Icons.rectangle_rounded,
+            infoRows: [
+              CalculationInfoRow(
+                icon: Icons.water,
+                label: 'Tank Volume',
+                value: calculation.tankVolume,
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          
+          // Selected Fish Card
+          FishSelectionCard(
+            fishSelections: calculation.fishSelections,
+            cardTitle: 'Selected Fish',
+            cardSubtitle: 'Fish species for volume calculation',
+          ),
+          const SizedBox(height: 20),
+          
+          // Recommended Quantities Card
+          CalculationResultWidget(
+            title: 'Recommended Quantities',
+            subtitle: 'Optimal fish quantities for your tank',
+            icon: Icons.recommend_rounded,
+            infoRows: calculation.recommendedQuantities.entries.map((entry) => 
+              CalculationInfoRow(
+                icon: Icons.recommend_rounded,
+                label: entry.key,
+                value: '${entry.value} recommended',
+              ),
+            ).toList(),
+          ),
+          const SizedBox(height: 20),
+          
+          // Tankmate Recommendations Card
+          if (calculation.tankmateRecommendations != null && calculation.tankmateRecommendations!.isNotEmpty) ...[
+            TankmateRecommendationsCard(
+              tankmates: calculation.tankmateRecommendations!,
+              compatibleWithConditions: null, // Add this data if available
+            ),
+            const SizedBox(height: 20),
+          ],
+          
+          // Water Requirements Card
+          CalculationResultWidget(
+            title: 'Water Requirements',
+            subtitle: 'Optimal water parameters for your fish',
+            icon: Icons.water_drop_rounded,
+            infoRows: [
+              if (calculation.waterRequirements['temperature_range'] != null)
+                CalculationInfoRow(
+                  icon: Icons.thermostat_rounded,
+                  label: 'Temperature Range',
+                  value: calculation.waterRequirements['temperature_range'].toString(),
+                ),
+              if (calculation.waterRequirements['ph_range'] != null)
+                CalculationInfoRow(
+                  icon: Icons.science_rounded,
+                  label: 'pH Range',
+                  value: calculation.waterRequirements['ph_range'].toString(),
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          
+          // Feeding Information Card
+          FeedingInformationCard(feedingInformation: calculation.feedingInformation),
+        ],
       ),
     );
   }
@@ -1564,232 +754,554 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 24),
-          // Fish Details Cards
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: calculation.fishSelections.length,
-            itemBuilder: (context, index) {
-              final fishName = calculation.fishSelections.keys.elementAt(index);
-              final quantity = calculation.fishSelections[fishName];
-              return Card(
-                margin: const EdgeInsets.only(bottom: 16),
+          
+          // Selected Fish Card
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  const Color(0xFFE0F7FA),
+                  const Color(0xFFF0FDFF),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF00ACC1).withOpacity(0.1),
+                  spreadRadius: 1,
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+              border: Border.all(
+                color: const Color(0xFF00ACC1).withOpacity(0.2),
+                width: 1,
+              ),
+            ),
+              child: Padding(
+              padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Fish image
-                    ClipRRect(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                      child: _buildResolvedFishImage(fishName, height: 200),
-                    ),
-                    // Fish details
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                fishName,
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF006064),
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Text(
-                                  'Quantity: ${quantity ?? 1}',
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                    color: Color(0xFF006064),
-                                  ),
-                                ),
-                              ),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              const Color(0xFF00ACC1),
+                              const Color(0xFF4DD0E1),
                             ],
                           ),
-                        ],
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF00ACC1).withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                        child: const Icon(
+                          FontAwesomeIcons.fish,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Selected Fish',
+                      style: TextStyle(
+                                fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                            const SizedBox(height: 4),
+                    Text(
+                              'Fish species for diet calculation',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],
                 ),
-              );
-            },
+              ),
+                    ],
           ),
+          const SizedBox(height: 16),
+                  ...calculation.fishSelections.entries.map((entry) => Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF00ACC1).withOpacity(0.2),
+                        width: 1,
+                      ),
+                    ),
+                      child: Row(
+                        children: [
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00ACC1).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Icon(
+                            FontAwesomeIcons.fish,
+                            color: Color(0xFF00ACC1),
+                            size: 16,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            '${entry.value}x ${entry.key}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () {
+                            showDialog(
+                              context: context,
+                              builder: (context) => FishInfoDialog(fishName: entry.key),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00ACC1).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(
+                              Icons.remove_red_eye_rounded,
+                              color: Color(0xFF00ACC1),
+                              size: 16,
+                            ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )),
+                  ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          
           // Feeding Schedule Card
-          if (calculation.feedingsPerDay != null || calculation.feedingTimes != null) ...[
-            SizedBox(
+          if (calculation.feedingSchedule != null) ...[
+            Container(
               width: double.infinity,
-              child: Card(
-                elevation: 2,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFFE0F7FA),
+                    const Color(0xFFF0FDFF),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00ACC1).withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(
+                  color: const Color(0xFF00ACC1).withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Feeding Schedule',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
-                        ),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                const Color(0xFF00ACC1),
+                                const Color(0xFF4DD0E1),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
                       ),
-                      const SizedBox(height: 12),
-                      if (calculation.feedingsPerDay != null) ...[
-                        Text(
-                          'Feed ${calculation.feedingsPerDay} time${calculation.feedingsPerDay == 1 ? '' : 's'} per day',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF004D40),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      if (calculation.feedingTimes != null) ...[
-                        Text(
-                          calculation.feedingTimes!,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Color(0xFF004D40),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
+                          child: const Icon(
+                            Icons.schedule_rounded,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                        'Feeding Schedule',
+                      style: TextStyle(
+                                  fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF006064),
+                      ),
+                    ),
+                              const SizedBox(height: 4),
+                      Text(
+                                'Recommended feeding times and frequency',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                  ],
+                ),
+              ),
+                      ],
+          ),
+          const SizedBox(height: 16),
+                    Container(
+                padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                        color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFF00ACC1).withOpacity(0.2),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                          children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00ACC1).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(
+                              Icons.schedule_rounded,
+                              color: Color(0xFF00ACC1),
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                        calculation.feedingSchedule!,
+                              style: const TextStyle(
+                                fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                      ),
+                    ],
+                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
             const SizedBox(height: 16),
           ],
           
-          // Feeding Guide & Portions Card
-          SizedBox(
-            width: double.infinity,
-            child: Card(
-              elevation: 2,
+          // Total Food Per Feeding Card
+          if (calculation.totalFoodPerFeeding != null) ...[
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFFE0F7FA),
+                    const Color(0xFFF0FDFF),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00ACC1).withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(
+                  color: const Color(0xFF00ACC1).withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Feeding Guide & Portions',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Total Food Per Feeding:',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Color(0xFF006064),
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    if (calculation.tankTotalsByFood != null) ...[
-                      ...calculation.tankTotalsByFood!.entries.map((e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('• ', style: TextStyle(color: Color(0xFF006064), fontSize: 16)),
-                            Expanded(
-                              child: Text(
-                                '${e.value['low']}-${e.value['high']} ${e.key}',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF004D40),
-                                ),
-                              ),
+                    Row(
+                        children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                const Color(0xFF00ACC1),
+                                const Color(0xFF4DD0E1),
+                              ],
                             ),
-                          ],
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                          child: const Icon(
+                            Icons.scale_rounded,
+                            color: Colors.white,
+                            size: 24,
+                          ),
                         ),
-                      )),
-                    ] else ...[
+                        const SizedBox(width: 16),
+                        Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Total Food Per Feeding',
+                        style: TextStyle(
+                                  fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                              const SizedBox(height: 4),
                       Text(
-                        ' • ${calculation.totalPortionRange ?? '${calculation.totalPortion} pcs of fish food'}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          color: Colors.black87,
+                                'Recommended food amount per feeding',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
+                  ),
+                ),
+                      ],
+            ),
+            const SizedBox(height: 16),
+                    Container(
+                  padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFF00ACC1).withOpacity(0.2),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                    children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00ACC1).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(
+                              Icons.scale_rounded,
+                              color: Color(0xFF00ACC1),
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                        calculation.totalFoodPerFeeding!,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                    ),
                   ],
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: 16),
+            const SizedBox(height: 16),
+          ],
           
           // Per Fish Breakdown Card
-          if (calculation.portionDetails?.isNotEmpty == true) ...[
-            SizedBox(
+          if (calculation.perFishBreakdown != null && calculation.perFishBreakdown!.isNotEmpty) ...[
+            Container(
               width: double.infinity,
-              child: Card(
-                elevation: 2,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFFE0F7FA),
+                    const Color(0xFFF0FDFF),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00ACC1).withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(
+                  color: const Color(0xFF00ACC1).withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                const Color(0xFF00ACC1),
+                                const Color(0xFF4DD0E1),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            FontAwesomeIcons.fish,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
                         'Per Fish Breakdown',
                         style: TextStyle(
-                          fontSize: 18,
+                                  fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: Color(0xFF006064),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      ...(calculation.portionDetails ?? const {}).entries.map((e) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Individual feeding portions for each fish',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    ...calculation.perFishBreakdown!.entries.map((entry) => Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFF00ACC1).withOpacity(0.2),
+                          width: 1,
+                        ),
+                      ),
                         child: Row(
                           children: [
-                            const Icon(Icons.pets, color: Color(0xFF006064), size: 16),
-                            const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00ACC1).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(
+                              FontAwesomeIcons.fish,
+                              color: Color(0xFF00ACC1),
+                              size: 16,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
                             Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '${e.value['quantity'] ?? 1}x ${e.key}',
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF006064),
-                                    ),
-                                  ),
-                                  Text(
-                                    '${e.value['per_fish'] ?? 'Standard portion'} each',
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      color: Color(0xFF666666),
-                                      fontStyle: FontStyle.italic,
-                                    ),
-                                  ),
-                                ],
+                              child: Text(
+                                '${entry.value['quantity'] ?? 1}x ${entry.key}: ${entry.value['total_portion'] ?? 'Standard portion'}',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF006064),
+                                ),
                               ),
                             ),
                           ],
                         ),
                       )),
                     ],
-                  ),
                 ),
               ),
             ),
@@ -1797,35 +1309,133 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
           ],
           
           // Recommended Food Types Card
-          if (calculation.aiFoodTypes?.isNotEmpty == true) ...[
-            SizedBox(
+          if (calculation.recommendedFoodTypes != null && calculation.recommendedFoodTypes!.isNotEmpty) ...[
+            Container(
               width: double.infinity,
-              child: Card(
-                elevation: 2,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFFE0F7FA),
+                    const Color(0xFFF0FDFF),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00ACC1).withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(
+                  color: const Color(0xFF00ACC1).withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                const Color(0xFF00ACC1),
+                                const Color(0xFF4DD0E1),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.restaurant_menu_rounded,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
                         'Recommended Food Types',
                         style: TextStyle(
-                          fontSize: 18,
+                                  fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: Color(0xFF006064),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        calculation.aiFoodTypes!.join(', '),
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF004D40),
-                          height: 1.4,
+                              const SizedBox(height: 4),
+                              Text(
+                                'Best food options for your fish',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    ...calculation.recommendedFoodTypes!.map((foodType) => Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFF00ACC1).withOpacity(0.2),
+                          width: 1,
                         ),
                       ),
+                        child: Row(
+                          children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00ACC1).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(
+                              Icons.restaurant_menu_rounded,
+                              color: Color(0xFF00ACC1),
+                              size: 16,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                foodType,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )),
                     ],
-                  ),
                 ),
               ),
             ),
@@ -1833,87 +1443,127 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
           ],
           
           // Feeding Tips Card
-          if (calculation.feedingTips?.isNotEmpty == true) ...[
-            SizedBox(
+          if (calculation.feedingTips != null && calculation.feedingTips!.isNotEmpty) ...[
+            Container(
               width: double.infinity,
-              child: Card(
-                elevation: 2,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFFE0F7FA),
+                    const Color(0xFFF0FDFF),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00ACC1).withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(
+                  color: const Color(0xFF00ACC1).withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                const Color(0xFF00ACC1),
+                                const Color(0xFF4DD0E1),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.lightbulb_rounded,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
                         'Feeding Tips',
                         style: TextStyle(
-                          fontSize: 18,
+                                  fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: Color(0xFF006064),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      Text(
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFF00ACC1).withOpacity(0.2),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
                         calculation.feedingTips!,
                         style: const TextStyle(
                           fontSize: 14,
-                          color: Color(0xFF004D40),
+                                color: Color(0xFF006064),
                           height: 1.4,
+                                fontWeight: FontWeight.w500,
                         ),
+                        textAlign: TextAlign.justify,
+                            ),
                       ),
                     ],
                   ),
+                    ),
+                  ],
                 ),
               ),
             ),
             const SizedBox(height: 16),
           ],
-          const SizedBox(height: 16),
         ],
       ),
     );
   }
 
-String _cleanNeedsDescription(String input) {
-  final unwantedWords = ['low', 'medium', 'moderate', 'high'];
-  final pattern = RegExp(r'\b(' + unwantedWords.join('|') + r')\b', caseSensitive: false);
-  final cleaned = input.replaceAll(pattern, '').replaceAll(RegExp(r'\s+'), ' ').trim();
-  return cleaned;
-}
 
 
 
 
-  // Infer a concise food label (e.g., 'pellets', 'flakes') from portionDetails values
-  String _inferFoodLabelFromPortionDetails(Map<String, dynamic> details) {
-    if (details.isEmpty) return 'food';
-    final foods = <String>{};
-    final known = <String>{
-      'flakes','flake','pellet','pellets','sinking pellets','micro pellets','granules',
-      'algae wafer','algae wafers','wafer','wafers','bloodworms','brine shrimp','daphnia','tubifex',
-      'vegetable','veggies','spirulina','frozen','live food'
-    };
-    for (final v in details.values) {
-      final s = (v ?? '').toString().toLowerCase();
-      // Try to capture pattern like '... (2-3 small pellets each)' or '... of flakes'
-      final ofMatch = RegExp(r'\bof\s+([a-zA-Z ]+?)(?=\s*(?:each|per\s*day|/day|daily|\.|,|$))')
-          .firstMatch(s);
-      if (ofMatch != null) {
-        var label = ofMatch.group(1)!.trim();
-        label = label.replaceAll(RegExp(r'\b(food|feeds?)\b'), '').trim();
-        if (label.isNotEmpty) foods.add(label);
-        continue;
-      }
-      // Otherwise search for known keywords
-      for (final k in known) {
-        if (s.contains(k)) {
-          foods.add(k);
-        }
-      }
-    }
-    if (foods.isEmpty) return 'food';
-    if (foods.length == 1) return foods.first;
-    return 'mixed food';
-  }
 
 
   Widget _buildFishCollectionTab() {
@@ -1932,7 +1582,26 @@ String _cleanNeedsDescription(String input) {
                   ),
                 ),
                 const SizedBox(height: 16),
-                ElevatedButton(
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        const Color(0xFF00BFB3),
+                        const Color(0xFF4DD0E1),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00BFB3).withOpacity(0.3),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton(
                   onPressed: () {
                     Navigator.push(
                       context,
@@ -1942,29 +1611,39 @@ String _cleanNeedsDescription(String input) {
                     );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 0, 96, 100),
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
+                        borderRadius: BorderRadius.circular(12),
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
-                        Icons.add,
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt,
                         color: Colors.white,
-                        size: 24,
+                            size: 20,
                       ),
-                      const SizedBox(width: 8),
+                        ),
+                        const SizedBox(width: 12),
                       const Text(
-                        'Add Fish',
+                          'Capture New Fish',
                         style: TextStyle(
                           fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           color: Colors.white,
                         ),
                       ),
                     ],
+                    ),
                   ),
                 ),
               ],
@@ -1972,9 +1651,14 @@ String _cleanNeedsDescription(String input) {
           );
         }
         return ListView.builder(
-          padding: const EdgeInsets.all(8),
-          itemCount: logBookProvider.savedPredictions.length,
+          padding: const EdgeInsets.all(16),
+          itemCount: logBookProvider.savedPredictions.length + 1, // +1 for capture button
           itemBuilder: (context, index) {
+            if (index == logBookProvider.savedPredictions.length) {
+              // Show capture button at the end
+              return _buildCaptureButton();
+            }
+            
             final prediction = logBookProvider.savedPredictions[index];
             return Dismissible(
               key: Key(prediction.commonName),
@@ -1997,97 +1681,7 @@ String _cleanNeedsDescription(String input) {
                 logBookProvider.removePrediction(prediction);
                 showCustomNotification(context, '${prediction.commonName} removed from collection');
               },
-              child: Card(
-                margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: InkWell(
-                  onTap: () => _showFishDetails(prediction),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 170,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: prediction.imagePath.isNotEmpty
-                                ? kIsWeb
-                                    ? Image.network(
-                                        prediction.imagePath,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (context, error, stackTrace) {
-                                          return const Center(
-                                            child: Icon(
-                                              Icons.image_not_supported,
-                                              color: Colors.grey,
-                                              size: 40,
-                                            ),
-                                          );
-                                        },
-                                      )
-                                    : Image.file(
-                                        File(prediction.imagePath),
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (context, error, stackTrace) {
-                                          return const Center(
-                                            child: Icon(
-                                              Icons.image_not_supported,
-                                              color: Colors.grey,
-                                              size: 40,
-                                            ),
-                                          );
-                                        },
-                                      )
-                                : const Center(
-                                    child: Icon(
-                                      Icons.photo,
-                                      color: Colors.grey,
-                                      size: 40,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                prediction.commonName,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                prediction.scientificName,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontStyle: FontStyle.italic,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                            ],
-                          ),
-                        ),
-                        const Icon(
-                          Icons.chevron_right,
-                          color: Colors.grey,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              child: _buildFishCard(prediction),
             );
           },
         );
@@ -2095,21 +1689,546 @@ String _cleanNeedsDescription(String input) {
     );
   }
 
+  Widget _buildFishCard(FishPrediction prediction) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        elevation: 2,
+                child: InkWell(
+                  onTap: () => _showFishDetails(prediction),
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            height: 200,
+            child: Column(
+                      children: [
+                // Fish Image - takes up most of the card
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    width: double.infinity,
+                          decoration: BoxDecoration(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(6),
+                        topRight: Radius.circular(6),
+                      ),
+                    ),
+                    child: Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(6),
+                            topRight: Radius.circular(6),
+                          ),
+                            child: prediction.imagePath.isNotEmpty
+                                ? kIsWeb
+                                    ? Image.network(
+                                        prediction.imagePath,
+                                        fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                        errorBuilder: (context, error, stackTrace) {
+                                        return _buildSimpleImagePlaceholder();
+                                        },
+                                      )
+                                    : Image.file(
+                                        File(prediction.imagePath),
+                                        fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                        errorBuilder: (context, error, stackTrace) {
+                                        return _buildSimpleImagePlaceholder();
+                                      },
+                                    )
+                              : _buildSimpleImagePlaceholder(),
+                        ),
+                        // Delete button overlay
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.transparent,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: IconButton(
+                              onPressed: () async {
+                                final shouldDelete = await _showDeleteConfirmationDialogFishPrediction(prediction);
+                                if (shouldDelete) {
+                                  Provider.of<LogBookProvider>(context, listen: false).removePrediction(prediction);
+                                  showCustomNotification(context, '${prediction.commonName} removed from collection');
+                                }
+                              },
+                              icon: const Icon(
+                                Icons.delete,
+                                color: Colors.red,
+                                size: 20,
+                              ),
+                              padding: const EdgeInsets.all(8),
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Fish Names - more space for text
+                        Expanded(
+                  flex: 2,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: const BoxDecoration(
+                      borderRadius: BorderRadius.only(
+                        bottomLeft: Radius.circular(6),
+                        bottomRight: Radius.circular(6),
+                      ),
+                    ),
+                          child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                        // Common Name
+                              Text(
+                                prediction.commonName,
+                                style: const TextStyle(
+                            fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                                ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                              ),
+                        const SizedBox(height: 2),
+                        // Scientific Name
+                              Text(
+                                prediction.scientificName,
+                                style: TextStyle(
+                            fontSize: 11,
+                                  fontStyle: FontStyle.italic,
+                                  color: Colors.grey[600],
+                                ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+  }
+
+
+  Widget _buildCaptureButton() {
+    return Container(
+      height: 200,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+        elevation: 0,
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const CaptureScreen(),
+              ),
+            );
+          },
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.transparent,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.camera_alt,
+                    color: Color(0xFF00BFB3),
+                    size: 32,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Capture',
+                  style: TextStyle(
+                    color: Color(0xFF00BFB3),
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                const Text(
+                  'New Fish',
+                  style: TextStyle(
+                    color: Color(0xFF00BFB3),
+                    fontSize: 12,
+                  ),
+                ),
+                            ],
+                          ),
+                        ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStartCalculatingButton() {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xFF00BFB3),
+              const Color(0xFF4DD0E1),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00BFB3).withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ElevatedButton(
+          onPressed: () {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const HomePage(initialTabIndex: 2),
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            shadowColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.calculate,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Start Calculating',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCheckCompatibilityButton() {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xFF00BFB3),
+              const Color(0xFF4DD0E1),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00BFB3).withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ElevatedButton(
+          onPressed: () {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const HomePage(initialTabIndex: 1),
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            shadowColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.compare_arrows,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Check Compatibility',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSimpleImagePlaceholder() {
+    return Container(
+      color: Colors.grey[200],
+      child: const Center(
+        child: Icon(
+          FontAwesomeIcons.fish,
+          color: Colors.grey,
+          size: 40,
+        ),
+      ),
+    );
+  }
+
+
   Future<bool> _showDeleteConfirmationDialogFishPrediction(FishPrediction prediction) async {
     return await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Confirm Deletion'),
-          content: Text('Are you sure you want to remove ${prediction.commonName} from your collection?'),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () => Navigator.of(context).pop(false),
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.red.withOpacity(0.1),
+                      Colors.red.withOpacity(0.05),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Colors.red,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Remove Fish',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'This action cannot be undone',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Are you sure you want to remove this fish from your collection?',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFF374151),
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFE2E8F0),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          color: const Color(0xFF00BFB3).withOpacity(0.1),
+                        ),
+                        child: const Icon(
+                          FontAwesomeIcons.fish,
+                          color: Color(0xFF00BFB3),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              prediction.commonName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              prediction.scientificName,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontStyle: FontStyle.italic,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            TextButton(
-              child: const Text('Confirm'),
+          ),
+          actions: <Widget>[
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: Colors.grey.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      backgroundColor: Colors.grey.withOpacity(0.05),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Remove',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         );
@@ -2124,6 +2243,7 @@ String _cleanNeedsDescription(String input) {
           ...provider.savedCalculations,
           ...provider.savedFishCalculations,
           ...provider.savedDietCalculations,
+          ...provider.savedFishVolumeCalculations,
         ]..sort((a, b) {
             DateTime dateA;
             DateTime dateB;
@@ -2134,6 +2254,8 @@ String _cleanNeedsDescription(String input) {
               dateA = a.dateCalculated;
             } else if (a is DietCalculation) {
               dateA = a.dateCalculated;
+            } else if (a is FishVolumeCalculation) {
+              dateA = a.dateCalculated;
             } else {
               dateA = DateTime(0);
             }
@@ -2143,6 +2265,8 @@ String _cleanNeedsDescription(String input) {
             } else if (b is FishCalculation) {
               dateB = b.dateCalculated;
             } else if (b is DietCalculation) {
+              dateB = b.dateCalculated;
+            } else if (b is FishVolumeCalculation) {
               dateB = b.dateCalculated;
             } else {
               dateB = DateTime(0);
@@ -2164,7 +2288,26 @@ String _cleanNeedsDescription(String input) {
                   ),
                 ),
                 const SizedBox(height: 16),
-                ElevatedButton(
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        const Color(0xFF00BFB3),
+                        const Color(0xFF4DD0E1),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00BFB3).withOpacity(0.3),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton(
                   onPressed: () {
                     Navigator.pushReplacement(
                       context,
@@ -2174,30 +2317,39 @@ String _cleanNeedsDescription(String input) {
                     );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 0, 96, 100),
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
+                        borderRadius: BorderRadius.circular(12),
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Image.asset(
-                        'lib/icons/calculator_icon.png',
-                        width: 24,
-                        height: 24,
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.calculate,
                         color: Colors.white,
+                            size: 20,
                       ),
-                      const SizedBox(width: 8),
+                        ),
+                        const SizedBox(width: 12),
                       const Text(
-                        'Calculate',
+                          'Start Calculating',
                         style: TextStyle(
                           fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           color: Colors.white,
                         ),
                       ),
                     ],
+                    ),
                   ),
                 ),
               ],
@@ -2207,15 +2359,22 @@ String _cleanNeedsDescription(String input) {
 
         return ListView.builder(
           padding: const EdgeInsets.all(8),
-          itemCount: allCalculations.length,
+          itemCount: allCalculations.length + 1, // +1 for calculate button
           itemBuilder: (context, index) {
+            if (index == allCalculations.length) {
+              // Show calculate button at the end
+              return _buildStartCalculatingButton();
+            }
+            
             final calculation = allCalculations[index];
             return Dismissible(
               key: Key((calculation is WaterCalculation) 
                   ? calculation.dateCalculated.toString() 
                   : (calculation is FishCalculation) 
-                    ? (calculation as FishCalculation).dateCalculated.toString()
-                    : (calculation as DietCalculation).dateCalculated.toString()),
+                    ? calculation.dateCalculated.toString()
+                    : (calculation is DietCalculation)
+                      ? calculation.dateCalculated.toString()
+                      : (calculation as FishVolumeCalculation).dateCalculated.toString()),
               background: Container(
                 color: const Color.fromARGB(255, 255, 17, 0),
                 alignment: Alignment.center,
@@ -2241,12 +2400,15 @@ String _cleanNeedsDescription(String input) {
                 } else if (calculation is DietCalculation) {
                   provider.removeDietCalculation(calculation);
                   showCustomNotification(context, 'Diet calculation removed');
+                } else if (calculation is FishVolumeCalculation) {
+                  provider.removeFishVolumeCalculation(calculation);
+                  showCustomNotification(context, 'Fish volume calculation removed');
                 }
               },
               child: Card(
                 margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 child: InkWell(
                   onTap: () {
@@ -2261,17 +2423,24 @@ String _cleanNeedsDescription(String input) {
                           height: 60,
                           decoration: BoxDecoration(
                             color: Colors.teal.shade50,
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(6),
                           ),
-                          child: Icon(
-                            calculation is WaterCalculation 
-                                ? Icons.water_drop 
-                                : calculation is FishCalculation 
-                                  ? Icons.water
-                                  : Icons.restaurant,
-                            color: const Color(0xFF006064),
-                            size: 30,
-                          ),
+                          child: calculation is WaterCalculation 
+                              ? Image.asset(
+                                  'lib/icons/Create_Aquarium.png',
+                                  width: 30,
+                                  height: 30,
+                                  color: const Color(0xFF006064),
+                                )
+                              : Icon(
+                                  calculation is FishCalculation 
+                                    ? Icons.water
+                                    : calculation is FishVolumeCalculation
+                                      ? Icons.calculate
+                                      : Icons.restaurant,
+                                  color: const Color(0xFF006064),
+                                  size: 30,
+                                ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -2283,7 +2452,9 @@ String _cleanNeedsDescription(String input) {
                                     ? 'Water Calculator' 
                                     : calculation is FishCalculation 
                                       ? 'Fish Calculator'
-                                      : 'Diet Calculator',
+                                      : calculation is FishVolumeCalculation
+                                        ? 'Fish Volume Calculator'
+                                        : 'Diet Calculator',
                                 style: const TextStyle(
                                   color: Color(0xFF006064),
                                   fontSize: 12,
@@ -2295,20 +2466,35 @@ String _cleanNeedsDescription(String input) {
                                 calculation is WaterCalculation
                                     ? 'Tank Volume: ${calculation.minimumTankVolume}'
                                     : calculation is FishCalculation
-                                      ? 'Tank Volume: ${(calculation as FishCalculation).tankVolume}'
-                                      : 'Fish name: ${(calculation as DietCalculation).fishSelections.keys.join(', ')}',
+                                      ? 'Tank Volume: ${calculation.tankVolume}'
+                                      : calculation is FishVolumeCalculation
+                                        ? 'Tank: ${calculation.tankShape} - ${calculation.tankVolume}'
+                                        : 'Fish: ${(calculation as DietCalculation).fishSelections.keys.join(', ')}',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 16,
                                 ),
                               ),
+                              if (calculation is DietCalculation) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Daily Portion: ${calculation.totalPortion} pieces',
+                                  style: const TextStyle(
+                                    color: Color(0xFF006064),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                               Text(
                                 DateFormat('MMM d, y').format(
                                   calculation is WaterCalculation
                                       ? calculation.dateCalculated
                                       : calculation is FishCalculation
-                                        ? (calculation as FishCalculation).dateCalculated
-                                        : (calculation as DietCalculation).dateCalculated,
+                                        ? calculation.dateCalculated
+                                        : calculation is FishVolumeCalculation
+                                          ? calculation.dateCalculated
+                                          : (calculation as DietCalculation).dateCalculated,
                                 ),
                                 style: const TextStyle(
                                   color: Colors.grey,
@@ -2332,31 +2518,206 @@ String _cleanNeedsDescription(String input) {
   }
 
   Future<bool> _showDeleteConfirmationDialogCalculation(dynamic calculation) async {
-    String title = 'Confirm Deletion';
+    String title = 'Remove Calculation';
     String content = 'Are you sure you want to remove this calculation?';
+    IconData icon = Icons.calculate;
+    String typeName = 'Calculation';
+    
     if (calculation is WaterCalculation) {
       content = 'Are you sure you want to remove this water calculation?';
+      icon = Icons.water_drop;
+      typeName = 'Water Calculator';
     } else if (calculation is FishCalculation) {
       content = 'Are you sure you want to remove this fish calculation?';
+      icon = FontAwesomeIcons.fish;
+      typeName = 'Fish Calculator';
+      icon = FontAwesomeIcons.fish;
+    } else if (calculation is FishVolumeCalculation) {
+      content = 'Are you sure you want to remove this fish volume calculation?';
+      icon = Icons.calculate;
+      typeName = 'Fish Volume Calculator';
     } else if (calculation is DietCalculation) {
-      final String rangeOrTotal = (calculation as DietCalculation).totalPortionRange
-          ?? (calculation as DietCalculation).totalPortion.toString();
       content = 'Are you sure you want to remove this diet calculation?';
+      icon = Icons.restaurant;
+      typeName = 'Diet Calculator';
     }
+    
     return await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text(title),
-          content: Text(content),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () => Navigator.of(context).pop(false),
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.red.withOpacity(0.1),
+                      Colors.red.withOpacity(0.05),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Colors.red,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'This action cannot be undone',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  content,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFF374151),
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFE2E8F0),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          color: const Color(0xFF00BFB3).withOpacity(0.1),
+                        ),
+                        child: Icon(
+                          icon,
+                          color: const Color(0xFF00BFB3),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              typeName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Saved calculation',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            TextButton(
-              child: const Text('Confirm'),
+          ),
+          actions: <Widget>[
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: Colors.grey.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      backgroundColor: Colors.grey.withOpacity(0.05),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Remove',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         );
@@ -2382,7 +2743,26 @@ String _cleanNeedsDescription(String input) {
               ),
             ),
             const SizedBox(height: 16),
-            ElevatedButton(
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFF00BFB3),
+                    const Color(0xFF4DD0E1),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00BFB3).withOpacity(0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ElevatedButton(
               onPressed: () {
                 Navigator.pushReplacement(
                   context,
@@ -2392,30 +2772,39 @@ String _cleanNeedsDescription(String input) {
                 );
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color.fromARGB(255, 0, 96, 100),
+                  backgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
+                    borderRadius: BorderRadius.circular(12),
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Image.asset(
-                    'lib/icons/sync_icon.png',
-                    width: 24,
-                    height: 24,
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.compare_arrows,
                     color: Colors.white,
+                        size: 20,
                   ),
-                  const SizedBox(width: 8),
+                    ),
+                    const SizedBox(width: 12),
                   const Text(
                     'Check Compatibility',
                     style: TextStyle(
                       fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       color: Colors.white,
                     ),
                   ),
                 ],
+                ),
               ),
             ),
           ],
@@ -2424,8 +2813,14 @@ String _cleanNeedsDescription(String input) {
     }
 
     return ListView.builder(
-      itemCount: compatibilityResults.length,
+       padding: const EdgeInsets.all(16),
+       itemCount: compatibilityResults.length + 1, // +1 for check compatibility button
       itemBuilder: (context, index) {
+         if (index == compatibilityResults.length) {
+           // Show check compatibility button at the end
+           return _buildCheckCompatibilityButton();
+         }
+         
         final result = compatibilityResults[index];
         return Dismissible(
           key: Key(result.id.toString()),
@@ -2449,23 +2844,30 @@ String _cleanNeedsDescription(String input) {
             logBookProvider.removeCompatibilityResult(result);
             showCustomNotification(context, 'Compatibility result removed');
           },
-          child: Card(
+           child: Container(
+             margin: const EdgeInsets.only(bottom: 16),
+             child: Material(
+               color: Colors.white,
+               borderRadius: BorderRadius.circular(6),
             elevation: 2,
-            margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
             child: InkWell(
               onTap: () {
                 _showCompatibilityDetails(context, result);
               },
+                 borderRadius: BorderRadius.circular(6),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
+                       // Display selected fish images (limit to first 2 for display)
+                       Row(
+                         children: result.selectedFish.keys.take(2).map((fishName) {
+                           return Padding(
+                             padding: const EdgeInsets.only(right: 8),
+                             child: ClipRRect(
+                               borderRadius: BorderRadius.circular(6),
                           child: Image.network(
-                            ApiConfig.getFishImageUrl(result.fish1Name),
+                                 ApiConfig.getFishImageUrl(fishName),
                             width: 60,
                             height: 60,
                             fit: BoxFit.cover,
@@ -2489,35 +2891,8 @@ String _cleanNeedsDescription(String input) {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            ApiConfig.getFishImageUrl(result.fish2Name),
-                            width: 60,
-                            height: 60,
-                            fit: BoxFit.cover,
-                            cacheWidth: (60 * MediaQuery.of(context).devicePixelRatio).round(),
-                            cacheHeight: (60 * MediaQuery.of(context).devicePixelRatio).round(),
-                            filterQuality: FilterQuality.low,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Container(
-                                width: 60,
-                                height: 60,
-                                color: Colors.grey[200],
-                                child: const Center(child: CircularProgressIndicator()),
-                              );
-                            },
-                            errorBuilder: (context, error, stackTrace) => Container(
-                              width: 60,
-                              height: 60,
-                              color: Colors.grey[200],
-                              child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 24),
-                            ),
-                          ),
-                        ),
-                      ],
+                           );
+                         }).toList(),
                     ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -2525,7 +2900,9 @@ String _cleanNeedsDescription(String input) {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '${result.fish1Name} & ${result.fish2Name}',
+                               result.selectedFish.keys.length > 2 
+                                 ? '${result.selectedFish.keys.take(2).join(' & ')} +${result.selectedFish.keys.length - 2} more'
+                                 : result.selectedFish.keys.join(' & '),
                             style: const TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -2535,13 +2912,16 @@ String _cleanNeedsDescription(String input) {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: result.isCompatible ? Colors.green[50] : Colors.red[50],
-                              borderRadius: BorderRadius.circular(4),
+                                 color: result.compatibilityLevel == 'compatible' ? Colors.green[50] : 
+                                        result.compatibilityLevel == 'conditional' ? Colors.orange[50] : Colors.red[50],
+                                 borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              result.isCompatible ? 'Compatible' : 'Not Compatible',
+                                 result.compatibilityLevel == 'compatible' ? 'Compatible' : 
+                                 result.compatibilityLevel == 'conditional' ? 'Conditional' : 'Not Compatible',
                               style: TextStyle(
-                                color: result.isCompatible ? Colors.green[700] : Colors.red[700],
+                                   color: result.compatibilityLevel == 'compatible' ? Colors.green[700] : 
+                                          result.compatibilityLevel == 'conditional' ? Colors.orange[700] : Colors.red[700],
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -2551,6 +2931,7 @@ String _cleanNeedsDescription(String input) {
                     ),
                     const Icon(Icons.chevron_right),
                   ],
+                   ),
                 ),
               ),
             ),
@@ -2565,16 +2946,183 @@ String _cleanNeedsDescription(String input) {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Confirm Deletion'),
-          content: const Text('Are you sure you want to remove this compatibility result?'),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () => Navigator.of(context).pop(false),
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.red.withOpacity(0.1),
+                      Colors.red.withOpacity(0.05),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Colors.red,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Remove Compatibility',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                                Text(
+                      'This action cannot be undone',
+                                  style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+              ),
+            ],
+          ),
+          content: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                              const Text(
+                  'Are you sure you want to remove this compatibility result?',
+                                style: TextStyle(
+                                  fontSize: 16,
+                    color: Color(0xFF374151),
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFE2E8F0),
+                      width: 1,
+                    ),
+                  ),
+                                    child: Row(
+                                      children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          color: const Color(0xFF00BFB3).withOpacity(0.1),
+                        ),
+                        child: const Icon(
+                          Icons.compare_arrows,
+                          color: Color(0xFF00BFB3),
+                                          size: 20,
+                                        ),
+                      ),
+                      const SizedBox(width: 12),
+                                                                                 Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              result.selectedFish.keys.length > 2 
+                                ? '${result.selectedFish.keys.take(2).join(' & ')} +${result.selectedFish.keys.length - 2} more'
+                                : result.selectedFish.keys.join(' & '),
+                                             style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              result.compatibilityLevel == 'compatible' ? 'Compatible' : 
+                              result.compatibilityLevel == 'conditional' ? 'Conditional' : 'Not Compatible',
+                              style: TextStyle(
+                                               fontSize: 14,
+                                color: result.compatibilityLevel == 'compatible' ? Colors.green[600] : 
+                                       result.compatibilityLevel == 'conditional' ? Colors.orange[600] : Colors.red[600],
+                                fontWeight: FontWeight.w500,
+                                             ),
+                            ),
+                          ],
+                                           ),
+                                         ),
+                                      ],
+                                    ),
+                ),
+              ],
             ),
-            TextButton(
-              child: const Text('Confirm'),
+          ),
+          actions: <Widget>[
+            Row(
+              children: [
+                                      Expanded(
+                  child: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: Colors.grey.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      backgroundColor: Colors.grey.withOpacity(0.05),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF6B7280),
+                      ),
+                        ),
+                      ),
+                    ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Remove',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         );
@@ -2583,10 +3131,6 @@ String _cleanNeedsDescription(String input) {
   }
 
   void _showCompatibilityDetails(BuildContext context, CompatibilityResult result) {
-    // Normalize plan string for robust comparison
-    String normalizedPlan = result.savedPlan.trim().toLowerCase().replaceAll(' ', '_');
-    bool showDetailed = normalizedPlan == 'pro';
-
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => Scaffold(
@@ -2602,171 +3146,105 @@ String _cleanNeedsDescription(String input) {
               'Compatibility Details',
               style: TextStyle(
                 fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF006064),
-              ),
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF006064),
+          ),
             ),
           ),
-          body: FutureBuilder<List<Map<String, dynamic>?>>(
-            future: Future.wait([
-              _fetchFishDetails(result.fish1Name),
-              _fetchFishDetails(result.fish2Name),
-            ]),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              return SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Fish 1
-                    _FishImageAndName(
-                      fishName: result.fish1Name,
-                    ),
-                    const SizedBox(height: 16),
-                    const Icon(Icons.compare_arrows, size: 32, color: Color(0xFF006064)),
-                    const SizedBox(height: 16),
-                    // Fish 2
-                    _FishImageAndName(
-                      fishName: result.fish2Name,
-                    ),
-                    const SizedBox(height: 32),
-                    // Compatibility Result Card
-                    Card(
-                      elevation: 2,
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  result.isCompatible ? Icons.check_circle : Icons.cancel,
-                                  color: result.isCompatible ? Colors.green : Colors.red,
-                                  size: 28,
-                                ),
-                                const SizedBox(width: 10),
-                                Text(
-                                  result.isCompatible ? 'Compatible' : 'Not Compatible',
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    color: result.isCompatible ? Colors.green : Colors.red,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (!result.isCompatible && result.reasons.isNotEmpty) ...[
-                              const SizedBox(height: 18),
-                              const Text(
-                                'Incompatibility Reasons:',
-                                textAlign: TextAlign.left,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF006064),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              if (showDetailed) ...[
-                                // Use the saved detailed reasons from the sync result instead of regenerating
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: result.reasons.map((reason) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        const Icon(
-                                          Icons.error_outline,
-                                          color: Colors.red,
-                                          size: 20,
-                                        ),
-                                        const SizedBox(width: 8),
-                                                                                 Expanded(
-                                           child: Text(
-                                             reason,
-                                             style: const TextStyle(
-                                               fontSize: 14,
-                                               color: Colors.black87,
-                                             ),
-                                             textAlign: TextAlign.justify,
-                                           ),
-                                         ),
-                                      ],
-                                    ),
-                                  )).toList(),
-                                ),
-                              ] else ...[
-                                ...result.reasons.map((reason) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Icon(
-                                        Icons.error_outline,
-                                        color: Colors.red,
-                                        size: 20,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          reason,
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            color: Colors.black87,
-                                          ),
-                                          textAlign: TextAlign.justify,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                )),
-                              ],
-                            ],
-                          ],
-                        ),
-                      ),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 24),
+                
+                 // Selected Fish Card
+                 CalculationResultWidget(
+                   title: 'Selected Fish',
+                   subtitle: 'Fish species for compatibility check',
+                   icon: Icons.compare_arrows,
+                   infoRows: result.selectedFish.entries.map((entry) => 
+                     CalculationInfoRow(
+                       icon: Icons.compare_arrows,
+                       label: '${entry.value}x ${entry.key}',
+                       value: '',
+                       showEyeIcon: true,
+                     ),
+                   ).toList(),
+                 ),
+                const SizedBox(height: 20),
+                
+                // Compatibility Result Card
+                CalculationResultWidget(
+                  title: 'Compatibility Result',
+                  subtitle: 'Overall compatibility assessment',
+                  icon: result.compatibilityLevel == 'compatible' ? Icons.check_circle : 
+                        result.compatibilityLevel == 'conditional' ? Icons.warning : Icons.cancel,
+                  infoRows: [
+                    CalculationInfoRow(
+                      icon: result.compatibilityLevel == 'compatible' ? Icons.check_circle : 
+                            result.compatibilityLevel == 'conditional' ? Icons.warning : Icons.cancel,
+                      label: 'Status',
+                      value: result.compatibilityLevel == 'compatible' ? 'Compatible' : 
+                             result.compatibilityLevel == 'conditional' ? 'Conditional' : 'Not Compatible',
                     ),
                   ],
                 ),
-              );
-            },
+                const SizedBox(height: 20),
+                
+                // Analysis Details Card
+                if (result.reasons.isNotEmpty) ...[
+                  CalculationResultWidget(
+                    title: 'Analysis Details',
+                    subtitle: 'Compatibility analysis breakdown',
+                    icon: Icons.analytics,
+                    infoRows: result.reasons.map((reason) => 
+                      CalculationInfoRow(
+                        icon: result.compatibilityLevel == 'compatible' ? Icons.check_circle_outline :
+                              result.compatibilityLevel == 'conditional' ? Icons.warning_amber_outlined : Icons.error_outline,
+                        label: reason,
+                        value: '',
+                      ),
+                    ).toList(),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+                
+                 // Pair Analysis Card
+                 if (result.pairAnalysis.isNotEmpty && result.pairAnalysis['pairs'] != null) ...[
+                   CalculationResultWidget(
+                     title: 'Pair-by-Pair Analysis',
+                     subtitle: 'Individual fish pair compatibility',
+                     icon: Icons.compare_arrows,
+                     infoRows: (result.pairAnalysis['pairs'] as List).map((pair) {
+                       final fish1 = pair['fish1'] ?? '';
+                       final fish2 = pair['fish2'] ?? '';
+                       final compatibility = pair['compatibility'] ?? '';
+                       
+                       // Capitalize fish names properly
+                       final capitalizedFish1 = fish1.isNotEmpty 
+                           ? '${fish1[0].toUpperCase()}${fish1.substring(1).toLowerCase()}'
+                           : fish1;
+                       final capitalizedFish2 = fish2.isNotEmpty 
+                           ? '${fish2[0].toUpperCase()}${fish2.substring(1).toLowerCase()}'
+                           : fish2;
+                       
+                       return CalculationInfoRow(
+                         icon: compatibility == 'compatible' ? Icons.check_circle :
+                               compatibility == 'conditional' ? Icons.warning : Icons.cancel,
+                         label: '$capitalizedFish1 & $capitalizedFish2',
+                         value: compatibility.toUpperCase(),
+                       );
+                     }).toList(),
+                   ),
+                   const SizedBox(height: 20),
+                 ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _FishImageAndName({
-    required String fishName,
-  }) {
-    return Column(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: SizedBox(
-            width: 320,
-            height: 200,
-            child: _buildResolvedFishImage(fishName, height: 200),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          fishName,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF006064),
-          ),
-        ),
-      ],
-    );
-  }
 }
