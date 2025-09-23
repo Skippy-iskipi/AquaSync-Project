@@ -3,7 +3,6 @@ import {
   UsersIcon, 
   BeakerIcon, 
   ChartBarIcon,
-  ClockIcon,
   BoltIcon,
   UserGroupIcon
 } from '@heroicons/react/24/outline';

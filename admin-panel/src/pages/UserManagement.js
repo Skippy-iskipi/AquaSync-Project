@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { 
   PlusIcon, 
   PencilIcon, 
-  TrashIcon, 
   MagnifyingGlassIcon,
   EyeIcon,
   XCircleIcon,
@@ -24,15 +23,6 @@ const getAuthToken = () => {
   return token;
 };
 
-// Helper component to display key-value pairs in a clean format
-const InfoRow = ({ label, value, unit = '', className = '' }) => (
-  <div className={`flex justify-between py-1 ${className}`}>
-    <span className="text-sm font-medium text-gray-600">{label}:</span>
-    <span className="text-sm text-gray-900 font-medium">
-      {value !== null && value !== undefined ? `${value} ${unit}` : 'N/A'}
-    </span>
-  </div>
-);
 
 // Helper component to display fish information in a clean format
 // const FishInfo = ({ fish, index }) => {
