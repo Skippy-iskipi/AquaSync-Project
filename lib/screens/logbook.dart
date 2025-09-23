@@ -6,10 +6,6 @@ import 'logbook_provider.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/fish_prediction.dart';
-import 'tank_management.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import '../services/auth_service.dart';
-import 'auth_screen.dart';
 
 import 'package:intl/intl.dart';
 import '../models/compatibility_result.dart';
@@ -18,7 +14,6 @@ import '../models/water_calculation.dart';
 import '../models/diet_calculation.dart';
 import '../models/fish_volume_calculation.dart';
 import '../widgets/custom_notification.dart';
-import '../widgets/fish_info_dialog.dart';
 import '../widgets/fish_details_screen.dart';
 import '../config/api_config.dart';
 
@@ -41,12 +36,11 @@ class LogBook extends StatefulWidget {
 }
 
 class _LogBookState extends State<LogBook> {
-  String _selectedSection = 'My Tanks';
+  String _selectedSection = 'Captured';
   
   final List<String> _sections = [
-    'My Tanks',
-    'Collection',
-    'Calculator',
+    'Captured',
+    'Calculation',
     'Compatibility',
   ];
 
@@ -72,9 +66,6 @@ class _LogBookState extends State<LogBook> {
       color: Colors.grey[50],
       child: Column(
         children: [
-          // Always show profile header
-          _buildCompactProfileHeader(),
-          
           // Tab selector
           _buildSectionSelector(),
           
@@ -140,147 +131,13 @@ class _LogBookState extends State<LogBook> {
 
 
 
-  Widget _buildCompactProfileHeader() {
-    return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            const Color(0xFF00BFB3),
-            const Color(0xFF4DD0E1),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(6),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF00BFB3).withOpacity(0.2),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      child: Row(
-                children: [
-          // Profile Avatar
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-                          child: const Icon(
-              Icons.person,
-              size: 24,
-              color: Color(0xFF00BFB3),
-            ),
-          ),
-          const SizedBox(width: 16),
-          // User Info
-          Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                Consumer<LogBookProvider>(
-                  builder: (context, logBookProvider, child) {
-                    final user = Supabase.instance.client.auth.currentUser;
-                    return Text(
-                      user?.email ?? 'Guest User',
-                          style: const TextStyle(
-                        fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    );
-                  },
-                ),
-                      ],
-                    ),
-                  ),
-          // Auth Button
-          Consumer<AuthService>(
-            builder: (context, authService, child) {
-              final user = authService.currentUser;
-              return GestureDetector(
-                onTap: () async {
-                  if (user != null) {
-                    // Sign out
-                    await authService.signOut();
-                    if (mounted) {
-                      setState(() {});
-                    }
-                  } else {
-                    // Sign in
-                    if (mounted) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const AuthScreen(
-                            showBackButton: true,
-                            initialMode: true, // Start in sign-in mode
-              ),
-            ),
-          );
-                    }
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.3),
-                      width: 1,
-                    ),
-                  ),
-      child: Row(
-                    mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-                        user != null ? Icons.logout : Icons.login,
-          size: 16,
-                        color: Colors.white,
-                      ),
-                      const SizedBox(width: 6),
-              Text(
-                        user != null ? 'Sign Out' : 'Sign In',
-                style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
 
 
   Widget _buildSelectedSection() {
     switch (_selectedSection) {
-      case 'My Tanks':
-        return const TankManagement();
-      case 'Collection':
+      case 'Captured':
         return _buildFishCollectionTab();
-      case 'Calculator':
+      case 'Calculation':
         return _buildCalculatorTab();
       case 'Compatibility':
         return _buildFishCompatibilityTab();
@@ -756,805 +613,93 @@ class _LogBookState extends State<LogBook> {
           const SizedBox(height: 24),
           
           // Selected Fish Card
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  const Color(0xFFE0F7FA),
-                  const Color(0xFFF0FDFF),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF00ACC1).withOpacity(0.1),
-                  spreadRadius: 1,
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-              border: Border.all(
-                color: const Color(0xFF00ACC1).withOpacity(0.2),
-                width: 1,
-              ),
-            ),
-              child: Padding(
-              padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              const Color(0xFF00ACC1),
-                              const Color(0xFF4DD0E1),
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF00ACC1).withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                        child: const Icon(
-                          FontAwesomeIcons.fish,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Selected Fish',
-                      style: TextStyle(
-                                fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                            const SizedBox(height: 4),
-                    Text(
-                              'Fish species for diet calculation',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey[600],
-                                fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-                    ],
+          FishSelectionCard(
+            fishSelections: calculation.fishSelections,
+            cardTitle: 'Selected Fish',
+            cardSubtitle: 'Fish species for diet calculation',
           ),
-          const SizedBox(height: 16),
-                  ...calculation.fishSelections.entries.map((entry) => Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: const Color(0xFF00ACC1).withOpacity(0.2),
-                        width: 1,
-                      ),
-                    ),
-                      child: Row(
-                        children: [
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF00ACC1).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Icon(
-                            FontAwesomeIcons.fish,
-                            color: Color(0xFF00ACC1),
-                            size: 16,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            '${entry.value}x ${entry.key}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF006064),
-                            ),
-                          ),
-                          ),
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: () {
-                            showDialog(
-                              context: context,
-                              builder: (context) => FishInfoDialog(fishName: entry.key),
-                            );
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF00ACC1).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Icon(
-                              Icons.remove_red_eye_rounded,
-                              color: Color(0xFF00ACC1),
-                              size: 16,
-                            ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )),
-                  ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           
           // Feeding Schedule Card
           if (calculation.feedingSchedule != null) ...[
-            Container(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    const Color(0xFFE0F7FA),
-                    const Color(0xFFF0FDFF),
-                  ],
+            CalculationResultWidget(
+              title: 'Feeding Schedule',
+              subtitle: 'Recommended feeding times and frequency',
+              icon: Icons.schedule_rounded,
+              infoRows: [
+                CalculationInfoRow(
+                  label: '',
+                  value: calculation.feedingSchedule!,
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00ACC1).withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-                border: Border.all(
-                  color: const Color(0xFF00ACC1).withOpacity(0.2),
-                  width: 1,
-                ),
-              ),
-                child: Padding(
-                padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                const Color(0xFF00ACC1),
-                                const Color(0xFF4DD0E1),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF00ACC1).withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                          child: const Icon(
-                            Icons.schedule_rounded,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                        'Feeding Schedule',
-                      style: TextStyle(
-                                  fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF006064),
-                      ),
-                    ),
-                              const SizedBox(height: 4),
-                      Text(
-                                'Recommended feeding times and frequency',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                  ],
-                ),
-              ),
-                      ],
-          ),
-          const SizedBox(height: 16),
-                    Container(
-                padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                        color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFF00ACC1).withOpacity(0.2),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                          children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF00ACC1).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Icon(
-                              Icons.schedule_rounded,
-                              color: Color(0xFF00ACC1),
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                        calculation.feedingSchedule!,
-                              style: const TextStyle(
-                                fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                                color: Color(0xFF006064),
-                              ),
-                            ),
-                      ),
-                    ],
-                  ),
-                    ),
-                  ],
-                ),
-              ),
+              ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
           ],
           
           // Total Food Per Feeding Card
           if (calculation.totalFoodPerFeeding != null) ...[
-            Container(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    const Color(0xFFE0F7FA),
-                    const Color(0xFFF0FDFF),
-                  ],
+            CalculationResultWidget(
+              title: 'Total Food Per Feeding',
+              subtitle: 'Recommended food amount per feeding',
+              icon: Icons.scale_rounded,
+              infoRows: [
+                CalculationInfoRow(
+                  label: 'Food Amount',
+                  value: calculation.totalFoodPerFeeding!,
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00ACC1).withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-                border: Border.all(
-                  color: const Color(0xFF00ACC1).withOpacity(0.2),
-                  width: 1,
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                        children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                const Color(0xFF00ACC1),
-                                const Color(0xFF4DD0E1),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF00ACC1).withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                          child: const Icon(
-                            Icons.scale_rounded,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Total Food Per Feeding',
-                        style: TextStyle(
-                                  fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
-                        ),
-                      ),
-                              const SizedBox(height: 4),
-                      Text(
-                                'Recommended food amount per feeding',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                      ],
+              ],
             ),
-            const SizedBox(height: 16),
-                    Container(
-                  padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFF00ACC1).withOpacity(0.2),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                    children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF00ACC1).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Icon(
-                              Icons.scale_rounded,
-                              color: Color(0xFF00ACC1),
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                        calculation.totalFoodPerFeeding!,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                                color: Color(0xFF006064),
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
           ],
           
           // Per Fish Breakdown Card
           if (calculation.perFishBreakdown != null && calculation.perFishBreakdown!.isNotEmpty) ...[
-            Container(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    const Color(0xFFE0F7FA),
-                    const Color(0xFFF0FDFF),
-                  ],
+            CalculationResultWidget(
+              title: 'Per Fish Breakdown',
+              subtitle: 'Individual feeding portions for each fish',
+              icon: FontAwesomeIcons.fish,
+              infoRows: calculation.perFishBreakdown!.entries.map((entry) => 
+                CalculationInfoRow(
+                  label: entry.key,
+                  value: '${entry.value['quantity'] ?? 1}x: ${entry.value['total_portion'] ?? 'Standard portion'}',
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00ACC1).withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-                border: Border.all(
-                  color: const Color(0xFF00ACC1).withOpacity(0.2),
-                  width: 1,
-                ),
-              ),
-                child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                const Color(0xFF00ACC1),
-                                const Color(0xFF4DD0E1),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF00ACC1).withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            FontAwesomeIcons.fish,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Per Fish Breakdown',
-                        style: TextStyle(
-                                  fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
-                        ),
-                      ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Individual feeding portions for each fish',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    ...calculation.perFishBreakdown!.entries.map((entry) => Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFF00ACC1).withOpacity(0.2),
-                          width: 1,
-                        ),
-                      ),
-                        child: Row(
-                          children: [
-                          Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF00ACC1).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Icon(
-                              FontAwesomeIcons.fish,
-                              color: Color(0xFF00ACC1),
-                              size: 16,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                '${entry.value['quantity'] ?? 1}x ${entry.key}: ${entry.value['total_portion'] ?? 'Standard portion'}',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF006064),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )),
-                    ],
-                ),
-              ),
+              ).toList(),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
           ],
           
           // Recommended Food Types Card
           if (calculation.recommendedFoodTypes != null && calculation.recommendedFoodTypes!.isNotEmpty) ...[
-            Container(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    const Color(0xFFE0F7FA),
-                    const Color(0xFFF0FDFF),
-                  ],
+            CalculationResultWidget(
+              title: 'Recommended Food Types',
+              subtitle: 'Best food options for your fish',
+              icon: Icons.restaurant_menu_rounded,
+              infoRows: calculation.recommendedFoodTypes!.map((foodType) => 
+                CalculationInfoRow(
+                  label: '',
+                  value: foodType,
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00ACC1).withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-                border: Border.all(
-                  color: const Color(0xFF00ACC1).withOpacity(0.2),
-                  width: 1,
-                ),
-              ),
-                child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                const Color(0xFF00ACC1),
-                                const Color(0xFF4DD0E1),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF00ACC1).withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.restaurant_menu_rounded,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Recommended Food Types',
-                        style: TextStyle(
-                                  fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
-                        ),
-                      ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Best food options for your fish',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    ...calculation.recommendedFoodTypes!.map((foodType) => Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFF00ACC1).withOpacity(0.2),
-                          width: 1,
-                        ),
-                      ),
-                        child: Row(
-                          children: [
-                          Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF00ACC1).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Icon(
-                              Icons.restaurant_menu_rounded,
-                              color: Color(0xFF00ACC1),
-                              size: 16,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                foodType,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF006064),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )),
-                    ],
-                ),
-              ),
+              ).toList(),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
           ],
           
           // Feeding Tips Card
           if (calculation.feedingTips != null && calculation.feedingTips!.isNotEmpty) ...[
-            Container(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    const Color(0xFFE0F7FA),
-                    const Color(0xFFF0FDFF),
-                  ],
+            CalculationResultWidget(
+              title: 'Feeding Tips',
+              subtitle: 'Helpful feeding recommendations',
+              icon: Icons.lightbulb_rounded,
+              infoRows: [
+                CalculationInfoRow(
+                  label: '',
+                  value: calculation.feedingTips!,
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00ACC1).withOpacity(0.1),
-                    spreadRadius: 1,
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-                border: Border.all(
-                  color: const Color(0xFF00ACC1).withOpacity(0.2),
-                  width: 1,
-                ),
-              ),
-                child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                const Color(0xFF00ACC1),
-                                const Color(0xFF4DD0E1),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: const Color(0xFF00ACC1).withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.lightbulb_rounded,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Feeding Tips',
-                        style: TextStyle(
-                                  fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF006064),
-                        ),
-                      ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFF00ACC1).withOpacity(0.2),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Text(
-                        calculation.feedingTips!,
-                        style: const TextStyle(
-                          fontSize: 14,
-                                color: Color(0xFF006064),
-                          height: 1.4,
-                                fontWeight: FontWeight.w500,
-                        ),
-                        textAlign: TextAlign.justify,
-                            ),
-                      ),
-                    ],
-                  ),
-                    ),
-                  ],
-                ),
-              ),
+              ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
           ],
+          
         ],
       ),
     );
@@ -1838,13 +983,28 @@ class _LogBookState extends State<LogBook> {
 
   Widget _buildCaptureButton() {
     return Container(
-      height: 200,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(6),
-        elevation: 0,
-        child: InkWell(
-          onTap: () {
+      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xFF00BFB3),
+              const Color(0xFF4DD0E1),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00BFB3).withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ElevatedButton(
+          onPressed: () {
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -1852,46 +1012,40 @@ class _LogBookState extends State<LogBook> {
               ),
             );
           },
-          borderRadius: BorderRadius.circular(6),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(6),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            shadowColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.transparent,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.camera_alt,
-                    color: Color(0xFF00BFB3),
-                    size: 32,
-                  ),
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
                 ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Capture',
-                  style: TextStyle(
-                    color: Color(0xFF00BFB3),
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                const Text(
-                  'New Fish',
-                  style: TextStyle(
-                    color: Color(0xFF00BFB3),
-                    fontSize: 12,
-                  ),
+                child: const Icon(
+                  Icons.camera_alt,
+                  color: Colors.white,
+                  size: 20,
                 ),
-                            ],
-                          ),
-                        ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Capture New Fish',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -47,6 +47,22 @@ class AuthService {
         email: email,
         password: password,
       );
+      
+      // Check if user is active after successful login
+      if (response.user != null) {
+        print('AuthService: Checking active status for email login user: ${response.user!.id}');
+        final isActive = await isUserActive(userId: response.user!.id);
+        print('AuthService: Email login user active status: $isActive');
+        
+        if (!isActive) {
+          // Sign out the user immediately if they're inactive
+          print('AuthService: Email login user is inactive, signing out');
+          await _supabase.auth.signOut();
+          throw Exception('Your account has been deactivated. Please contact support for assistance.');
+        }
+        print('AuthService: Email login user is active, allowing access');
+      }
+      
       return response;
     } catch (error) {
       rethrow;
@@ -64,6 +80,9 @@ class AuthService {
           'prompt': 'select_account',
         },
       );
+      
+      // Note: For OAuth, we'll check active status in the AuthWrapper
+      // since the OAuth flow doesn't return the user immediately
     } catch (error) {
       rethrow;
     }
@@ -86,6 +105,57 @@ class AuthService {
 
   // Stream of auth state changes
   Stream<AuthState> get onAuthStateChange => _supabase.auth.onAuthStateChange;
+
+  // Debug method to check current authentication state
+  void debugAuthState() {
+    final user = currentUser;
+    final session = currentSession;
+    print('AuthService: Debug Auth State:');
+    print('AuthService: - Current User: ${user?.id} (${user?.email})');
+    print('AuthService: - Current Session: ${session != null ? 'Active' : 'None'}');
+    print('AuthService: - Is Authenticated: $isAuthenticated');
+  }
+
+  // Check if user is active in profiles table
+  Future<bool> isUserActive({required String userId}) async {
+    try {
+      print('AuthService: Checking if user is active: $userId');
+      
+      final response = await _supabase
+          .from('profiles')
+          .select('id, email, active, updated_at')
+          .eq('id', userId)
+          .single()
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              throw Exception('Database query timed out');
+            },
+          );
+      
+      print('AuthService: Profile data retrieved: $response');
+      
+      final isActive = response['active'] ?? true; // Default to true if null
+      print('AuthService: User active status: $isActive (type: ${isActive.runtimeType})');
+      
+      if (isActive == null) {
+        print('AuthService: Active field is null, defaulting to true');
+        return true;
+      }
+      
+      return isActive;
+      
+    } catch (error) {
+      print('AuthService: Error checking user active status: $error');
+      print('AuthService: Error type: ${error.runtimeType}');
+      print('AuthService: Error details: ${error.toString()}');
+      
+      // If we can't check the status, allow access (fail open for better UX)
+      print('AuthService: Failing open - allowing access due to error');
+      return true;
+    }
+  }
+
 
 
 

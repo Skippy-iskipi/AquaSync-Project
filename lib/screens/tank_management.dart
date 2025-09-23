@@ -73,43 +73,6 @@ class _TankManagementState extends State<TankManagement> {
                 ),
               ],
             ),
-            child: ElevatedButton(
-              onPressed: () => _navigateToAddTank(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                shadowColor: Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.add,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Create New Tank',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
         ],
       ),
@@ -119,12 +82,8 @@ class _TankManagementState extends State<TankManagement> {
   Widget _buildTankList(List<Tank> tanks) {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: tanks.length + 1, // +1 for the add button
+      itemCount: tanks.length,
       itemBuilder: (context, index) {
-        if (index == tanks.length) {
-          // Add button at the end
-          return _buildAddTankButton();
-        }
         final tank = tanks[index];
         return _buildTankCard(tank);
       },
@@ -132,68 +91,6 @@ class _TankManagementState extends State<TankManagement> {
   }
 
 
-  Widget _buildAddTankButton() {
-    return Container(
-      margin: const EdgeInsets.only(top: 16),
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              const Color(0xFF00BFB3),
-              const Color(0xFF4DD0E1),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF00BFB3).withOpacity(0.3),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: ElevatedButton(
-          onPressed: () => _navigateToAddTank(context),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            shadowColor: Colors.transparent,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.add,
-                  color: Colors.white,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                'Create New Tank',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildTankCard(Tank tank) {
     
@@ -638,6 +535,7 @@ class _TankDetailsScreenState extends State<TankDetailsScreen> {
       final response = await supabase
           .from('fish_species')
           .select('common_name, portion_grams, feeding_frequency, preferred_food, "max_size_(cm)", temperament, water_type')
+          .eq('active', true)
           .ilike('common_name', fishName)
           .maybeSingle();
 

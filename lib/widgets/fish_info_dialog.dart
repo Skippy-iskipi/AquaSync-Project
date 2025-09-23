@@ -183,12 +183,12 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
                                   children: [
                                     Text(
                                       widget.fishName,
-                                      style: const TextStyle(
-                                        fontSize: 32,
+                                      style: TextStyle(
+                                        fontSize: _getDynamicFontSize(widget.fishName),
                                         fontWeight: FontWeight.bold,
                                         color: Colors.white,
                                         letterSpacing: 0.5,
-                                        shadows: [
+                                        shadows: const [
                                           Shadow(
                                             offset: Offset(2, 2),
                                             blurRadius: 8,
@@ -196,6 +196,8 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
                                           ),
                                         ],
                                       ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 2,
                                     ),
                                     if (fishInfo?['scientific_name'] != null) ...[
                                       const SizedBox(height: 6),
@@ -224,6 +226,8 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
                                               ),
                                             ],
                                           ),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
                                         ),
                                       ),
                                     ],
@@ -1223,6 +1227,21 @@ class _FishInfoDialogState extends State<FishInfoDialog> with TickerProviderStat
       context: context,
       builder: (context) => FishInfoDialog(fishName: fishName),
     );
+  }
+
+  // Dynamic font size calculation based on text length
+  double _getDynamicFontSize(String text) {
+    if (text.length <= 15) {
+      return 32; // Short text - use maximum size
+    } else if (text.length <= 25) {
+      return 28; // Medium text - slightly smaller
+    } else if (text.length <= 35) {
+      return 24; // Long text - smaller
+    } else if (text.length <= 45) {
+      return 20; // Very long text - much smaller
+    } else {
+      return 18; // Extremely long text - minimum size
+    }
   }
 }
 

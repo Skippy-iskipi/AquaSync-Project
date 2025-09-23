@@ -163,6 +163,9 @@ class CaptureScreenState extends State<CaptureScreen> {
   final ImagePicker _picker = ImagePicker();
   bool _isLoading = false;
   bool _isCameraAvailable = false;
+  double _minZoomLevel = 1.0;
+  double _maxZoomLevel = 1.0;
+  double _currentZoomLevel = 1.0;
 
 
 
@@ -236,6 +239,28 @@ class CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
+  // Zoom in functionality
+  void _zoomIn() {
+    if (_controller != null && _currentZoomLevel < _maxZoomLevel) {
+      final newZoomLevel = (_currentZoomLevel + 0.5).clamp(_minZoomLevel, _maxZoomLevel);
+      _controller!.setZoomLevel(newZoomLevel);
+      setState(() {
+        _currentZoomLevel = newZoomLevel;
+      });
+    }
+  }
+
+  // Zoom out functionality
+  void _zoomOut() {
+    if (_controller != null && _currentZoomLevel > _minZoomLevel) {
+      final newZoomLevel = (_currentZoomLevel - 0.5).clamp(_minZoomLevel, _maxZoomLevel);
+      _controller!.setZoomLevel(newZoomLevel);
+      setState(() {
+        _currentZoomLevel = newZoomLevel;
+      });
+    }
+  }
+
   // Show snap tips dialog for no fish or low confidence
   void _showSnapTipsDialog(bool fromCamera, String reason) {
     showDialog(
@@ -262,7 +287,24 @@ class CaptureScreenState extends State<CaptureScreen> {
         enableAudio: false,
       );
 
-      _initializeControllerFuture = _controller?.initialize();
+      _initializeControllerFuture = _controller?.initialize().then((_) {
+        if (_controller != null) {
+          // Set default zoom levels - most cameras support 1x to 5x zoom
+          _minZoomLevel = 1.0;
+          _maxZoomLevel = 5.0;
+          _currentZoomLevel = 1.0;
+          
+          // Add listener to track zoom changes
+          _controller!.addListener(() {
+            if (mounted) {
+              setState(() {
+                // Keep track of current zoom level
+              });
+            }
+          });
+        }
+      });
+      
       if (mounted) {
         setState(() {
           _isCameraAvailable = true;
@@ -1350,6 +1392,7 @@ class CaptureScreenState extends State<CaptureScreen> {
       final response = await Supabase.instance.client
           .from('fish_species')
           .select('*, description, diet, preferred_food, feeding_frequency, portion_grams, overfeeding_risks, feeding_notes')
+          .eq('active', true)
           .or('common_name.ilike.%$commonName%,scientific_name.ilike.%$scientificName%')
           .limit(1)
           .single();
@@ -1696,15 +1739,29 @@ class CaptureScreenState extends State<CaptureScreen> {
           final size = MediaQuery.of(context).size;
           final scale = 1 / (_controller!.value.aspectRatio * size.aspectRatio);
           
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              Transform.scale(
-                scale: scale,
-                child: Center(
-                  child: CameraPreview(_controller!),
+          return GestureDetector(
+            onScaleStart: (details) {
+              // Store initial zoom level when pinch starts
+            },
+            onScaleUpdate: (details) {
+              // Handle pinch-to-zoom
+              if (_controller != null) {
+                final newZoomLevel = (_currentZoomLevel * details.scale).clamp(_minZoomLevel, _maxZoomLevel);
+                _controller!.setZoomLevel(newZoomLevel);
+                setState(() {
+                  _currentZoomLevel = newZoomLevel;
+                });
+              }
+            },
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Transform.scale(
+                  scale: scale,
+                  child: Center(
+                    child: CameraPreview(_controller!),
+                  ),
                 ),
-              ),
               Center(
                 child: Container(
                   width: size.width * 0.8,
@@ -1730,14 +1787,79 @@ class CaptureScreenState extends State<CaptureScreen> {
                   ),
                 ),
               ),
+              // Zoom controls - positioned near tips button
+              Positioned(
+                right: 20,
+                bottom: 30, // Above the tips button in bottom navigation
+                child: Column(
+                  children: [
+                    // Zoom in button
+                    GestureDetector(
+                      onTap: _zoomIn,
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1),
+                        ),
+                        child: const Icon(
+                          Icons.add,
+                          color: Colors.white,
+                          size: 15,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Zoom level indicator
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white, width: 1),
+                      ),
+                      child: Text(
+                        '${_currentZoomLevel.toStringAsFixed(1)}x',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Zoom out button
+                    GestureDetector(
+                      onTap: _zoomOut,
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1),
+                        ),
+                        child: const Icon(
+                          Icons.remove,
+                          color: Colors.white,
+                          size: 15,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               if (_isLoading)
                 Container(
                   color: Colors.black54,
                   child: const Center(
                     child: CircularProgressIndicator(color: Colors.teal),
-                  ),
                 ),
-            ],
+              ),
+              ],
+            ),
           );
         } else {
           return const Center(child: CircularProgressIndicator());

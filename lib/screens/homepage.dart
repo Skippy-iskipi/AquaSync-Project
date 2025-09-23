@@ -21,6 +21,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/auth_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/guide_overlay.dart';
+import 'guide_webview.dart';
+import '../services/auth_service.dart';
+import 'tank_management.dart';
+import 'add_edit_tank.dart';
 
 
 class HomePage extends StatefulWidget {
@@ -107,14 +111,16 @@ class _HomePageState extends State<HomePage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (modalContext) => Container(
-        height: MediaQuery.of(modalContext).size.height * 0.7,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      isDismissible: true,
+      enableDrag: true,
+        builder: (modalContext) => Container(
+          height: MediaQuery.of(modalContext).size.height,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: _UserProfileSheet(user: user),
         ),
-        child: _UserProfileSheet(user: user),
-      ),
     );
   }
 
@@ -171,6 +177,27 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
+            const SizedBox(height: 40),
+            // Tips & Guides Section
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: const [
+                  Icon(Icons.lightbulb_outline, color: Color(0xFF00BFB3), size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Tips & Guides',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF00BFB3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            _TipsAndGuidesSection(),
             const SizedBox(height: 40),
             // Recent Activity Section
             Padding(
@@ -246,24 +273,23 @@ class _HomePageState extends State<HomePage> {
                   );
                 }
                 return Column(
-                  children: allItems.take(5).map((item) => _ModernRecentActivityCard(item: item, onTap: () {
+                  children: allItems.map((item) => _ModernRecentActivityCard(item: item, onTap: () {
                     setState(() {
                       if (item is FishPrediction) {
-                        // Fish captured -> Fish Collection tab
-                        _selectedIndex = 3;
-                        _logBookTabIndex = 1;
-                      } else if (item is WaterCalculation || item is FishCalculation || item is DietCalculation || item is FishVolumeCalculation) {
-                        // All calculators -> Fish Calculator tab
-                        _selectedIndex = 3;
-                        _logBookTabIndex = 2;
-                      } else if (item is CompatibilityResult) {
-                        // Compatibility -> Fish Compatibility tab
-                        _selectedIndex = 3;
-                        _logBookTabIndex = 3;
-                      } else if (item is Tank) {
-                        // Tank -> My Tanks tab
+                        // Fish captured -> Captured tab
                         _selectedIndex = 3;
                         _logBookTabIndex = 0;
+                      } else if (item is WaterCalculation || item is FishCalculation || item is DietCalculation || item is FishVolumeCalculation) {
+                        // All calculators -> Calculation tab
+                        _selectedIndex = 3;
+                        _logBookTabIndex = 1;
+                      } else if (item is CompatibilityResult) {
+                        // Compatibility -> Compatibility tab
+                        _selectedIndex = 3;
+                        _logBookTabIndex = 2;
+                      } else if (item is Tank) {
+                        // Tank -> Profile (show user info modal)
+                        _showUserInfo(context);
                       }
                     });
                   })).toList(),
@@ -290,22 +316,86 @@ class _HomePageState extends State<HomePage> {
         Scaffold(
           backgroundColor: Colors.white,
           appBar: PreferredSize(
-            preferredSize: const Size.fromHeight(35),
+            preferredSize: const Size.fromHeight(80),
             child: AppBar(
               backgroundColor: Colors.transparent,
               elevation: 0,
               automaticallyImplyLeading: false,
-              title: Text(
-                _selectedIndex == 0 ? 'AquaSync' :
-                _selectedIndex == 1 ? 'Sync' :
-                _selectedIndex == 2 ? 'Calculator' : 'Profile',
-                style: const TextStyle(
-                  color: Color(0xFF00BFB3),
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
+              title: Row(
+                children: [
+                  Text(
+                    _selectedIndex == 0 ? 'AquaSync' :
+                    _selectedIndex == 1 ? 'Sync' :
+                    _selectedIndex == 2 ? 'Calculator' : 'History',
+                    style: const TextStyle(
+                      color: Color(0xFF00BFB3),
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  // Profile section
+                  Consumer<AuthService>(
+                    builder: (context, authService, child) {
+                      return GestureDetector(
+                        onTap: () => _showUserInfo(context),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                const Color(0xFF00BFB3),
+                                const Color(0xFF4DD0E1),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF00BFB3).withOpacity(0.2),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.white,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.1),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.person,
+                                  size: 18,
+                                  color: Color(0xFF00BFB3),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(
+                                Icons.keyboard_arrow_down,
+                                color: Colors.white,
+                                size: 16,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
               ),
-              actions: [],
             ),
           ),
           body: _getSelectedScreen(),
@@ -366,7 +456,7 @@ class _ModernExploreCard extends StatelessWidget {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
                   color: const Color(0xFF00BFB3).withOpacity(0.3),
@@ -445,7 +535,7 @@ class _ModernExploreCard extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                             decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(20),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: const Text(
                               'Explore Now',
@@ -615,7 +705,7 @@ class _ModernRecentActivityCard extends StatelessWidget {
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                         ),
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       child: Icon(icon, color: iconColor, size: 26),
                     ),
@@ -694,17 +784,22 @@ class _ModernRecentActivityCard extends StatelessWidget {
 }
 
 // Add this new widget below HomePageState
-class _UserProfileSheet extends StatelessWidget {
+class _UserProfileSheet extends StatefulWidget {
   final dynamic user;
   const _UserProfileSheet({required this.user});
 
+  @override
+  State<_UserProfileSheet> createState() => _UserProfileSheetState();
+}
+
+class _UserProfileSheetState extends State<_UserProfileSheet> {
   Future<Map<String, dynamic>> _fetchProfile() async {
-    if (user == null) return {};
+    if (widget.user == null) return {};
     try {
       final data = await Supabase.instance.client
           .from('profiles')
           .select('first_name, last_name, email')
-          .eq('id', user.id)
+          .eq('id', widget.user.id)
           .maybeSingle();
       return data ?? {};
     } catch (e) {
@@ -714,140 +809,504 @@ class _UserProfileSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final double modalHeight = 320;
     return Padding(
       padding: MediaQuery.of(context).viewInsets + const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: SizedBox(
-        height: modalHeight,
-        child: FutureBuilder<Map<String, dynamic>>(
-          future: _fetchProfile(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final profile = snapshot.data ?? {};
-            final String email = (profile['email'] ?? user?.email ?? '').toString();
+      child: Column(
+        children: [
+          // Handle bar
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey[300],
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 18),
+          
+          // Profile header
+          _buildProfileHeader(),
+          
+          const SizedBox(height: 20),
+          
+          // My Tanks section
+          Expanded(
+            child: _buildTanksSection(),
+          ),
+        ],
+      ),
+    );
+  }
 
-                return Column(
-                  mainAxisSize: MainAxisSize.max,
-                  children: [
-                    Container(
-                      margin: const EdgeInsets.only(top: 8),
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(2),
+  Widget _buildProfileHeader() {
+    final theme = Theme.of(context);
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _fetchProfile(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final profile = snapshot.data ?? {};
+        final String email = (profile['email'] ?? widget.user?.email ?? '').toString();
+
+        return Column(
+          children: [
+            // Profile avatar and info
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF00BFB3), Color(0xFF4DD0E1)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 3),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00BFB3).withOpacity(0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.person,
+                size: 40,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 12),
+            
+            // User info
+            if (widget.user != null) ...[
+              Text(
+                email.isNotEmpty ? email : 'No Email',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: Colors.grey[800],
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ] else ...[
+              Text(
+                'Guest User',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: Colors.grey[800],
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Sign in to access premium features',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+            
+            const SizedBox(height: 16),
+            
+            // Auth button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  if (widget.user != null) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(
+                        builder: (context) => const AuthScreen(showBackButton: false),
                       ),
+                      (route) => false,
+                    );
+                    Supabase.instance.client.auth.signOut();
+                  } else {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AuthScreen(showBackButton: true),
+                      ),
+                    );
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00BFB3),
+                  foregroundColor: Colors.white,
+                  elevation: 2,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: Icon(
+                  widget.user != null ? Icons.logout : Icons.login,
+                  size: 20,
+                ),
+                label: Text(
+                  widget.user != null ? 'Sign Out' : 'Sign In / Sign Up',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTanksSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Section header with create button
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00BFB3).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.water,
+                  color: Color(0xFF00BFB3),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'My Tanks',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1F2937),
+                ),
+              ),
+              const Spacer(),
+              // Create new tank button
+              Container(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF00BFB3),
+                      Color(0xFF4DD0E1),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00BFB3).withOpacity(0.2),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
                     ),
-                    const SizedBox(height: 18),
-                    Container(
-                      width: 90,
-                      height: 90,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF00BFB3), Color(0xFF4DD0E1)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 4),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF00BFB3).withOpacity(0.2),
-                            blurRadius: 10,
-                            offset: const Offset(0, 5),
-                          ),
+                  ],
+                ),
+                child: ElevatedButton.icon(
+                  onPressed: () => _navigateToAddTank(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                  icon: const Icon(
+                    Icons.add,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                  label: const Text(
+                    'New Tank',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        
+        // Tanks content
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Colors.grey[200]!,
+                width: 1,
+              ),
+            ),
+            child: const ClipRRect(
+              borderRadius: BorderRadius.all(Radius.circular(12)),
+              child: TankManagement(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _navigateToAddTank(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const AddEditTank(),
+      ),
+    );
+  }
+}
+
+// Tips & Guides Section Widget
+class _TipsAndGuidesSection extends StatefulWidget {
+  const _TipsAndGuidesSection();
+
+  @override
+  State<_TipsAndGuidesSection> createState() => _TipsAndGuidesSectionState();
+}
+
+class _TipsAndGuidesSectionState extends State<_TipsAndGuidesSection> {
+  bool _showAll = false;
+
+  final List<Map<String, String>> _guides = const [
+    {
+      'title': 'Beginner\'s Guide to Fish Keeping',
+      'url': 'https://www.tetra-fish.com/learning-center/getting-started/a-beginners-guide.aspx',
+      'image': 'aquarium basic.png',
+    },
+    {
+      'title': 'Setting up a Healthy Aquarium Environment',
+      'url': 'https://hikariusa.com/wp/setting-healthy-aquarium-environment-fish',
+      'image': 'healthy aquarium.png',
+    },
+    {
+      'title': 'Aquarium Do\'s and Don\'ts',
+      'url': 'https://www.aqueon.com/articles/dos-donts',
+      'image': 'Aquarium Dos and Donts.png',
+    },
+    {
+      'title': 'How Long to Wait Before Adding Fish',
+      'url': 'https://www.aquariumcoop.com/blogs/aquarium/how-to-set-up-a-fish-tank?srsltid=AfmBOoolmQVYUDdFPAlEROIJSno7yzBGajpPXNMqhHeZEOA6tl_wq_i5',
+      'image': 'Put fish.png',
+    },
+  ];
+
+  void _openGuide(BuildContext context, String url, String title) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => GuideWebView(
+          url: url,
+          title: title,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleGuides = _showAll ? _guides : _guides.take(2).toList();
+    final hasMoreGuides = _guides.length > 2;
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        children: [
+          // Guide cards
+          ...visibleGuides.map((guide) => _GuideCard(
+            title: guide['title']!,
+            imagePath: 'lib/icons/${guide['image']!}',
+            onTap: () => _openGuide(context, guide['url']!, guide['title']!),
+          )),
+          
+          // Half preview of 3rd card when collapsed
+          if (hasMoreGuides && !_showAll)
+            Stack(
+              children: [
+                // Full card
+                _GuideCard(
+                  title: _guides[2]['title']!,
+                  imagePath: 'lib/icons/${_guides[2]['image']!}',
+                  onTap: () => _openGuide(context, _guides[2]['url']!, _guides[2]['title']!),
+                ),
+                // Fade overlay on bottom half
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    height: 100, // Adjust height as needed
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.white.withOpacity(0.0),
+                          Colors.white.withOpacity(0.9),
+                          Colors.white,
                         ],
-                      ),
-                      child: const Icon(
-                        Icons.person,
-                        size: 48,
-                        color: Colors.white,
+                        stops: const [0.0, 0.5, 1.0],
                       ),
                     ),
-                    const SizedBox(height: 18),
-                    // Show different content based on authentication status
-                    if (user != null) ...[
-                      Text(
-                        email.isNotEmpty ? email : 'No Email',
-                        style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
-                      ),
-                      const SizedBox(height: 6),
-                    ] else ...[
-                      Text(
-                        'Guest User',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: Colors.grey[700],
+                  ),
+                ),
+              ],
+            ),
+          
+          // Learn More button
+          if (hasMoreGuides && !_showAll)
+            Padding(
+              padding: const EdgeInsets.only(top: 0),
+              child: Center(
+                child: TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _showAll = true;
+                    });
+                  },
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Learn More',
+                        style: TextStyle(
+                          color: Color(0xFF00BFB3),
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.keyboard_arrow_down,
+                        color: Color(0xFF00BFB3),
+                        size: 18,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// Individual Guide Card Widget
+class _GuideCard extends StatelessWidget {
+  final String title;
+  final String imagePath;
+  final VoidCallback onTap;
+
+  const _GuideCard({
+    required this.title,
+    required this.imagePath,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: const Color(0xFF00BFB3).withOpacity(0.1),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 100,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.asset(
+                      imagePath,
+                      width: 100,
+                      height: 64,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        'Sign in to access premium features\nand save your data',
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: Colors.grey[600],
-                          height: 1.4,
+                        title,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                          height: 1.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Tap to read guide',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
-                    const Spacer(),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          // Close bottom sheet and navigate immediately
-                          Navigator.of(context).pop();
-                          if (user != null) {
-                            // User is logged in - sign out
-                            Navigator.of(context).pushAndRemoveUntil(
-                              MaterialPageRoute(
-                                builder: (context) => const AuthScreen(showBackButton: false),
-                              ),
-                              (route) => false,
-                            );
-                            // Sign out after navigation started
-                            Supabase.instance.client.auth.signOut();
-                          } else {
-                            // User is not logged in - navigate to auth screen
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const AuthScreen(showBackButton: true),
-                              ),
-                            );
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: user != null 
-                            ? const Color(0xFF00BFB3)  // Aqua for logout
-                            : const Color(0xFF00BFB3), // Aqua for sign in
-                          foregroundColor: Colors.white,
-                          elevation: 2,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          minimumSize: const Size(double.infinity, 50),
-                        ),
-                        icon: Icon(
-                          user != null ? Icons.logout : Icons.login,
-                          size: 24,
-                        ),
-                        label: Text(
-                          user != null ? 'Logout' : 'Sign In / Sign Up',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-          },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00BFB3).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.open_in_new,
+                    color: Color(0xFF00BFB3),
+                    size: 18,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

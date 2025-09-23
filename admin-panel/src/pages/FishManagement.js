@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { 
   PlusIcon, 
   PencilIcon, 
-  TrashIcon, 
   MagnifyingGlassIcon,
-  EyeIcon 
+  EyeIcon,
+  CheckCircleIcon,
+  XCircleIcon
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
-import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
 
 // FishModal component definition
 function FishModal({ isOpen, onClose, fish, mode, onSave }) {
@@ -512,8 +512,9 @@ function FishManagement() {
   const [modalMode, setModalMode] = useState('view'); // 'view', 'edit', 'add'
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [fishToDelete, setFishToDelete] = useState(null);
+  const [showStatusDialog, setShowStatusDialog] = useState(false);
+  const [fishToToggle, setFishToToggle] = useState(null);
+  const [newStatus, setNewStatus] = useState(null);
 
   useEffect(() => {
     fetchFish();
@@ -574,31 +575,39 @@ function FishManagement() {
     setShowModal(true);
   };
 
-  const handleDeleteFish = (fishId) => {
-    setFishToDelete(fishId);
-    setShowDeleteDialog(true);
+  const handleToggleStatus = (fishItem) => {
+    setFishToToggle(fishItem);
+    setNewStatus(!fishItem.active);
+    setShowStatusDialog(true);
   };
 
-  const confirmDeleteFish = async () => {
-    if (!fishToDelete) return;
+  const confirmToggleStatus = async () => {
+    if (!fishToToggle) return;
     
     try {
-      const response = await fetch(`/api/fish/${fishToDelete}`, {
-        method: 'DELETE',
+      const token = localStorage.getItem('adminToken');
+      const response = await fetch(`/api/fish/${fishToToggle.id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ active: newStatus })
       });
       
       if (response.ok) {
-        toast.success('Fish species deleted successfully');
+        toast.success(`Fish species ${newStatus ? 'activated' : 'deactivated'} successfully`);
         fetchFish();
       } else {
-        toast.error('Failed to delete fish species');
+        toast.error(`Failed to ${newStatus ? 'activate' : 'deactivate'} fish species`);
       }
     } catch (error) {
-      toast.error('Error deleting fish species');
+      toast.error(`Error ${newStatus ? 'activating' : 'deactivating'} fish species`);
       console.error('Error:', error);
     } finally {
-      setShowDeleteDialog(false);
-      setFishToDelete(null);
+      setShowStatusDialog(false);
+      setFishToToggle(null);
+      setNewStatus(null);
     }
   };
 
@@ -721,8 +730,7 @@ function FishManagement() {
               <th className="table-header">Scientific Name</th>
               <th className="table-header">Temperament</th>
               <th className="table-header">Water Type</th>
-              <th className="table-header">Diet</th>
-              <th className="table-header">Lifespan</th>
+              <th className="table-header">Status</th>
               <th className="table-header">Actions</th>
             </tr>
           </thead>
@@ -751,27 +759,41 @@ function FishManagement() {
                     {fishItem.water_type}
                   </span>
                 </td>
-                <td className="table-cell">{fishItem.diet || 'N/A'}</td>
-                <td className="table-cell">{fishItem.lifespan || 'N/A'}</td>
+                <td className="table-cell">
+                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                    fishItem.active 
+                      ? 'bg-green-100 text-green-800'
+                      : 'bg-red-100 text-red-800'
+                  }`}>
+                    {fishItem.active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
                 <td className="table-cell">
                   <div className="flex space-x-2">
                     <button
                       onClick={() => handleViewFish(fishItem)}
                       className="text-aqua-600 hover:text-aqua-900"
+                      title="View Details"
                     >
                       <EyeIcon className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => handleEditFish(fishItem)}
                       className="text-indigo-600 hover:text-indigo-900"
+                      title="Edit Fish"
                     >
                       <PencilIcon className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => handleDeleteFish(fishItem.id)}
-                      className="text-red-600 hover:text-red-900"
+                      onClick={() => handleToggleStatus(fishItem)}
+                      className={`${fishItem.active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
+                      title={fishItem.active ? 'Deactivate Fish' : 'Activate Fish'}
                     >
-                      <TrashIcon className="h-4 w-4" />
+                      {fishItem.active ? (
+                        <XCircleIcon className="h-4 w-4" />
+                      ) : (
+                        <CheckCircleIcon className="h-4 w-4" />
+                      )}
                     </button>
                   </div>
                 </td>
@@ -817,16 +839,45 @@ function FishManagement() {
         />
       )}
 
-      {/* Delete Confirmation Dialog */}
-      <DeleteConfirmDialog
-        isOpen={showDeleteDialog}
-        onClose={() => setShowDeleteDialog(false)}
-        onConfirm={confirmDeleteFish}
-        title="Delete Fish Species"
-        message="Are you sure you want to delete this fish species? This action cannot be undone."
-        confirmText="Delete Fish"
-        cancelText="Cancel"
-      />
+      {/* Status Confirmation Dialog */}
+      {showStatusDialog && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3 text-center">
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100">
+                <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mt-2">
+                {newStatus ? 'Activate Fish Species' : 'Deactivate Fish Species'}
+              </h3>
+              <div className="mt-2 px-7 py-3">
+                <p className="text-sm text-gray-500">
+                  Are you sure you want to {newStatus ? 'activate' : 'deactivate'} <strong>{fishToToggle?.common_name}</strong>?
+                  {!newStatus && ' This fish will no longer be displayed in the app.'}
+                </p>
+              </div>
+              <div className="items-center px-4 py-3">
+                <button
+                  onClick={confirmToggleStatus}
+                  className={`px-4 py-2 text-white text-base font-medium rounded-md w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-300 ${
+                    newStatus ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+                  }`}
+                >
+                  {newStatus ? 'Activate Fish' : 'Deactivate Fish'}
+                </button>
+                <button
+                  onClick={() => setShowStatusDialog(false)}
+                  className="mt-3 px-4 py-2 bg-gray-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

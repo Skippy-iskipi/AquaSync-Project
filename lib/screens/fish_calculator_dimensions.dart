@@ -476,6 +476,7 @@ class _FishCalculatorDimensionsState extends State<FishCalculatorDimensions> {
       final response = await supabase
           .from('fish_species')
           .select('common_name, "max_size_(cm)", "minimum_tank_size_(l)", bioload')
+          .eq('active', true)
           .inFilter('common_name', fishNames);
       
       for (final fish in response) {

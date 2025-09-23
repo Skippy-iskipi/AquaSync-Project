@@ -42,7 +42,7 @@ class BottomNavigation extends StatelessWidget {
           Expanded(flex: 20, child: _buildNavItem(1, 'Sync', Icons.sync_outlined)),
           Expanded(flex: 20, child: _buildCaptureButton()),
           Expanded(flex: 20, child: _buildNavItem(2, 'Calculator', Icons.calculate_outlined)),
-          Expanded(flex: 20, child: _buildNavItem(3, 'Profile', Icons.person_outlined)),
+          Expanded(flex: 20, child: _buildNavItem(3, 'History', Icons.book_outlined)),
         ],
       ),
     );

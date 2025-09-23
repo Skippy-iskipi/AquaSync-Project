@@ -192,4 +192,187 @@ router.get('/system-health', async (req, res) => {
   }
 });
 
+// Get recent user activities across all users
+router.get('/recent-activities', async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+    
+    // Get recent activities from all activity tables
+    const activityTypes = [
+      'fish_predictions',
+      'water_calculations', 
+      'fish_calculations',
+      'diet_calculations',
+      'fish_volume_calculations',
+      'compatibility_results',
+      'tanks'
+    ];
+
+    const allActivities = [];
+    
+    for (const tableName of activityTypes) {
+      try {
+        const { data, error } = await supabase
+          .from(tableName)
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(parseInt(limit));
+        
+        if (!error && data) {
+          data.forEach(item => {
+            allActivities.push({
+              ...item,
+              activity_type: tableName,
+              user_id: item.user_id || 'unknown'
+            });
+          });
+        }
+      } catch (tableError) {
+        console.warn(`Error fetching ${tableName}:`, tableError.message);
+        // Continue with other tables even if one fails
+      }
+    }
+
+    // Sort all activities by created_at (newest first)
+    allActivities.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    // Add user information to activities by fetching each user individually
+    const activitiesWithUsers = await Promise.all(
+      allActivities.map(async (activity) => {
+        let userEmail = 'Unknown User';
+        let userName = 'Unknown User';
+        
+        if (activity.user_id && activity.user_id !== 'unknown') {
+          try {
+            // Try to get user from profiles table first
+            const { data: profile, error: profileError } = await supabase
+              .from('profiles')
+              .select('email, full_name, username')
+              .eq('id', activity.user_id)
+              .single();
+            
+            if (!profileError && profile) {
+              userEmail = profile.email || 'Unknown User';
+              userName = profile.full_name || profile.username || 'Unknown User';
+            } else {
+              // If not found in profiles, try auth.users
+              const { data: authUser, error: authError } = await supabase.auth.admin.getUserById(activity.user_id);
+              if (!authError && authUser && authUser.user) {
+                userEmail = authUser.user.email || 'Unknown User';
+                userName = authUser.user.user_metadata?.full_name || 
+                          authUser.user.user_metadata?.username || 
+                          'Unknown User';
+              }
+            }
+          } catch (error) {
+            console.warn(`Error fetching user ${activity.user_id}:`, error.message);
+          }
+        }
+        
+        return {
+          ...activity,
+          user_email: userEmail,
+          user_name: userName
+        };
+      })
+    );
+    
+    // Return top N activities
+    res.json(activitiesWithUsers.slice(0, parseInt(limit)));
+  } catch (error) {
+    console.error('Recent activities error:', error);
+    res.status(500).json({ message: 'Failed to fetch recent activities' });
+  }
+});
+
+// Get user login times and activity summary
+router.get('/user-logins', async (req, res) => {
+  try {
+    const { limit = 50 } = req.query;
+    
+    // Get all auth users with their sign in data
+    const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers();
+    
+    if (authError) {
+      console.error('Error fetching auth users:', authError);
+      return res.status(500).json({ message: 'Failed to fetch auth users' });
+    }
+
+    if (!authUsers || !authUsers.users) {
+      return res.json([]);
+    }
+
+    // Filter out admin users
+    const regularUsers = authUsers.users.filter(authUser => {
+      // Exclude users with admin role or admin email patterns
+      const isAdmin = authUser.user_metadata?.role === 'admin' || 
+                     authUser.email?.includes('admin') ||
+                     authUser.email?.includes('@admin') ||
+                     authUser.app_metadata?.role === 'admin';
+      return !isAdmin;
+    });
+
+    // Get activity counts for each user
+    const usersWithActivities = await Promise.all(
+      regularUsers.slice(0, parseInt(limit)).map(async (authUser) => {
+        let totalActivities = 0;
+        
+        // Count activities from each table
+        for (const tableName of ['fish_predictions', 'water_calculations', 'fish_calculations', 'diet_calculations', 'fish_volume_calculations', 'compatibility_results', 'tanks']) {
+          try {
+            const { count } = await supabase
+              .from(tableName)
+              .select('*', { count: 'exact', head: true })
+              .eq('user_id', authUser.id);
+            totalActivities += count || 0;
+          } catch (tableError) {
+            // Table might not exist, continue
+          }
+        }
+
+        // Try to get additional profile data
+        let profileData = {};
+        try {
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('full_name, username, active')
+            .eq('id', authUser.id)
+            .single();
+          
+          if (!profileError && profile) {
+            profileData = profile;
+          }
+        } catch (profileError) {
+          // Profile might not exist, continue with auth data only
+        }
+        
+        return {
+          id: authUser.id,
+          email: authUser.email,
+          full_name: profileData.full_name || authUser.user_metadata?.full_name || null,
+          username: profileData.username || authUser.user_metadata?.username || null,
+          active: profileData.active !== undefined ? profileData.active : !authUser.banned_until,
+          created_at: authUser.created_at,
+          last_sign_in_at: authUser.last_sign_in_at,
+          email_confirmed_at: authUser.email_confirmed_at,
+          total_activities: totalActivities
+        };
+      })
+    );
+
+    // Sort by last sign in time (most recent first)
+    usersWithActivities.sort((a, b) => {
+      if (!a.last_sign_in_at && !b.last_sign_in_at) return 0;
+      if (!a.last_sign_in_at) return 1;
+      if (!b.last_sign_in_at) return -1;
+      return new Date(b.last_sign_in_at) - new Date(a.last_sign_in_at);
+    });
+
+    res.json(usersWithActivities);
+  } catch (error) {
+    console.error('User logins error:', error);
+    res.status(500).json({ message: 'Failed to fetch user login data' });
+  }
+});
+
 module.exports = router;

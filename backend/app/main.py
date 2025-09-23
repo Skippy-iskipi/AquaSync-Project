@@ -698,7 +698,8 @@ async def debug_fish_data(db: Client = Depends(get_supabase_client)):
 @app.get("/fish-list")
 async def get_fish_list(db: Client = Depends(get_supabase_client)):
     try:
-        response = db.table('fish_species').select('*').execute()
+        # Only fetch active fish species
+        response = db.table('fish_species').select('*').eq('active', True).execute()
         fish_list = []
         for fish in response.data:
             fish_copy = dict(fish)
@@ -837,7 +838,8 @@ async def get_fish_image(
 @app.get("/fish-species")
 async def get_fish_species(db: Client = Depends(get_supabase_client)):
     try:
-        response = db.table('fish_species').select('common_name').execute()
+        # Only fetch active fish species
+        response = db.table('fish_species').select('common_name').eq('active', True).execute()
         return [fish['common_name'] for fish in response.data]
     except Exception as e:
         logger.error(f"Error fetching fish species: {str(e)}")
@@ -845,9 +847,10 @@ async def get_fish_species(db: Client = Depends(get_supabase_client)):
 
 @app.get("/fish-species/all")
 async def get_all_fish_species(db: Client = Depends(get_supabase_client)):
-    """Get all fish species with all columns."""
+    """Get all active fish species with all columns."""
     try:
-        response = db.table('fish_species').select('*').execute()
+        # Only fetch active fish species
+        response = db.table('fish_species').select('*').eq('active', True).execute()
         return response.data
     except Exception as e:
         logger.error(f"Error fetching full fish species data: {str(e)}")

@@ -1464,6 +1464,7 @@ class _SyncScreenState extends State<SyncScreen> {
       final response = await Supabase.instance.client
           .from('fish_species')
           .select('description')
+          .eq('active', true)
           .or('common_name.ilike.%$commonName%,scientific_name.ilike.%$scientificName%')
           .limit(1);
 
@@ -1490,6 +1491,7 @@ class _SyncScreenState extends State<SyncScreen> {
       final response = await Supabase.instance.client
           .from('fish_species')
           .select('*')
+          .eq('active', true)
           .or('common_name.ilike.%$commonName%,scientific_name.ilike.%$scientificName%')
           .limit(1)
           .single();

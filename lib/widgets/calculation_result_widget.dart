@@ -108,15 +108,17 @@ class CalculationResultWidget extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(
-            row.icon,
-            color: const Color(0xFF00ACC1),
-            size: 16,
-          ),
-          const SizedBox(width: 8),
+          if (row.icon != null) ...[
+            Icon(
+              row.icon!,
+              color: const Color(0xFF00ACC1),
+              size: 16,
+            ),
+            const SizedBox(width: 8),
+          ],
           Expanded(
             child: Text(
-              '${row.label}: ${row.value}',
+              row.label.isEmpty ? row.value : '${row.label}: ${row.value}',
               style: const TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.normal,
@@ -202,13 +204,13 @@ class CalculationResultWidget extends StatelessWidget {
 }
 
 class CalculationInfoRow {
-  final IconData icon;
+  final IconData? icon;
   final String label;
   final String value;
   final bool showEyeIcon;
 
   const CalculationInfoRow({
-    required this.icon,
+    this.icon,
     required this.label,
     required this.value,
     this.showEyeIcon = false,

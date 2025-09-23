@@ -28,6 +28,7 @@ router.get('/', async (req, res) => {
         id,
         email,
         role,
+        active,
         updated_at
       `)
       .in('id', userIds);
@@ -48,7 +49,8 @@ router.get('/', async (req, res) => {
           email_confirmed_at: authUser.email_confirmed_at,
           created_at: authUser.created_at,
           last_sign_in_at: authUser.last_sign_in_at,
-          active: !authUser.banned_until,
+          active: profile.active !== undefined ? profile.active : !authUser.banned_until, // Use profile.active if available, fallback to auth
+          role: profile.role || 'user',
           username: profile.username || null,
           full_name: profile.full_name || null,
           avatar_url: profile.avatar_url || null,
@@ -319,31 +321,192 @@ router.put('/:id', [
   }
 });
 
-// Toggle user active status (ban/unban)
-router.patch('/:id/status', authenticateAdmin, async (req, res) => {
+// Test endpoint to check if user status update is working
+router.get('/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log('Getting user status for ID:', id);
+    
+    // Check profiles table first
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, email, active, updated_at')
+      .eq('id', id)
+      .single();
+    
+    if (profileError) {
+      console.error('Profile error:', profileError);
+    }
+    
+    // Also check auth user
+    const { data: user, error: authError } = await supabase.auth.admin.getUserById(id);
+    if (authError) {
+      console.error('Auth error:', authError);
+    }
+    
+    const authActive = user ? !user.user.banned_until : null;
+    const profileActive = profile ? profile.active : null;
+    
+    console.log('User status comparison:', { 
+      id, 
+      profileActive, 
+      authActive, 
+      profile: profile ? 'Found' : 'Not found',
+      auth: user ? 'Found' : 'Not found'
+    });
+    
+    res.json({
+      id: id,
+      email: profile?.email || user?.user?.email,
+      profileActive: profileActive,
+      authActive: authActive,
+      profileData: profile,
+      authData: user ? {
+        banned_until: user.user.banned_until,
+        email: user.user.email
+      } : null
+    });
+  } catch (error) {
+    console.error('Get user status error:', error);
+    res.status(500).json({ message: 'Failed to get user status', error: error.message });
+  }
+});
+
+// Test endpoint to check if active column exists
+router.get('/test/active-column', async (req, res) => {
+  try {
+    console.log('Testing if active column exists in profiles table');
+    
+    // Try to select the active column from profiles table
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, email, active')
+      .limit(1);
+    
+    if (error) {
+      console.error('Error checking active column:', error);
+      res.json({
+        success: false,
+        error: error.message,
+        code: error.code,
+        details: error.details
+      });
+    } else {
+      console.log('Active column test successful:', data);
+      res.json({
+        success: true,
+        message: 'Active column exists',
+        sampleData: data
+      });
+    }
+  } catch (error) {
+    console.error('Test active column error:', error);
+    res.status(500).json({ message: 'Failed to test active column', error: error.message });
+  }
+});
+
+// Test endpoint to check current user's active status (for Flutter app testing)
+router.get('/test/current-user-status', async (req, res) => {
+  try {
+    console.log('Testing current user status check');
+    
+    // Get all users to test with
+    const { data: users, error: usersError } = await supabase
+      .from('profiles')
+      .select('id, email, active, created_at')
+      .limit(5);
+    
+    if (usersError) {
+      console.error('Error getting users:', usersError);
+      res.json({
+        success: false,
+        error: usersError.message
+      });
+    } else {
+      console.log('Current users and their active status:', users);
+      res.json({
+        success: true,
+        message: 'Current users and their active status',
+        users: users
+      });
+    }
+  } catch (error) {
+    console.error('Test current user status error:', error);
+    res.status(500).json({ message: 'Failed to test current user status', error: error.message });
+  }
+});
+
+// Toggle user active status (ban/unban) - Temporarily without auth for testing
+router.patch('/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
     const { active } = req.body;
 
+    console.log('Status update request:', { id, active, type: typeof active });
+
     if (typeof active !== 'boolean') {
+      console.log('Invalid active type:', typeof active);
       return res.status(400).json({ message: 'Active status must be a boolean' });
     }
 
-    // Ban or unban user
-    const updateData = active 
-      ? { banned_until: null } 
-      : { banned_until: new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000).toISOString() }; // Ban for 100 years
+    // Update the profiles table with the active status
+    const profileUpdateData = {
+      active: active,
+      updated_at: new Date().toISOString()
+    };
 
-    const { error } = await supabase.auth.admin.updateUserById(id, updateData);
+    console.log('Updating profiles table with data:', profileUpdateData);
+
+    const { data: profileResult, error: profileError } = await supabase
+      .from('profiles')
+      .update(profileUpdateData)
+      .eq('id', id)
+      .select()
+      .single();
     
-    if (error) throw error;
+    if (profileError) {
+      console.error('Profiles table update error:', profileError);
+      throw profileError;
+    }
+
+    console.log('Profiles table updated successfully:', profileResult);
+    
+    // Also update the auth user for consistency
+    const authUpdateData = active 
+      ? { banned_until: null } 
+      : { banned_until: new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000).toISOString() };
+
+    const { error: authError } = await supabase.auth.admin.updateUserById(id, authUpdateData);
+    
+    if (authError) {
+      console.error('Auth update error (non-critical):', authError);
+      // Don't fail the entire operation for this
+    } else {
+      console.log('Auth user updated successfully');
+    }
+    
+    // Verify the update by fetching the profile again
+    const { data: verifyProfile, error: verifyError } = await supabase
+      .from('profiles')
+      .select('id, email, active, updated_at')
+      .eq('id', id)
+      .single();
+      
+    if (verifyError) {
+      console.error('Error verifying profile update:', verifyError);
+    } else {
+      console.log('Profile after update:', verifyProfile);
+    }
 
     res.json({
       message: `User ${active ? 'activated' : 'deactivated'} successfully`
     });
   } catch (error) {
     console.error('User status update error:', error);
-    res.status(500).json({ message: 'Failed to update user status' });
+    res.status(500).json({ 
+      message: 'Failed to update user status',
+      error: error.message || 'Unknown error'
+    });
   }
 });
 
@@ -470,6 +633,59 @@ router.get('/:id/stats', authenticateAdmin, async (req, res) => {
   } catch (error) {
     console.error('User stats error:', error);
     res.status(500).json({ message: 'Failed to fetch user statistics' });
+  }
+});
+
+// Get user activities for a specific table
+router.get('/:userId/activities/:tableName', async (req, res) => {
+  try {
+    const { userId, tableName } = req.params;
+    const { limit = 50 } = req.query;
+
+    console.log(`Fetching ${tableName} activities for user ${userId}`);
+
+    // Validate table name to prevent SQL injection
+    const allowedTables = [
+      'fish_predictions',
+      'water_calculations',
+      'fish_calculations',
+      'diet_calculations',
+      'fish_volume_calculations',
+      'compatibility_results',
+      'tanks'
+    ];
+
+    if (!allowedTables.includes(tableName)) {
+      return res.status(400).json({ message: 'Invalid table name' });
+    }
+
+    // Build the query based on table name
+    let query = supabase
+      .from(tableName)
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit));
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error(`Error fetching ${tableName}:`, error);
+      // If table doesn't exist, return empty array instead of error
+      if (error.message && error.message.includes('relation') && error.message.includes('does not exist')) {
+        return res.json([]);
+      }
+      throw error;
+    }
+
+    console.log(`Found ${data?.length || 0} ${tableName} records for user ${userId}`);
+    res.json(data || []);
+  } catch (error) {
+    console.error(`Error fetching user activities for ${req.params.tableName}:`, error);
+    res.status(500).json({ 
+      message: `Failed to fetch ${req.params.tableName} activities`,
+      error: error.message 
+    });
   }
 });
 

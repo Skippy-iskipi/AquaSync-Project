@@ -9,11 +9,15 @@ const authenticateAdmin = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
     
+    console.log('Auth middleware - Token received:', token ? 'Present' : 'Missing');
+    
     if (!token) {
+      console.log('Auth middleware - No token provided');
       return res.status(401).json({ message: 'Access denied. No token provided.' });
     }
 
     const decoded = jwt.verify(token, JWT_SECRET);
+    console.log('Auth middleware - Token decoded:', { id: decoded.id, username: decoded.username });
     
     // Verify admin user still exists and is active
     const { data: admin, error } = await supabase
@@ -22,13 +26,18 @@ const authenticateAdmin = async (req, res, next) => {
       .eq('id', decoded.id)
       .single();
 
+    console.log('Auth middleware - Admin lookup result:', { admin, error });
+
     if (error || !admin) {
+      console.log('Auth middleware - Admin not found or error:', error);
       return res.status(401).json({ message: 'Invalid token.' });
     }
 
+    console.log('Auth middleware - Authentication successful');
     req.admin = admin;
     next();
   } catch (error) {
+    console.log('Auth middleware - JWT verification error:', error.message);
     res.status(401).json({ message: 'Invalid token.' });
   }
 };

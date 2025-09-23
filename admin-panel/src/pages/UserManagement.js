@@ -4,59 +4,14 @@ import {
   PencilIcon, 
   TrashIcon, 
   MagnifyingGlassIcon,
-  EyeIcon
+  EyeIcon,
+  XCircleIcon,
+  CheckCircleIcon
 } from '@heroicons/react/24/outline';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
 
-// Error boundary component for tank rendering
-class TankErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
 
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error('Tank rendering error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="text-red-600 font-medium">Error displaying tank data</div>
-          <div className="text-red-500 text-sm mt-1">Please try refreshing the page</div>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
-// Helper function to safely format numbers with 2 decimal places
-const formatNumber = (num) => {
-  try {
-    // Handle null, undefined, or empty values
-    if (num === null || num === undefined || num === '') return 'N/A';
-    
-    // Convert string numbers to actual numbers
-    const parsedNum = typeof num === 'string' ? parseFloat(num) : num;
-    
-    // Check if it's a valid number
-    if (typeof parsedNum !== 'number' || isNaN(parsedNum) || !isFinite(parsedNum)) return 'N/A';
-    
-    return parsedNum.toFixed(2);
-  } catch (error) {
-    console.warn('Error formatting number:', num, error);
-    return 'N/A';
-  }
-};
 
 // Helper function to get authentication token
 const getAuthToken = () => {
@@ -80,43 +35,43 @@ const InfoRow = ({ label, value, unit = '', className = '' }) => (
 );
 
 // Helper component to display fish information in a clean format
-const FishInfo = ({ fish, index }) => {
-  if (!fish) return null;
-  
-  return (
-    <div key={index} className="bg-gray-50 p-3 rounded-lg border border-gray-200 mb-3">
-      <h6 className="font-medium text-gray-800 mb-2">{fish.species || 'Unknown Fish'}</h6>
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        {fish.quantity && <InfoRow label="Quantity" value={fish.quantity} />}
-        {fish.portion_grams && <InfoRow label="Portion per fish" value={fish.portion_grams} unit="g" />}
-        {fish.diet && <InfoRow label="Diet" value={fish.diet} />}
-        {fish.preferred_food && <InfoRow label="Preferred Food" value={fish.preferred_food} />}
-      </div>
-    </div>
-  );
-};
+// const FishInfo = ({ fish, index }) => {
+//   if (!fish) return null;
+//   
+//   return (
+//     <div key={index} className="bg-gray-50 p-3 rounded-lg border border-gray-200 mb-3">
+//       <h6 className="font-medium text-gray-800 mb-2">{fish.species || 'Unknown Fish'}</h6>
+//       <div className="grid grid-cols-2 gap-2 text-sm">
+//         {fish.quantity && <InfoRow label="Quantity" value={fish.quantity} />}
+//         {fish.portion_grams && <InfoRow label="Portion per fish" value={fish.portion_grams} unit="g" />}
+//         {fish.diet && <InfoRow label="Diet" value={fish.diet} />}
+//         {fish.preferred_food && <InfoRow label="Preferred Food" value={fish.preferred_food} />}
+//       </div>
+//     </div>
+//   );
+// };
 
 // Helper component to display feed inventory items
-const FeedItem = ({ feed, index }) => {
-  if (!feed) return null;
-  
-  return (
-    <div key={index} className="bg-gray-50 p-3 rounded-lg border border-gray-200 mb-3">
-      <h6 className="font-medium text-gray-800 mb-2">{feed.feed_type || 'Feed'}</h6>
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        {feed.quantity && <InfoRow label="Quantity" value={feed.quantity} unit="g" />}
-        {feed.days_remaining && <InfoRow label="Days Remaining" value={feed.days_remaining} />}
-        {feed.last_updated && (
-          <InfoRow 
-            label="Last Updated" 
-            value={format(new Date(feed.last_updated), 'MMM dd, yyyy')} 
-            className="col-span-2"
-          />
-        )}
-      </div>
-    </div>
-  );
-};
+// const FeedItem = ({ feed, index }) => {
+//   if (!feed) return null;
+//   
+//   return (
+//     <div key={index} className="bg-gray-50 p-3 rounded-lg border border-gray-200 mb-3">
+//       <h6 className="font-medium text-gray-800 mb-2">{feed.feed_type || 'Feed'}</h6>
+//       <div className="grid grid-cols-2 gap-2 text-sm">
+//         {feed.quantity && <InfoRow label="Quantity" value={feed.quantity} unit="g" />}
+//         {feed.days_remaining && <InfoRow label="Days Remaining" value={feed.days_remaining} />}
+//         {feed.last_updated && (
+//           <InfoRow 
+//             label="Last Updated" 
+//             value={format(new Date(feed.last_updated), 'MMM dd, yyyy')} 
+//             className="col-span-2"
+//           />
+//         )}
+//       </div>
+//     </div>
+//   );
+// };
 
 function UserManagement() {
   const [users, setUsers] = useState([]);
@@ -127,8 +82,18 @@ function UserManagement() {
   const [modalMode, setModalMode] = useState('view');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [userToDelete, setUserToDelete] = useState(null);
+  const [showStatusDialog, setShowStatusDialog] = useState(false);
+  const [userToToggle, setUserToToggle] = useState(null);
+  const [userActivities, setUserActivities] = useState({
+    fish_predictions: [],
+    water_calculations: [],
+    fish_calculations: [],
+    diet_calculations: [],
+    fish_volume_calculations: [],
+    compatibility_results: [],
+    tanks: []
+  });
+  const [loadingActivities, setLoadingActivities] = useState(false);
 
   useEffect(() => {
     fetchUsers();
@@ -158,10 +123,10 @@ function UserManagement() {
       console.log('Fetched users data:', data);
       console.log('Number of users:', Array.isArray(data) ? data.length : 0);
       
-      // Log each user's role to debug admin filtering
+      // Log each user's status to debug status updates
       if (Array.isArray(data)) {
         data.forEach(user => {
-          console.log(`User: ${user.email}, Role: ${user.role}, Active: ${user.active}`);
+          console.log(`User: ${user.email}, Active: ${user.active}, Type: ${typeof user.active}`);
         });
       }
       
@@ -176,41 +141,65 @@ function UserManagement() {
   };
 
   const handleViewUser = async (userData) => {
+    setSelectedUser(userData);
+    setModalMode('view');
+    setShowModal(true);
+    await fetchUserActivities(userData.id);
+  };
+
+  const fetchUserActivities = async (userId) => {
+    setLoadingActivities(true);
     try {
       const token = getAuthToken();
       if (!token) return;
       
-      // Fetch user's tanks data
-      const response = await fetch(`/api/users/${userData.id}/tanks`, {
+      const activities = {};
+      
+      // Fetch all activity types in parallel
+      const activityTypes = [
+        'fish_predictions',
+        'water_calculations', 
+        'fish_calculations',
+        'diet_calculations',
+        'fish_volume_calculations',
+        'compatibility_results',
+        'tanks'
+      ];
+
+      const promises = activityTypes.map(async (tableName) => {
+        try {
+          const response = await fetch(`/api/users/${userId}/activities/${tableName}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+            },
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            return { tableName, data: data || [] };
+          } else {
+            console.warn(`Failed to fetch ${tableName}:`, response.status);
+            return { tableName, data: [] };
+          }
+        } catch (error) {
+          console.warn(`Error fetching ${tableName}:`, error);
+          return { tableName, data: [] };
         }
       });
+
+      const results = await Promise.all(promises);
       
-      if (response.status === 401) {
-        toast.error('Authentication expired. Please log in again.');
-        return;
-      }
-      
-      const tanksData = await response.json();
-      
-      setSelectedUser({
-        ...userData,
-        tanks: tanksData
+      results.forEach(({ tableName, data }) => {
+        activities[tableName] = data;
       });
-      setModalMode('view');
-      setShowModal(true);
+
+      setUserActivities(activities);
     } catch (error) {
-      console.error('Error fetching user tanks:', error);
-      toast.error('Failed to fetch user tank data');
-      // Still show modal with user data only
-      setSelectedUser({
-        ...userData,
-        tanks: []
-      });
-      setModalMode('view');
-      setShowModal(true);
+      console.error('Error fetching user activities:', error);
+      toast.error('Failed to load user activities');
+    } finally {
+      setLoadingActivities(false);
     }
   };
 
@@ -229,49 +218,6 @@ function UserManagement() {
     setShowModal(true);
   };
 
-  const handleDeleteUser = (userId) => {
-    setUserToDelete(userId);
-    setShowDeleteDialog(true);
-  };
-
-  const confirmDeleteUser = async () => {
-    if (!userToDelete) return;
-    
-    try {
-      const token = getAuthToken();
-      if (!token) return;
-      
-      const response = await fetch(`/api/users/${userToDelete}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.status === 401) {
-        toast.error('Authentication expired. Please log in again.');
-        return;
-      }
-      
-      if (response.ok) {
-        toast.success('User deleted successfully');
-        console.log('User deleted successfully, refreshing user list...');
-        await fetchUsers();
-        console.log('User list refreshed');
-      } else {
-        const errorData = await response.json();
-        console.error('Delete Error:', errorData);
-        toast.error(`Failed to delete user: ${errorData.message || 'Unknown error'}`);
-      }
-    } catch (error) {
-      toast.error('Error deleting user');
-      console.error('Error:', error);
-    } finally {
-      setShowDeleteDialog(false);
-      setUserToDelete(null);
-    }
-  };
 
   const handleSaveUser = async (userData) => {
     try {
@@ -344,13 +290,27 @@ function UserManagement() {
     }
   };
 
-  const handleToggleUserStatus = async (userId, currentStatus) => {
+  const handleToggleUserStatus = (userId, currentStatus) => {
+    setUserToToggle({ id: userId, currentStatus });
+    setShowStatusDialog(true);
+  };
+
+  const confirmToggleStatus = async () => {
+    if (!userToToggle) return;
+    
     try {
-      const newStatus = !currentStatus;
+      const newStatus = !(userToToggle.currentStatus === true || userToToggle.currentStatus === 'true');
       const token = getAuthToken();
       if (!token) return;
       
-      const response = await fetch(`/api/users/${userId}/status`, {
+      console.log('Toggling user status:', {
+        userId: userToToggle.id,
+        currentStatus: userToToggle.currentStatus,
+        newStatus: newStatus,
+        token: token ? 'Present' : 'Missing'
+      });
+      
+      const response = await fetch(`/api/users/${userToToggle.id}/status`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -359,20 +319,36 @@ function UserManagement() {
         body: JSON.stringify({ active: newStatus }),
       });
 
+      console.log('Status update response:', {
+        status: response.status,
+        statusText: response.statusText
+      });
+
       if (response.status === 401) {
         toast.error('Authentication expired. Please log in again.');
         return;
       }
 
       if (response.ok) {
+        const result = await response.json();
+        console.log('Status update result:', result);
         toast.success(`User ${newStatus ? 'activated' : 'deactivated'} successfully`);
-        fetchUsers();
+        
+        // Force refresh the users list
+        console.log('Refreshing users list...');
+        await fetchUsers();
+        console.log('Users list refreshed');
       } else {
-        toast.error('Failed to update user status');
+        const errorData = await response.json();
+        console.error('Status update error:', errorData);
+        toast.error(`Failed to update user status: ${errorData.message || 'Unknown error'}`);
       }
     } catch (error) {
       toast.error('Error updating user status');
       console.error('Error:', error);
+    } finally {
+      setShowStatusDialog(false);
+      setUserToToggle(null);
     }
   };
 
@@ -449,7 +425,7 @@ function UserManagement() {
           <thead className="bg-gray-50">
             <tr>
               <th className="table-header">Email</th>
-              <th className="table-header">Role</th>
+              <th className="table-header">Status</th>
               <th className="table-header">Created</th>
               <th className="table-header">Actions</th>
             </tr>
@@ -462,13 +438,11 @@ function UserManagement() {
                 </td>
                 <td className="table-cell">
                   <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.role === 'admin' 
-                      ? 'bg-purple-100 text-purple-800'
-                      : user.role === 'premium'
-                      ? 'bg-yellow-100 text-yellow-800'
-                      : 'bg-gray-100 text-gray-800'
+                    user.active === true || user.active === 'true'
+                      ? 'bg-green-100 text-green-800'
+                      : 'bg-red-100 text-red-800'
                   }`}>
-                    {user.role || 'user'}
+                    {user.active === true || user.active === 'true' ? 'Active' : 'Inactive'}
                   </span>
                 </td>
                 <td className="table-cell">
@@ -496,11 +470,19 @@ function UserManagement() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDeleteUser(user.id)}
-                      className="text-red-600 hover:text-red-900"
-                      title="Delete User"
+                      onClick={() => handleToggleUserStatus(user.id, user.active)}
+                      className={`${
+                        user.active === true || user.active === 'true'
+                          ? 'text-red-600 hover:text-red-900'
+                          : 'text-green-600 hover:text-green-900'
+                      }`}
+                      title={user.active === true || user.active === 'true' ? 'Deactivate User' : 'Activate User'}
                     >
-                      <TrashIcon className="h-4 w-4" />
+                      {user.active === true || user.active === 'true' ? (
+                        <XCircleIcon className="h-4 w-4" />
+                      ) : (
+                        <CheckCircleIcon className="h-4 w-4" />
+                      )}
                     </button>
                   </div>
                 </td>
@@ -547,27 +529,28 @@ function UserManagement() {
           mode={modalMode}
           onSave={handleSaveUser}
           onClose={() => setShowModal(false)}
+          activities={userActivities}
+          loadingActivities={loadingActivities}
         />
       )}
 
-      {/* Delete Confirmation Dialog */}
-      <DeleteConfirmDialog
-        isOpen={showDeleteDialog}
-        onClose={() => setShowDeleteDialog(false)}
-        onConfirm={confirmDeleteUser}
-        title="Delete User"
-        message="Are you sure you want to delete this user? This action cannot be undone."
-        confirmText="Delete User"
-        cancelText="Cancel"
-      />
+      {/* Status Toggle Confirmation Dialog */}
+      {showStatusDialog && (
+        <StatusConfirmDialog
+          isOpen={showStatusDialog}
+          onClose={() => setShowStatusDialog(false)}
+          onConfirm={confirmToggleStatus}
+          userStatus={userToToggle?.currentStatus}
+        />
+      )}
+
     </div>
   );
 }
 
-function UserModal({ user, mode, onSave, onClose }) {
+function UserModal({ user, mode, onSave, onClose, activities, loadingActivities }) {
   const [formData, setFormData] = useState(user);
   const [activeTab, setActiveTab] = useState('profile');
-  const [expandedTanks, setExpandedTanks] = useState({});
 
   // Update formData when user prop changes
   useEffect(() => {
@@ -587,18 +570,11 @@ function UserModal({ user, mode, onSave, onClose }) {
     onSave(formData);
   };
 
-  const toggleTankExpansion = (tankIndex) => {
-    setExpandedTanks(prev => ({
-      ...prev,
-      [tankIndex]: !prev[tankIndex]
-    }));
-  };
-
   const isReadOnly = mode === 'view';
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-      <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
+      <div className="relative top-10 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
         <div className="mt-3">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-medium text-gray-900">
@@ -615,12 +591,11 @@ function UserModal({ user, mode, onSave, onClose }) {
             </button>
           </div>
 
-          {/* Tabs for Profile and Tanks */}
+          {/* Tabs for Profile and Activities */}
           {isReadOnly && (
             <div className="border-b border-gray-200 mb-6">
               <nav className="-mb-px flex space-x-8">
                 <button
-                  type="button"
                   onClick={() => setActiveTab('profile')}
                   className={`py-2 px-1 border-b-2 font-medium text-sm ${
                     activeTab === 'profile'
@@ -631,368 +606,379 @@ function UserModal({ user, mode, onSave, onClose }) {
                   Profile Information
                 </button>
                 <button
-                  type="button"
-                  onClick={() => setActiveTab('tanks')}
+                  onClick={() => setActiveTab('activities')}
                   className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'tanks'
+                    activeTab === 'activities'
                       ? 'border-aqua-500 text-aqua-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
                 >
-                  Tank Information ({formData.tanks?.length || 0})
+                  User Activities
                 </button>
               </nav>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Profile Information Tab */}
-            {(!isReadOnly || activeTab === 'profile') && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Email</label>
-                <input
-                  type="email"
-                  name="email"
-                  value={formData.email || ''}
-                  onChange={handleChange}
-                  readOnly={isReadOnly}
-                  className="input-field"
-                  required={mode === 'add'}
-                />
-              </div>
+          {activeTab === 'profile' ? (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Profile Information */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Email</label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={formData.email || ''}
+                    onChange={handleChange}
+                    readOnly={isReadOnly}
+                    className="input-field"
+                    required={mode === 'add'}
+                  />
+                </div>
 
-
-              {isReadOnly && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Created At</label>
-                    <div className="mt-1 text-sm text-gray-900">
-                      {formData.created_at ? format(new Date(formData.created_at), 'PPpp') : 'N/A'}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Last Sign In</label>
-                    <div className="mt-1 text-sm text-gray-900">
-                      {formData.last_sign_in_at ? format(new Date(formData.last_sign_in_at), 'PPpp') : 'Never'}
-                    </div>
-                  </div>
-
-                </>
-              )}
-            </div>
-            )}
-
-            {/* Tank Information Tab */}
-            {isReadOnly && activeTab === 'tanks' && (
-              <div className="space-y-6">
-                {formData.tanks && formData.tanks.length > 0 ? (
-                  <TankErrorBoundary>
-                    <div className="space-y-4">
-                      {formData.tanks.map((tank, index) => {
-                      // Safety check to ensure tank is a valid object
-                      if (!tank || typeof tank !== 'object') {
-                        return (
-                          <div key={index} className="bg-gray-50 rounded-lg border p-4">
-                            <div className="text-red-600">Invalid tank data</div>
-                          </div>
-                        );
-                      }
-                      
-                      return (
-                      <div key={index} className="bg-gray-50 rounded-lg border">
-                        <div className="flex items-center justify-between p-4">
-                          <h4 className="text-lg font-medium text-gray-900">
-                            {tank.name || `Tank ${index + 1}`}
-                          </h4>
-                          <div className="flex items-center space-x-4">
-                            <span className="text-sm text-gray-500">
-                              Created: {tank.created_at ? format(new Date(tank.created_at), 'MMM dd, yyyy') : 'N/A'}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => toggleTankExpansion(index)}
-                              className="px-3 py-1 text-sm bg-aqua-600 text-white rounded hover:bg-aqua-700 transition-colors"
-                            >
-                              {expandedTanks[index] ? 'Collapse' : 'Expand'}
-                            </button>
-                          </div>
-                        </div>
-                        
-                        {expandedTanks[index] && (
-                          <div className="px-6 pb-6">
-                            {/* Tank Details - Simplified Layout */}
-                            <div className="space-y-6">
-                              {/* Tank Dimensions */}
-                              <div className="bg-white rounded-lg p-4 border">
-                                <h5 className="text-lg font-semibold text-gray-800 mb-3">
-                                  Tank Dimensions
-                                </h5>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-                                  <div className="bg-gray-50 p-3 rounded-lg">
-                                    <div className="text-xs text-gray-500 uppercase tracking-wide">Shape</div>
-                                    <div className="text-sm font-medium text-gray-900 mt-1">{tank.tank_shape || 'N/A'}</div>
-                                  </div>
-                                  <div className="bg-gray-50 p-3 rounded-lg">
-                                    <div className="text-xs text-gray-500 uppercase tracking-wide">Length</div>
-                                    <div className="text-sm font-medium text-gray-900 mt-1">{tank.length || 'N/A'} {tank.unit || ''}</div>
-                                  </div>
-                                  <div className="bg-gray-50 p-3 rounded-lg">
-                                    <div className="text-xs text-gray-500 uppercase tracking-wide">Width</div>
-                                    <div className="text-sm font-medium text-gray-900 mt-1">{tank.width || 'N/A'} {tank.unit || ''}</div>
-                                  </div>
-                                  <div className="bg-gray-50 p-3 rounded-lg">
-                                    <div className="text-xs text-gray-500 uppercase tracking-wide">Height</div>
-                                    <div className="text-sm font-medium text-gray-900 mt-1">{tank.height || 'N/A'} {tank.unit || ''}</div>
-                                  </div>
-                                  <div className="bg-gray-50 p-3 rounded-lg">
-                                    <div className="text-xs text-gray-600 uppercase tracking-wide font-medium">Volume</div>
-                                    <div className="text-sm font-bold text-gray-700 mt-1">{tank.volume || 'N/A'} L</div>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Fish Selections & Compatibility */}
-                              <div className="bg-white rounded-lg p-4 border">
-                                <h5 className="text-lg font-semibold text-gray-800 mb-3">
-                                  Fish & Compatibility
-                                </h5>
-                                <div className="space-y-4">
-                                  {/* Fish Selections */}
-                                  {tank.fish_selections && (
-                                    <div>
-                                      <div className="text-sm font-medium text-gray-700 mb-2">Fish Selections</div>
-                                      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                                        <div className="space-y-2">
-                                          {typeof tank.fish_selections === 'object' && tank.fish_selections !== null ? (
-                                            Object.entries(tank.fish_selections).map(([species, quantity]) => (
-                                              <div key={species} className="flex justify-between items-center bg-white p-2 rounded border">
-                                                <span className="font-medium text-gray-700">{species}</span>
-                                                <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                                                  {quantity} {quantity === 1 ? 'fish' : 'fish'}
-                                                </span>
-                                              </div>
-                                            ))
-                                          ) : (
-                                            <p className="text-sm text-gray-500">No fish selected</p>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Compatibility Results */}
-                                  {tank.compatibility_results && (
-                                    <div>
-                                      <div className="text-sm font-medium text-gray-700 mb-2">Compatibility Results</div>
-                                      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                                        <div className="space-y-2">
-                                          {tank.compatibility_results ? (
-                                            <div className="space-y-2">
-                                              {tank.compatibility_results.issues && tank.compatibility_results.issues.length > 0 ? (
-                                                <div className="text-sm text-gray-600">
-                                                  <div className="font-medium mb-1">Compatibility Issues:</div>
-                                                  <ul className="list-disc pl-5 space-y-1">
-                                                    {tank.compatibility_results.issues.map((issue, idx) => (
-                                                      <li key={idx}>{issue}</li>
-                                                    ))}
-                                                  </ul>
-                                                </div>
-                                              ) : (
-                                                <div className="text-sm text-gray-700">
-                                                  ✓ All fish are compatible
-                                                </div>
-                                              )}
-                                              {tank.compatibility_results.notes && (
-                                                <div className="text-sm text-gray-600 mt-2">
-                                                  <div className="font-medium">Notes:</div>
-                                                  <p>{tank.compatibility_results.notes}</p>
-                                                </div>
-                                              )}
-                                            </div>
-                                          ) : (
-                                            <p className="text-sm text-gray-500">No compatibility data available</p>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Feed Inventory */}
-                              <div className="bg-white rounded-lg p-4 border">
-                                <h5 className="text-lg font-semibold text-gray-800 mb-3">
-                                  Feed Inventory
-                                </h5>
-                                <div className="space-y-4">
-                                  {/* Available Feeds */}
-                                  {tank.available_feeds && typeof tank.available_feeds === 'object' && (
-                                    <div>
-                                      <div className="text-sm font-medium text-gray-700 mb-2">Available Feeds</div>
-                                      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                                        <div className="space-y-2">
-                                          {Object.keys(tank.available_feeds || {}).length > 0 ? (
-                                            <div className="grid gap-2">
-                                              {Object.entries(tank.available_feeds || {}).map(([feedType, amount]) => (
-                                                <div key={feedType} className="bg-gray-50 p-3 rounded border border-gray-100">
-                                                  <div className="font-medium">{feedType}</div>
-                                                  <div className="text-sm text-gray-700">
-                                                    {formatNumber(amount)} {typeof amount === 'number' ? 'grams' : ''} available
-                                                  </div>
-                                                </div>
-                                              ))}
-                                            </div>
-                                          ) : (
-                                            <p className="text-sm text-gray-500">No feed types available</p>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Feed Inventory with Days Left */}
-                                  {tank.feed_inventory && typeof tank.feed_inventory === 'object' && (
-                                    <div>
-                                      <div className="text-sm font-medium text-gray-700 mb-2">Feed Inventory Status</div>
-                                      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                                        <div className="space-y-3">
-                                          {Object.keys(tank.feed_inventory || {}).length > 0 ? (
-                                            <div className="space-y-3">
-                                              {Object.entries(tank.feed_inventory || {}).map(([feedName, feedData]) => {
-                                                // Handle different possible field names for days remaining
-                                                const daysRemaining = feedData?.days_remaining ?? 
-                                                                     feedData?.days_until_empty ?? 
-                                                                     feedData?.days_left ?? 
-                                                                     null;
-                                                
-                                                // Handle different possible field names for available amount
-                                                const availableAmount = feedData?.available_grams ?? 
-                                                                       feedData?.available_amount ?? 
-                                                                       feedData?.quantity ?? 
-                                                                       null;
-                                                
-                                                // Handle different possible field names for last updated
-                                                const lastUpdated = feedData?.last_updated ?? 
-                                                                   feedData?.updated_at ?? 
-                                                                   feedData?.last_modified ?? 
-                                                                   null;
-                                                
-                                                return (
-                                                  <div key={feedName} className="bg-white p-4 rounded-lg border border-gray-200">
-                                                    <div className="flex justify-between items-start">
-                                                      <h6 className="font-medium text-gray-800">{feedName}</h6>
-                                                      <span className={`px-2 py-1 text-xs font-medium rounded ${
-                                                        daysRemaining === null || daysRemaining === undefined
-                                                          ? 'bg-gray-100 text-gray-800'
-                                                          : daysRemaining <= 0 
-                                                            ? 'bg-gray-200 text-gray-600'
-                                                            : daysRemaining <= 7
-                                                              ? 'bg-gray-200 text-gray-700'
-                                                              : 'bg-gray-100 text-gray-800'
-                                                      }`}>
-                                                        {daysRemaining === null || daysRemaining === undefined
-                                                          ? 'In Stock' 
-                                                          : daysRemaining <= 0 
-                                                            ? 'Out of Stock' 
-                                                            : `${daysRemaining} days left`}
-                                                      </span>
-                                                    </div>
-                                                    
-                                                    <div className="mt-2 grid grid-cols-2 gap-2">
-                                                      <div>
-                                                        <p className="text-xs text-gray-500">Available Amount</p>
-                                                        <p className="font-medium">
-                                                          {availableAmount !== null && availableAmount !== undefined 
-                                                            ? `${formatNumber(availableAmount)} ${feedData?.unit || 'g'}`
-                                                            : 'N/A'}
-                                                        </p>
-                                                      </div>
-                                                      <div>
-                                                        <p className="text-xs text-gray-500">Daily Consumption</p>
-                                                        <p className="font-medium">
-                                                          {feedData?.daily_consumption !== null && feedData?.daily_consumption !== undefined 
-                                                            ? `${formatNumber(feedData.daily_consumption)} g/day`
-                                                            : 'N/A'}
-                                                        </p>
-                                                      </div>
-                                                    </div>
-                                                    
-                                                    {/* Fish Consumption Breakdown */}
-                                                    {feedData?.fish_consumption && typeof feedData.fish_consumption === 'object' && Object.keys(feedData.fish_consumption).length > 0 && (
-                                                      <div className="mt-3 pt-3 border-t border-gray-200">
-                                                        <p className="text-xs text-gray-500 mb-2">Fish Consumption Breakdown</p>
-                                                        <div className="space-y-1">
-                                                          {Object.entries(feedData.fish_consumption).map(([fishName, consumption]) => (
-                                                            <div key={fishName} className="flex justify-between items-center text-sm">
-                                                              <span className="text-gray-600">{fishName}:</span>
-                                                              <span className="font-medium text-gray-900">
-                                                                {formatNumber(consumption)} g/day
-                                                              </span>
-                                                            </div>
-                                                          ))}
-                                                        </div>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          ) : (
-                                            <p className="text-sm text-gray-500">No feed inventory data available</p>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Timestamps */}
-                            <div className="mt-4 pt-4 border-t border-gray-200">
-                              <div className="flex justify-between text-xs text-gray-500">
-                                <span>Date Created: {tank.date_created ? format(new Date(tank.date_created), 'PPpp') : 'N/A'}</span>
-                                <span>Last Updated: {tank.last_updated ? format(new Date(tank.last_updated), 'PPpp') : 'N/A'}</span>
-                              </div>
-                            </div>
-                          </div>
-                        )}
+                {isReadOnly && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Created At</label>
+                      <div className="mt-1 text-sm text-gray-900">
+                        {formData.created_at ? format(new Date(formData.created_at), 'PPpp') : 'N/A'}
                       </div>
-                      );
-                    })}
                     </div>
-                  </TankErrorBoundary>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    <div className="text-lg font-medium">No Tanks Found</div>
-                    <div className="text-sm">This user hasn't created any tanks yet.</div>
-                  </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Last Sign In</label>
+                      <div className="mt-1 text-sm text-gray-900">
+                        {formData.last_sign_in_at ? format(new Date(formData.last_sign_in_at), 'PPpp') : 'Never'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Status</label>
+                      <div className="mt-1">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          formData.active === true || formData.active === 'true'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {formData.active === true || formData.active === 'true' ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
-            )}
 
-            {!isReadOnly && (
-              <div className="flex justify-end space-x-3 pt-6 border-t">
+              {!isReadOnly && (
+                <div className="flex justify-end space-x-3 pt-6 border-t">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="btn-secondary"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                  >
+                    {mode === 'add' ? 'Add User' : 'Update User'}
+                  </button>
+                </div>
+              )}
+            </form>
+          ) : (
+            <UserActivitiesSection activities={activities} loading={loadingActivities} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Status Toggle Confirmation Dialog Component
+function StatusConfirmDialog({ isOpen, onClose, onConfirm, userStatus }) {
+  if (!isOpen) return null;
+
+  const isCurrentlyActive = userStatus === true || userStatus === 'true';
+  const newStatus = !isCurrentlyActive;
+                                                
+                                                return (
+    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+      <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div className="mt-3">
+          <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-orange-100">
+            <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.268 19.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+                                                    </div>
+                                                    
+          <div className="text-center">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              {newStatus ? 'Activate User' : 'Deactivate User'}
+            </h3>
+            <div className="mt-2 px-7 py-3">
+              <p className="text-sm text-gray-500">
+                Are you sure you want to {newStatus ? 'activate' : 'deactivate'} this user?
+                {!newStatus && (
+                  <span className="block mt-2 text-red-600 font-medium">
+                    The user will not be able to access the system.
+                                                              </span>
+                )}
+                {newStatus && (
+                  <span className="block mt-2 text-green-600 font-medium">
+                    The user will be able to access the system again.
+                  </span>
+                )}
+              </p>
+                              </div>
+                            </div>
+
+          <div className="flex justify-center space-x-3 mt-4">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="btn-secondary"
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
                 >
                   Cancel
                 </button>
                 <button
-                  type="submit"
-                  className="btn-primary"
-                >
-                  {mode === 'add' ? 'Add User' : 'Update User'}
+              type="button"
+              onClick={onConfirm}
+              className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                newStatus
+                  ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                  : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
+              }`}
+            >
+              {newStatus ? 'Activate User' : 'Deactivate User'}
                 </button>
               </div>
-            )}
-          </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+// User Activities Section Component
+function UserActivitiesSection({ activities, loading }) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-aqua-500"></div>
+      </div>
+    );
+  }
+
+  const activityTypes = {
+    fish_predictions: { title: 'Fish Prediction', color: 'blue' },
+    water_calculations: { title: 'Water Calculation', color: 'cyan' },
+    fish_calculations: { title: 'Fish Capacity', color: 'green' },
+    diet_calculations: { title: 'Diet Calculation', color: 'orange' },
+    fish_volume_calculations: { title: 'Volume Calculation', color: 'purple' },
+    compatibility_results: { title: 'Compatibility Check', color: 'pink' },
+    tanks: { title: 'Tank Management', color: 'indigo' }
+  };
+
+  // Combine all activities with timestamps
+  const allActivities = [];
+  
+  Object.entries(activities).forEach(([type, data]) => {
+    if (Array.isArray(data)) {
+      data.forEach((item, index) => {
+        const timestamp = item.created_at || item.date_calculated || new Date().toISOString();
+        allActivities.push({
+          type,
+          data: item,
+          timestamp: new Date(timestamp),
+          id: `${type}-${index}`
+        });
+      });
+    }
+  });
+
+  // Sort by timestamp (newest first)
+  allActivities.sort((a, b) => b.timestamp - a.timestamp);
+
+  const getActivityDescription = (activity) => {
+    const { type, data } = activity;
+    
+    switch (type) {
+      case 'fish_predictions':
+        const fishName = data.predicted_fish || data.common_name || data.species_name || 'Unknown fish';
+        return `Fish: ${fishName}`;
+      case 'water_calculations':
+        const fishSelections = data.fish_selections || {};
+        const fishNames = Object.keys(fishSelections);
+        const fishList = fishNames.length > 0 ? fishNames.slice(0, 3).join(', ') : 'No fish selected';
+        const moreFish = fishNames.length > 3 ? ` +${fishNames.length - 3} more` : '';
+        const recommendedQuantities = data.recommended_quantities || {};
+        const quantitiesList = Object.keys(recommendedQuantities).length > 0 
+          ? Object.entries(recommendedQuantities).slice(0, 3).map(([fish, qty]) => `${fish}: ${qty}`).join(', ')
+          : 'No quantities';
+        const moreQuantities = Object.keys(recommendedQuantities).length > 3 ? ` +${Object.keys(recommendedQuantities).length - 3} more` : '';
+        const minVolume = data.minimum_tank_volume || data.total_volume || data.min_volume || 'N/A';
+        return `Fish: ${fishList}${moreFish} • Recommended quantities: ${quantitiesList}${moreQuantities} • Min tank volume: ${minVolume}`;
+      case 'fish_calculations':
+        const tankShape = data.tank_shape || data.calculation_type || data.shape || 'tank';
+        const tankVolume = data.tank_volume || data.calculated_volume || data.volume || 'N/A';
+        const fishSelectionsCalc = data.fish_selections || {};
+        const fishListCalc = Object.keys(fishSelectionsCalc).slice(0, 2).join(', ');
+        const moreFishCalc = Object.keys(fishSelectionsCalc).length > 2 ? ` +${Object.keys(fishSelectionsCalc).length - 2} more` : '';
+        return `Tank: ${tankShape} (${tankVolume}), Fish: ${fishListCalc || 'None'}${moreFishCalc}`;
+      case 'diet_calculations':
+        const totalPortion = data.total_portion || data.total_feed || 'N/A';
+        const fishSelectionsDiet = data.fish_selections || {};
+        const fishListDiet = Object.keys(fishSelectionsDiet).length > 0 
+          ? Object.entries(fishSelectionsDiet).slice(0, 2).map(([fish, qty]) => `${fish}(${qty})`).join(', ')
+          : 'None';
+        const moreFishDiet = Object.keys(fishSelectionsDiet).length > 2 ? ` +${Object.keys(fishSelectionsDiet).length - 2} more` : '';
+        return `Fish: ${fishListDiet}${moreFishDiet}, Total: ${totalPortion}g`;
+      case 'fish_volume_calculations':
+        const shape = data.shape || data.tank_shape || 'tank';
+        const volume = data.calculated_volume || data.volume || data.tank_volume || 'N/A';
+        const fishSelectionsVol = data.fish_selections || {};
+        const fishListVol = Object.keys(fishSelectionsVol).slice(0, 2).join(', ');
+        const moreFishVol = Object.keys(fishSelectionsVol).length > 2 ? ` +${Object.keys(fishSelectionsVol).length - 2} more` : '';
+        return `Tank: ${shape} (${volume}L), Fish: ${fishListVol || 'None'}${moreFishVol}`;
+      case 'compatibility_results':
+        let selectedFish = 'Unknown fish';
+        if (data.selected_fish) {
+          if (typeof data.selected_fish === 'object') {
+            // If it's an object, extract the keys (fish names)
+            selectedFish = Object.keys(data.selected_fish).join(', ');
+          } else if (typeof data.selected_fish === 'string') {
+            selectedFish = data.selected_fish;
+          }
+        }
+        const compatibilityLevel = data.compatibility_level || 'Unknown';
+        return `Selected fish: ${selectedFish} • Compatibility level: ${compatibilityLevel}`;
+      case 'tanks':
+        const tankName = data.name || 'Unnamed tank';
+        const tankShapeTank = data.tank_shape || 'rectangle';
+        const length = data.length || 'N/A';
+        const width = data.width || 'N/A';
+        const height = data.height || 'N/A';
+        const unit = data.unit || 'cm';
+        const volumeTank = data.volume || 'N/A';
+        const fishSelectionsTank = data.fish_selections || {};
+        const fishCountTank = typeof fishSelectionsTank === 'object' ? Object.keys(fishSelectionsTank).length : 0;
+        const availableFeeds = data.available_feeds || {};
+        const feedNames = typeof availableFeeds === 'object' ? Object.keys(availableFeeds) : [];
+        const feedList = feedNames.length > 0 
+          ? feedNames.slice(0, 3).map(feed => `${feed}(${availableFeeds[feed]}g)`).join(', ')
+          : 'None';
+        const moreFeeds = feedNames.length > 3 ? ` +${feedNames.length - 3} more` : '';
+        return `Tank name: ${tankName} • Tank shape: ${tankShapeTank} • Tank dimensions: ${length}×${width}×${height}${unit} • Tank volume: ${volumeTank}L • Fish count: ${fishCountTank} • Feeds: ${feedList}${moreFeeds}`;
+      default:
+        return 'Activity performed';
+    }
+  };
+
+  const getColorClasses = (color) => {
+    const colorMap = {
+      blue: 'bg-blue-100 text-blue-800 border-blue-200',
+      cyan: 'bg-cyan-100 text-cyan-800 border-cyan-200',
+      green: 'bg-green-100 text-green-800 border-green-200',
+      orange: 'bg-orange-100 text-orange-800 border-orange-200',
+      purple: 'bg-purple-100 text-purple-800 border-purple-200',
+      pink: 'bg-pink-100 text-pink-800 border-pink-200',
+      indigo: 'bg-indigo-100 text-indigo-800 border-indigo-200'
+    };
+    return colorMap[color] || 'bg-gray-100 text-gray-800 border-gray-200';
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="text-center mb-6">
+        <h4 className="text-lg font-medium text-gray-900">Recent Activity Timeline</h4>
+        <p className="text-sm text-gray-500">Chronological view of user's app activities</p>
+      </div>
+
+      {allActivities.length === 0 ? (
+        <div className="text-center text-gray-500 py-12">
+          <div className="text-4xl mb-4">📝</div>
+          <p className="text-lg font-medium">No activities found</p>
+          <p className="text-sm">This user hasn't performed any activities yet.</p>
+        </div>
+      ) : (
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="max-h-96 overflow-y-auto">
+            <div className="divide-y divide-gray-200">
+              {allActivities.slice(0, 50).map((activity, index) => {
+                const activityType = activityTypes[activity.type] || { title: 'Activity', color: 'gray' };
+                const isLast = index === allActivities.slice(0, 50).length - 1;
+                
+                return (
+                  <div key={activity.id} className="relative p-4 hover:bg-gray-50 transition-colors">
+                    {/* Timeline line */}
+                    {!isLast && (
+                      <div className="absolute left-4 top-12 w-0.5 h-full bg-gray-200"></div>
+                    )}
+                    
+                    <div className="flex items-start space-x-4">
+                      {/* Activity indicator dot */}
+                      <div className={`flex-shrink-0 w-3 h-3 rounded-full mt-1 ${getColorClasses(activityType.color).split(' ')[0]}`}></div>
+                      
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-sm font-medium text-gray-900">
+                            {activityType.title}
+                          </h5>
+                          <time className="text-xs text-gray-500">
+                            {format(activity.timestamp, 'MMM dd, yyyy HH:mm')}
+                          </time>
+                        </div>
+                        
+                        <p className="mt-1 text-sm text-gray-600">
+                          {getActivityDescription(activity)}
+                        </p>
+                        
+                        {/* Additional details */}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {activity.type === 'fish_predictions' && activity.data.confidence && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              Confidence: {Math.round(activity.data.confidence * 100)}%
+                            </span>
+                          )}
+                          {activity.type === 'compatibility_results' && activity.data.compatibility_score && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-pink-100 text-pink-800">
+                              Score: {activity.data.compatibility_score}
+                            </span>
+                          )}
+                          {activity.type === 'diet_calculations' && activity.data.feeding_frequency && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                              {activity.data.feeding_frequency}x daily
+                            </span>
+                          )}
+                          {activity.type === 'tanks' && activity.data.water_type && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                              {activity.data.water_type}
+                            </span>
+                          )}
+                          {activity.type === 'fish_calculations' && activity.data.capacity_result && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              Capacity: {activity.data.capacity_result}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          
+          {allActivities.length > 50 && (
+            <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-center">
+              <p className="text-sm text-gray-500">
+                Showing 50 of {allActivities.length} activities
+              </p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

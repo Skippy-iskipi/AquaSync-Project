@@ -341,6 +341,7 @@ class _AddEditTankState extends State<AddEditTank> {
       final response = await supabase
           .from('fish_species')
           .select('common_name, portion_grams, feeding_frequency, preferred_food')
+          .eq('active', true)
           .ilike('common_name', fishName)
           .maybeSingle();
 
@@ -449,6 +450,7 @@ class _AddEditTankState extends State<AddEditTank> {
         final response = await supabase
             .from('fish_species')
             .select('common_name, preferred_food')
+            .eq('active', true)
             .ilike('common_name', fishName)
             .maybeSingle();
 
@@ -620,6 +622,7 @@ class _AddEditTankState extends State<AddEditTank> {
         final response = await supabase
             .from('fish_species')
             .select('common_name, portion_grams, feeding_frequency, preferred_food, "max_size_(cm)", temperament, water_type')
+            .eq('active', true)
             .ilike('common_name', fishName)
             .maybeSingle();
 
@@ -797,6 +800,7 @@ class _AddEditTankState extends State<AddEditTank> {
       final response = await supabase
           .from('fish_species')
           .select('common_name, "max_size_(cm)", "minimum_tank_size_(l)"')
+          .eq('active', true)
           .ilike('common_name', fishName)
           .maybeSingle();
 

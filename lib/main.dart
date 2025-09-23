@@ -1,13 +1,77 @@
 import 'package:flutter/material.dart';
 import 'screens/homepage.dart';
 import 'screens/capture.dart';
-import 'screens/auth_screen.dart';
 import 'package:provider/provider.dart';
 import 'screens/logbook_provider.dart';
 import 'providers/tank_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services/auth_service.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+// Global navigator key for showing dialogs from anywhere
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// Global function to show account deactivated dialog
+void showAccountDeactivatedDialog() {
+  print('Global: Showing account deactivated dialog');
+  showDialog(
+    context: navigatorKey.currentContext!,
+    barrierDismissible: false,
+    builder: (BuildContext context) {
+      print('Global: Dialog builder called');
+      return AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.warning, color: Colors.red[600], size: 24),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Account Deactivated',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Your account has been deactivated by an administrator. Please contact support for assistance if you believe this is an error.',
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red[600],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'OK',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,6 +124,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'AquaSync',
+      navigatorKey: navigatorKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF00BFB3),
@@ -90,30 +155,98 @@ class _AuthWrapperState extends State<AuthWrapper> {
   void initState() {
     super.initState();
     _setupAuthListener();
+    // Debug authentication state on startup
+    _debugAuthState();
   }
 
-  void _setupAuthListener() {
+  Future<void> _debugAuthState() async {
+    await Future.delayed(const Duration(seconds: 1));
     final authService = Provider.of<AuthService>(context, listen: false);
+    authService.debugAuthState();
+  }
+
+
+
+  void _setupAuthListener() {
+    print('AuthWrapper: Setting up auth listener');
+    final authService = Provider.of<AuthService>(context, listen: false);
+    
+    // Test if the stream is working
+    print('AuthWrapper: Auth stream: ${authService.onAuthStateChange}');
+    
     authService.onAuthStateChange.listen((data) async {
-      if (!mounted) return;
+      print('AuthWrapper: *** AUTH STATE CHANGE DETECTED ***');
+      print('AuthWrapper: Event: ${data.event}');
+      print('AuthWrapper: Session: ${data.session}');
+      print('AuthWrapper: User: ${data.session?.user}');
+      print('AuthWrapper: Mounted check: $mounted');
       
-      print('Auth state changed: ${data.event}'); // Debug log
-      print('Auth data: ${data.toString()}'); // Debug log
+      // Don't return early if not mounted - we need to handle auth events
+      // even if the widget is not fully mounted yet
+      if (!mounted) {
+        print('AuthWrapper: Not mounted, but continuing to handle auth event');
+      }
       
-      // Handle email confirmation and sign in
+      print('AuthWrapper: Continuing with auth event handling...');
+      
+      print('AuthWrapper: Auth state changed: ${data.event}'); // Debug log
+      print('AuthWrapper: Auth data: ${data.toString()}'); // Debug log
+      print('AuthWrapper: Session: ${data.session}'); // Debug log
+      print('AuthWrapper: User: ${data.session?.user}'); // Debug log
+      
+      print('AuthWrapper: *** ABOUT TO ENTER EVENT HANDLING ***');
+      
+      // Handle different auth events
+      print('AuthWrapper: *** REACHING EVENT HANDLING SECTION ***');
+      print('AuthWrapper: Checking event type: ${data.event}');
+      print('AuthWrapper: Event type comparison: ${data.event == AuthChangeEvent.signedIn}');
+      print('AuthWrapper: AuthChangeEvent.signedIn: ${AuthChangeEvent.signedIn}');
+      print('AuthWrapper: Event type string: ${data.event.toString()}');
+      
       if (data.event == AuthChangeEvent.signedIn) {
-        print('User signed in event detected'); // Debug log
+        print('AuthWrapper: *** SIGNED IN EVENT DETECTED ***');
+        print('AuthWrapper: Mounted: $mounted');
         final user = data.session?.user;
+        print('AuthWrapper: User from session: ${user?.id}');
         
         if (user != null && user.emailConfirmedAt != null) {
           print('Email confirmation detected'); // Debug log
           // Notification removed as requested
         }
+        
+         // Check if user is active (for OAuth and email sign-ins)
+         if (user != null) {
+           print('AuthWrapper: User is not null, checking active status for OAuth user: ${user.id}');
+           
+           // We can check active status even if widget is unmounted
+           // Get authService from the global instance instead of context
+           final authService = AuthService();
+           print('AuthWrapper: About to call isUserActive...');
+           final isActive = await authService.isUserActive(userId: user.id);
+           print('AuthWrapper: OAuth user active status result: $isActive');
+          
+           if (!isActive) {
+             print('AuthWrapper: OAuth user is inactive, signing out');
+             await authService.signOut();
+             // Show dialog immediately using global function
+             showAccountDeactivatedDialog();
+             return;
+           } else {
+             print('AuthWrapper: OAuth user is active, allowing access');
+           }
+        }
+      } else if (data.event == AuthChangeEvent.signedOut) {
+        print('AuthWrapper: *** SIGNED OUT EVENT DETECTED ***');
+        print('AuthWrapper: User was signed out');
+      } else {
+        print('AuthWrapper: *** OTHER AUTH EVENT: ${data.event} ***');
       }
       
-      setState(() {
-        _isLoadingUser = true;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoadingUser = true;
+        });
+      }
       
       final session = data.session;
       if (session != null) {
@@ -142,15 +275,39 @@ class _AuthWrapperState extends State<AuthWrapper> {
       _isLoadingUser = true;
     });
     final session = Supabase.instance.client.auth.currentSession;
+    print('AuthWrapper: Checking initial session: ${session != null ? 'Found' : 'Not found'}');
     if (session != null) {
+      print('AuthWrapper: Found existing session, checking user status');
+      print('AuthWrapper: Session user ID: ${session.user.id}');
+      print('AuthWrapper: Session user email: ${session.user.email}');
       final latestUserResponse = await Supabase.instance.client.auth.getUser();
+      final user = latestUserResponse.user;
+      print('AuthWrapper: Latest user response: ${user?.id}');
+      
+      if (user != null) {
+        print('AuthWrapper: Checking active status for existing session user: ${user.id}');
+        final authService = Provider.of<AuthService>(context, listen: false);
+        final isActive = await authService.isUserActive(userId: user.id);
+        print('AuthWrapper: Existing session user active status: $isActive');
+        
+        if (!isActive) {
+          print('AuthWrapper: Existing session user is inactive, signing out');
+          await authService.signOut();
+          showAccountDeactivatedDialog();
+          return;
+        } else {
+          print('AuthWrapper: Existing session user is active, allowing access');
+        }
+      }
+      
       if (mounted) {
         setState(() {
-          _currentUser = latestUserResponse.user;
+          _currentUser = user;
           _isLoadingUser = false;
         });
       }
     } else {
+      print('AuthWrapper: No existing session found');
       if (mounted) {
         setState(() {
           _currentUser = null;
@@ -162,6 +319,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   @override
   Widget build(BuildContext context) {
+
     if (_isLoadingUser) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -263,32 +421,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         child: SafeArea(
           child: Column(
             children: [
-              // Header with cancel button
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const SizedBox(width: 60),
-                    FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: TextButton(
-                        onPressed: () {
-                          if (widget.onFinish != null) widget.onFinish!();
-                        },
-                        child: const Text(
-                          'Cancel',
-                          style: TextStyle(
-                            color: Color(0xFF00BFB3),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              // Header spacing
+              const SizedBox(height: 32),
               
               // Main content - fixed layout
               Expanded(
@@ -334,9 +468,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         child: FadeTransition(
                           opacity: _fadeAnimation,
                           child: const _FeatureItem(
-                            icon: Icons.group,
+                            icon: Icons.camera_alt, // Placeholder since we'll use custom image
                             title: 'Check Compatibility',
                             description: 'Find perfect tank mates for your fish',
+                            customIconPath: 'lib/icons/goldfish.png',
                           ),
                         ),
                       ),
@@ -357,70 +492,45 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       
                       const SizedBox(height: 24),
                       
-                      // Animated get started button
+                      // Animated capture fish button
                       ScaleTransition(
                         scale: _scaleAnimation,
                         child: FadeTransition(
                           opacity: _fadeAnimation,
                           child: SizedBox(
-                            width: 200,
+                            width: double.infinity,
                             child: ElevatedButton(
                               onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const AuthScreen(
-                                      showBackButton: true,
-                                      initialMode: false, // Start in sign-up mode
-                                    ),
-                                  ),
-                                );
+                                if (widget.onFinish != null) widget.onFinish!();
                               },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFF00BFB3),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(6),
                                 ),
-                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 12),
                                 elevation: 4,
                                 shadowColor: const Color(0xFF00BFB3).withOpacity(0.3),
                               ),
-                              child: const Text(
-                                'Get Started',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.camera_alt,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Capture Fish',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      
-                      const SizedBox(height: 8),
-                      
-                      // Animated sign in option
-                      FadeTransition(
-                        opacity: _fadeAnimation,
-                        child: TextButton(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const AuthScreen(
-                                  showBackButton: true,
-                                  initialMode: true, // Start in sign-in mode
-                                ),
-                              ),
-                            );
-                          },
-                          child: const Text(
-                            'Already have an account? Sign In',
-                            style: TextStyle(
-                              color: Color(0xFF00BFB3),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ),
@@ -441,11 +551,13 @@ class _FeatureItem extends StatelessWidget {
   final IconData icon;
   final String title;
   final String description;
+  final String? customIconPath;
   
   const _FeatureItem({
     required this.icon,
     required this.title,
     required this.description,
+    this.customIconPath,
   });
   
   @override
@@ -454,7 +566,7 @@ class _FeatureItem extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFF00BFB3).withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color: const Color(0xFF00BFB3).withOpacity(0.1),
           width: 1,
@@ -463,7 +575,12 @@ class _FeatureItem extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
+          customIconPath != null ? Image.asset(
+            customIconPath!,
+            width: 32,
+            height: 32,
+            fit: BoxFit.contain,
+          ) : Icon(
             icon,
             color: const Color(0xFF00BFB3),
             size: 32,

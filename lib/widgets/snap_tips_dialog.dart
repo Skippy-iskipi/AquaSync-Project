@@ -61,7 +61,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
           insetPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 0),
           child: SafeArea(
             child: Scaffold(
-              backgroundColor: const Color(0xFF00ACC1),
+              backgroundColor: Colors.white,
               body: Center(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
@@ -76,15 +76,15 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                             width: double.infinity,
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
+                              color: const Color(0xFF00ACC1).withOpacity(0.1),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.white.withOpacity(0.5)),
+                              border: Border.all(color: const Color(0xFF00ACC1).withOpacity(0.3)),
                             ),
                             child: Row(
                               children: [
                                 Icon(
                                   Icons.warning_amber_rounded,
-                                  color: Colors.white,
+                                  color: const Color(0xFF00ACC1),
                                   size: 24,
                                 ),
                                 const SizedBox(width: 12),
@@ -92,7 +92,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                                   child: Text(
                                     widget.message!,
                                     style: TextStyle(
-                                      color: Colors.white,
+                                      color: const Color(0xFF00ACC1),
                                       fontSize: 16,
                                       fontWeight: FontWeight.w500,
                                     ),
@@ -107,7 +107,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                         const Text(
                           'Photo Guidelines',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: Color(0xFF00ACC1),
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                           ),
@@ -123,7 +123,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: Colors.white,
+                                  color: const Color(0xFF00ACC1),
                                   width: 2,
                                 ),
                                 image: const DecorationImage(
@@ -135,12 +135,12 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                             Container(
                               padding: const EdgeInsets.all(4),
                               decoration: const BoxDecoration(
-                                color: Colors.white,
+                                color: Color(0xFF00ACC1),
                                 shape: BoxShape.circle,
                               ),
                               child: const Icon(
                                 Icons.check,
-                                color: Color(0xFF00ACC1),
+                                color: Colors.white,
                                 size: 20,
                               ),
                             ),
@@ -179,8 +179,9 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                           width: double.infinity,
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.1),
+                            color: const Color(0xFF00ACC1).withOpacity(0.1),
                             borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF00ACC1).withOpacity(0.3)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -188,7 +189,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                               Text(
                                 'For Best Results:',
                                 style: TextStyle(
-                                  color: Colors.white,
+                                  color: Color(0xFF00ACC1),
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -202,7 +203,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                                 '• Avoid extreme angles or partial views\n'
                                 '• Keep a reasonable distance (not too far/close)',
                                 style: TextStyle(
-                                  color: Colors.white70,
+                                  color: Color(0xFF006064),
                                   fontSize: 14,
                                   height: 2,
                                 ),
@@ -217,7 +218,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                           child: TextButton(
                             onPressed: _closeWithAnimation,
                             style: TextButton.styleFrom(
-                              backgroundColor: Colors.white,
+                              backgroundColor: const Color(0xFF00ACC1),
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8),
@@ -226,7 +227,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
                             child: const Text(
                               'Close',
                               style: TextStyle(
-                                color: Color(0xFF00ACC1),
+                                color: Colors.white,
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -257,7 +258,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: Colors.white,
+                  color: const Color(0xFF00ACC1),
                   width: 2,
                 ),
                 image: DecorationImage(
@@ -269,12 +270,12 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
             Container(
               padding: const EdgeInsets.all(2),
               decoration: const BoxDecoration(
-                color: Colors.white,
+                color: Colors.red,
                 shape: BoxShape.circle,
               ),
                               child: const Icon(
                                 Icons.close,
-                                color: Color(0xFF00ACC1),
+                                color: Colors.white,
                                 size: 16,
                               ),
             ),
@@ -284,7 +285,7 @@ class _SnapTipsDialogState extends State<SnapTipsDialog> with SingleTickerProvid
         Text(
           label,
           style: TextStyle(
-            color: Colors.white,
+            color: const Color(0xFF00ACC1),
             fontSize: isSmallScreen ? 10 : 12,
             fontWeight: FontWeight.bold,
           ),

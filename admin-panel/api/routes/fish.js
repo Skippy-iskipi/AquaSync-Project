@@ -29,7 +29,8 @@ router.get('/', async (req, res) => {
         feeding_frequency,
         bioload,
         portion_grams,
-        feeding_notes
+        feeding_notes,
+        active
       `)
       .order('common_name', { ascending: true });
 
@@ -40,9 +41,55 @@ router.get('/', async (req, res) => {
 
     const { data, error } = await query;
 
-    if (error) throw error;
+    if (error) {
+      console.error('Fish fetch error:', error);
+      // If active column doesn't exist, try without it
+      if (error.message && error.message.includes('active')) {
+        console.log('Active column not found, fetching without it...');
+        const fallbackQuery = supabase
+          .from('fish_species')
+          .select(`
+            id,
+            common_name,
+            scientific_name,
+            "max_size_(cm)",
+            temperament,
+            water_type,
+            ph_range,
+            social_behavior,
+            "minimum_tank_size_(l)",
+            temperature_range,
+            diet,
+            lifespan,
+            preferred_food,
+            feeding_frequency,
+            bioload,
+            portion_grams,
+            feeding_notes
+          `)
+          .order('common_name', { ascending: true });
+        
+        const { data: fallbackData, error: fallbackError } = await fallbackQuery;
+        if (fallbackError) throw fallbackError;
+        
+        // Add active: true to all fish if column doesn't exist
+        const fishWithActive = (fallbackData || []).map(fish => ({
+          ...fish,
+          active: true
+        }));
+        
+        return res.json(fishWithActive);
+      }
+      throw error;
+    }
 
-    res.json(data || []);
+    // Add active: true to fish that don't have the active field
+    const fishWithActive = (data || []).map(fish => ({
+      ...fish,
+      active: fish.active !== undefined ? fish.active : true
+    }));
+
+    res.json(fishWithActive);
   } catch (error) {
     console.error('Fish fetch error:', error);
     res.status(500).json({ message: 'Failed to fetch fish species' });
@@ -235,6 +282,67 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     console.error('Fish deletion error:', error);
     res.status(500).json({ message: 'Failed to delete fish species' });
+  }
+});
+
+// Toggle fish species status (activate/deactivate)
+router.patch('/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { active } = req.body;
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+
+    console.log('Fish status update request:', { id, active, token: token ? 'Present' : 'Missing' });
+
+    if (typeof active !== 'boolean') {
+      return res.status(400).json({ message: 'Active status must be a boolean value' });
+    }
+
+    console.log(`Updating fish ${id} status to: ${active}`);
+
+    // First, try to update with active column
+    let updateData = { 
+      active: active,
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('fish_species')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Fish status update error:', error);
+      
+      // If active column doesn't exist, return a helpful error
+      if (error.message && error.message.includes('active')) {
+        return res.status(400).json({ 
+          message: 'Active column does not exist in fish_species table. Please run the SQL script to add the active column first.',
+          error: 'MISSING_ACTIVE_COLUMN',
+          details: 'Run the SQL script: add_active_column_to_fish_species.sql'
+        });
+      }
+      
+      throw error;
+    }
+
+    if (!data) {
+      return res.status(404).json({ message: 'Fish species not found' });
+    }
+
+    console.log(`Fish ${id} status updated successfully to: ${active}`);
+    res.json({
+      message: `Fish species ${active ? 'activated' : 'deactivated'} successfully`,
+      data
+    });
+  } catch (error) {
+    console.error('Fish status update error:', error);
+    res.status(500).json({ 
+      message: `Failed to ${req.body.active ? 'activate' : 'deactivate'} fish species`,
+      error: error.message 
+    });
   }
 });
 
