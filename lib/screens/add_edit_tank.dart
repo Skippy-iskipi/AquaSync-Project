@@ -9,6 +9,9 @@ import '../providers/tank_provider.dart';
 import '../config/api_config.dart';
 import '../widgets/fish_selection_widget.dart';
 import '../widgets/fish_info_dialog.dart';
+import '../widgets/auth_required_dialog.dart';
+import '../services/auth_service.dart';
+import 'auth_screen.dart';
 
 class AddEditTank extends StatefulWidget {
   final Tank? tank;
@@ -921,6 +924,13 @@ class _AddEditTankState extends State<AddEditTank> {
 
 
   Future<void> _saveTank() async {
+    // Check if user is authenticated before saving
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!authService.isAuthenticated) {
+      _showAuthRequiredDialog();
+      return;
+    }
+    
     if (!_formKey.currentState!.validate()) {
         return;
       }
@@ -2631,6 +2641,26 @@ class _AddEditTankState extends State<AddEditTank> {
     showDialog(
       context: context,
       builder: (BuildContext context) => FishInfoDialog(fishName: fishName),
+    );
+  }
+
+  void _showAuthRequiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AuthRequiredDialog(
+        title: 'Sign In Required',
+        message: 'You need to be logged in to save tanks. Sign in to create and save your tank configurations.',
+        actionButtonText: 'Sign In to Save',
+        onActionPressed: () {
+          // Navigate to auth screen
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => const AuthScreen(showBackButton: true),
+            ),
+          );
+        },
+      ),
     );
   }
 

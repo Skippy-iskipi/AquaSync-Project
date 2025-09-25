@@ -1515,17 +1515,8 @@ class _SyncScreenState extends State<SyncScreen> {
 
 
   bool _canCheckCompatibility() {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
-      showDialog(
-        context: context,
-        builder: (BuildContext context) => const AuthRequiredDialog(
-          title: 'Sign In Required',
-          message: 'You need to sign in to check fish compatibility.',
-        ),
-      );
-      return false;
-    }
+    // Users can check compatibility without being logged in
+    // Authentication is only required when saving results
     return true;
   }
 
@@ -1537,10 +1528,19 @@ class _SyncScreenState extends State<SyncScreen> {
     
     if (_selectedFish.isEmpty) {
       showCustomNotification(
-      context,
-        'Please select at least one fish to check compatibility.',
+        context,
+        'Please select at least 2 fish to check compatibility.',
         isError: true,
-    );
+      );
+      return;
+    }
+    
+    if (_selectedFish.length < 2) {
+      showCustomNotification(
+        context,
+        'Please select at least 2 fish to check compatibility.',
+        isError: true,
+      );
       return;
     }
 
@@ -3126,7 +3126,7 @@ class _SyncScreenState extends State<SyncScreen> {
                         _selectedFish = newSelection;
                       });
                     },
-                    canProceed: _selectedFish.isNotEmpty && !isKeyboardVisible, // Disable button when keyboard is visible
+                    canProceed: _selectedFish.length >= 2 && !isKeyboardVisible, // Require at least 2 fish and disable button when keyboard is visible
                     isLastStep: true,
                     onNext: _checkCompatibility,
                     compatibilityResults: const {},

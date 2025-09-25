@@ -6,6 +6,9 @@ import '../screens/logbook.dart';
 import '../screens/fish_list_screen.dart';
 import 'package:provider/provider.dart';
 import 'logbook_provider.dart';
+import '../widgets/auth_required_dialog.dart';
+import '../services/auth_service.dart';
+import 'auth_screen.dart';
 
 import 'dart:io';
 import 'dart:async';
@@ -18,11 +21,9 @@ import '../models/fish_volume_calculation.dart';
 import '../models/tank.dart';
 import '../screens/calculator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../screens/auth_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/guide_overlay.dart';
 import 'guide_webview.dart';
-import '../services/auth_service.dart';
 import 'tank_management.dart';
 import 'add_edit_tank.dart';
 
@@ -1062,10 +1063,37 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
   }
 
   void _navigateToAddTank(BuildContext context) {
+    // Check if user is authenticated before allowing tank creation
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!authService.isAuthenticated) {
+      _showAuthRequiredDialog(context, 'Create Tank', 'You need to be logged in to create and save tanks.');
+      return;
+    }
+    
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => const AddEditTank(),
+      ),
+    );
+  }
+
+  void _showAuthRequiredDialog(BuildContext context, String title, String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AuthRequiredDialog(
+        title: title,
+        message: message,
+        actionButtonText: 'Sign In to Continue',
+        onActionPressed: () {
+          // Navigate to auth screen
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => const AuthScreen(showBackButton: true),
+            ),
+          );
+        },
       ),
     );
   }

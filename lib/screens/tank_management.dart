@@ -6,6 +6,9 @@ import '../providers/tank_provider.dart';
 import '../models/tank.dart';
 import 'add_edit_tank.dart';
 import '../widgets/fish_info_dialog.dart';
+import '../widgets/auth_required_dialog.dart';
+import '../services/auth_service.dart';
+import 'auth_screen.dart';
 
 class TankManagement extends StatefulWidget {
   const TankManagement({super.key});
@@ -393,16 +396,15 @@ class _TankManagementState extends State<TankManagement> {
     );
   }
 
-  void _navigateToAddTank(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const AddEditTank(),
-      ),
-    );
-  }
 
   void _navigateToEditTank(BuildContext context, Tank tank) {
+    // Check if user is authenticated before allowing tank editing
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!authService.isAuthenticated) {
+      _showAuthRequiredDialog(context, 'Edit Tank', 'You need to be logged in to edit and save tanks.');
+      return;
+    }
+    
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -421,6 +423,13 @@ class _TankManagementState extends State<TankManagement> {
   }
 
   void _showDeleteDialog(BuildContext context, Tank tank) {
+    // Check if user is authenticated before allowing tank deletion
+    final authService = Provider.of<AuthService>(context, listen: false);
+    if (!authService.isAuthenticated) {
+      _showAuthRequiredDialog(context, 'Delete Tank', 'You need to be logged in to delete tanks.');
+      return;
+    }
+    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -471,6 +480,26 @@ class _TankManagementState extends State<TankManagement> {
       print('Error getting tank shape label: $e');
       return 'Unknown Tank';
     }
+  }
+
+  void _showAuthRequiredDialog(BuildContext context, String title, String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AuthRequiredDialog(
+        title: title,
+        message: message,
+        actionButtonText: 'Sign In to Continue',
+        onActionPressed: () {
+          // Navigate to auth screen
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => const AuthScreen(showBackButton: true),
+            ),
+          );
+        },
+      ),
+    );
   }
 
 }
