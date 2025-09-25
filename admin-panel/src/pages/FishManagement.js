@@ -5,7 +5,9 @@ import {
   MagnifyingGlassIcon,
   EyeIcon,
   CheckCircleIcon,
-  XCircleIcon
+  XCircleIcon,
+  FunnelIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 
@@ -515,6 +517,17 @@ function FishManagement() {
   const [showStatusDialog, setShowStatusDialog] = useState(false);
   const [fishToToggle, setFishToToggle] = useState(null);
   const [newStatus, setNewStatus] = useState(null);
+  
+  // Filter states
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    temperament: '',
+    water_type: '',
+    diet: '',
+    status: '',
+    size_range: '',
+    tank_size_range: ''
+  });
 
   useEffect(() => {
     fetchFish();
@@ -645,31 +658,111 @@ function FishManagement() {
     }
   };
 
+  // Filter functions
+  const handleFilterChange = (filterType, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [filterType]: value
+    }));
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      temperament: '',
+      water_type: '',
+      diet: '',
+      status: '',
+      size_range: '',
+      tank_size_range: ''
+    });
+  };
+
+  const getActiveFiltersCount = () => {
+    return Object.values(filters).filter(value => value !== '').length;
+  };
+
   const filteredFish = fish.filter(f => {
-    if (!searchTerm) return true;
-    
-    const searchLower = searchTerm.toLowerCase();
-    
-    // Search across multiple characteristics
-    return (
-      f.common_name?.toLowerCase().includes(searchLower) ||
-      f.scientific_name?.toLowerCase().includes(searchLower) ||
-      f.temperament?.toLowerCase().includes(searchLower) ||
-      f.water_type?.toLowerCase().includes(searchLower) ||
-      f.diet?.toLowerCase().includes(searchLower) ||
-      f.social_behavior?.toLowerCase().includes(searchLower) ||
-      f.preferred_food?.toLowerCase().includes(searchLower) ||
-      f.feeding_frequency?.toLowerCase().includes(searchLower) ||
-      f.ph_range?.toLowerCase().includes(searchLower) ||
-      f.temperature_range?.toLowerCase().includes(searchLower) ||
-      f.lifespan?.toLowerCase().includes(searchLower) ||
-      (f.bioload && f.bioload.toString().toLowerCase().includes(searchLower)) ||
-      f.feeding_notes?.toLowerCase().includes(searchLower) ||
-      // Search by size ranges
-      (f['max_size_(cm)'] && f['max_size_(cm)'].toString().includes(searchTerm)) ||
-      (f['minimum_tank_size_(l)'] && f['minimum_tank_size_(l)'].toString().includes(searchTerm)) ||
-      (f.portion_grams && f.portion_grams.toString().includes(searchTerm))
-    );
+    // Text search
+    if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase();
+      const matchesSearch = (
+        f.common_name?.toLowerCase().includes(searchLower) ||
+        f.scientific_name?.toLowerCase().includes(searchLower) ||
+        f.temperament?.toLowerCase().includes(searchLower) ||
+        f.water_type?.toLowerCase().includes(searchLower) ||
+        f.diet?.toLowerCase().includes(searchLower) ||
+        f.social_behavior?.toLowerCase().includes(searchLower) ||
+        f.preferred_food?.toLowerCase().includes(searchLower) ||
+        f.feeding_frequency?.toLowerCase().includes(searchLower) ||
+        f.ph_range?.toLowerCase().includes(searchLower) ||
+        f.temperature_range?.toLowerCase().includes(searchLower) ||
+        f.lifespan?.toLowerCase().includes(searchLower) ||
+        (f.bioload && f.bioload.toString().toLowerCase().includes(searchLower)) ||
+        f.feeding_notes?.toLowerCase().includes(searchLower) ||
+        (f['max_size_(cm)'] && f['max_size_(cm)'].toString().includes(searchTerm)) ||
+        (f['minimum_tank_size_(l)'] && f['minimum_tank_size_(l)'].toString().includes(searchTerm)) ||
+        (f.portion_grams && f.portion_grams.toString().includes(searchTerm))
+      );
+      if (!matchesSearch) return false;
+    }
+
+    // Filter by temperament
+    if (filters.temperament && f.temperament !== filters.temperament) return false;
+
+    // Filter by water type
+    if (filters.water_type && f.water_type !== filters.water_type) return false;
+
+    // Filter by diet
+    if (filters.diet && f.diet !== filters.diet) return false;
+
+    // Filter by status
+    if (filters.status) {
+      const isActive = f.active === true || f.active === 'true';
+      if (filters.status === 'active' && !isActive) return false;
+      if (filters.status === 'inactive' && isActive) return false;
+    }
+
+    // Filter by size range
+    if (filters.size_range) {
+      const size = parseFloat(f['max_size_(cm)']);
+      if (!isNaN(size)) {
+        switch (filters.size_range) {
+          case 'small':
+            if (size > 10) return false;
+            break;
+          case 'medium':
+            if (size <= 10 || size > 30) return false;
+            break;
+          case 'large':
+            if (size <= 30) return false;
+            break;
+          default:
+            break;
+        }
+      }
+    }
+
+    // Filter by tank size range
+    if (filters.tank_size_range) {
+      const tankSize = parseInt(f['minimum_tank_size_(l)']);
+      if (!isNaN(tankSize)) {
+        switch (filters.tank_size_range) {
+          case 'small':
+            if (tankSize > 50) return false;
+            break;
+          case 'medium':
+            if (tankSize <= 50 || tankSize > 200) return false;
+            break;
+          case 'large':
+            if (tankSize <= 200) return false;
+            break;
+          default:
+            break;
+        }
+      }
+    }
+
+    return true;
   });
 
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -705,8 +798,9 @@ function FishManagement() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="mb-6">
+      {/* Search and Filters */}
+      <div className="mb-6 space-y-4">
+        {/* Search Bar */}
         <div className="relative">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
@@ -719,6 +813,136 @@ function FishManagement() {
             className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-aqua-500 focus:border-aqua-500 sm:text-sm"
           />
         </div>
+
+        {/* Filter Controls */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md border transition-colors ${
+              showFilters || getActiveFiltersCount() > 0
+                ? 'bg-aqua-50 border-aqua-300 text-aqua-700'
+                : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <FunnelIcon className="h-4 w-4 mr-2" />
+            Filters
+            {getActiveFiltersCount() > 0 && (
+              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-aqua-100 text-aqua-800">
+                {getActiveFiltersCount()}
+              </span>
+            )}
+          </button>
+
+          {getActiveFiltersCount() > 0 && (
+            <button
+              onClick={clearFilters}
+              className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              <XMarkIcon className="h-4 w-4 mr-1" />
+              Clear All
+            </button>
+          )}
+
+          <div className="text-sm text-gray-500">
+            {filteredFish.length} of {fish.length} fish
+          </div>
+        </div>
+
+        {/* Filter Panel */}
+        {showFilters && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* Temperament Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Temperament</label>
+                <select
+                  value={filters.temperament}
+                  onChange={(e) => handleFilterChange('temperament', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-aqua-500 focus:border-aqua-500"
+                >
+                  <option value="">All Temperaments</option>
+                  <option value="Peaceful">Peaceful</option>
+                  <option value="Semi-aggressive">Semi-aggressive</option>
+                  <option value="Aggressive">Aggressive</option>
+                </select>
+              </div>
+
+              {/* Water Type Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Water Type</label>
+                <select
+                  value={filters.water_type}
+                  onChange={(e) => handleFilterChange('water_type', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-aqua-500 focus:border-aqua-500"
+                >
+                  <option value="">All Water Types</option>
+                  <option value="Freshwater">Freshwater</option>
+                  <option value="Saltwater">Saltwater</option>
+                  <option value="Brackish">Brackish</option>
+                </select>
+              </div>
+
+              {/* Diet Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Diet</label>
+                <select
+                  value={filters.diet}
+                  onChange={(e) => handleFilterChange('diet', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-aqua-500 focus:border-aqua-500"
+                >
+                  <option value="">All Diets</option>
+                  <option value="Omnivore">Omnivore</option>
+                  <option value="Herbivore">Herbivore</option>
+                  <option value="Carnivore">Carnivore</option>
+                </select>
+              </div>
+
+              {/* Status Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <select
+                  value={filters.status}
+                  onChange={(e) => handleFilterChange('status', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-aqua-500 focus:border-aqua-500"
+                >
+                  <option value="">All Status</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
+
+              {/* Size Range Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fish Size</label>
+                <select
+                  value={filters.size_range}
+                  onChange={(e) => handleFilterChange('size_range', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-aqua-500 focus:border-aqua-500"
+                >
+                  <option value="">All Sizes</option>
+                  <option value="small">Small (≤10cm)</option>
+                  <option value="medium">Medium (10-30cm)</option>
+                  <option value="large">Large (>30cm)</option>
+                </select>
+              </div>
+
+              {/* Tank Size Range Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tank Size</label>
+                <select
+                  value={filters.tank_size_range}
+                  onChange={(e) => handleFilterChange('tank_size_range', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-aqua-500 focus:border-aqua-500"
+                >
+                  <option value="">All Tank Sizes</option>
+                  <option value="small">Small (≤50L)</option>
+                  <option value="medium">Medium (50-200L)</option>
+                  <option value="large">Large (>200L)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Fish Table - Desktop View */}
