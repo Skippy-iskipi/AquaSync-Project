@@ -170,6 +170,21 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
         }
       }
 
+      // Validate optional enum fields
+      if (row['tank_level'] && row['tank_level'].trim() !== '') {
+        const validTankLevels = ['Top', 'Mid', 'Bottom', 'All'];
+        if (!validTankLevels.includes(row['tank_level'])) {
+          rowErrors.push(`Row ${rowNumber}: tank_level must be one of: ${validTankLevels.join(', ')} (found: "${row['tank_level']}")`);
+        }
+      }
+
+      if (row['care_level'] && row['care_level'].trim() !== '') {
+        const validCareLevels = ['Beginner', 'Intermediate', 'Expert'];
+        if (!validCareLevels.includes(row['care_level'])) {
+          rowErrors.push(`Row ${rowNumber}: care_level must be one of: ${validCareLevels.join(', ')} (found: "${row['care_level']}")`);
+        }
+      }
+
       // Check for suspiciously short text fields
       const textFields = ['common_name', 'scientific_name', 'ph_range', 'temperature_range', 'social_behavior', 'lifespan', 'preferred_food', 'feeding_frequency', 'feeding_notes'];
       textFields.forEach(field => {
@@ -495,13 +510,13 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
       newErrors.social_behavior = 'Social behavior must be at least 2 characters';
     }
     
-    // Tank level validation
-    if (formData.tank_level && !['Top', 'Mid', 'Bottom', 'All'].includes(formData.tank_level)) {
+    // Tank level validation (optional)
+    if (formData.tank_level && formData.tank_level.trim() !== '' && !['Top', 'Mid', 'Bottom', 'All'].includes(formData.tank_level)) {
       newErrors.tank_level = 'Tank level must be Top, Mid, Bottom, or All';
     }
     
-    // Care level validation
-    if (formData.care_level && !['Beginner', 'Intermediate', 'Expert'].includes(formData.care_level)) {
+    // Care level validation (optional)
+    if (formData.care_level && formData.care_level.trim() !== '' && !['Beginner', 'Intermediate', 'Expert'].includes(formData.care_level)) {
       newErrors.care_level = 'Care level must be Beginner, Intermediate, or Expert';
     }
     
@@ -1458,18 +1473,16 @@ function FishManagement() {
       <div className="hidden md:block bg-white shadow overflow-hidden sm:rounded-md">
         <div className="table-container">
           <table className="table-mobile">
-          <thead className="bg-gray-50">
-            <tr>
+            <thead className="bg-gray-50">
+              <tr>
                 <th className="table-mobile-header">Common Name</th>
                 <th className="table-mobile-header">Scientific Name</th>
                 <th className="table-mobile-header">Temperament</th>
                 <th className="table-mobile-header">Water Type</th>
-                <th className="table-mobile-header">Care Level</th>
-                <th className="table-mobile-header">Tank Level</th>
                 <th className="table-mobile-header">Status</th>
                 <th className="table-mobile-header">Actions</th>
-            </tr>
-          </thead>
+              </tr>
+            </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {currentItems.map((fishItem, index) => (
               <tr key={fishItem.id || `fish-${index}`} className="hover:bg-gray-50">
@@ -1488,38 +1501,22 @@ function FishManagement() {
                 </td>
                   <td className="table-mobile-cell">
                     <span className={`status-badge ${
-                    fishItem.water_type === 'Freshwater' 
+                      fishItem.water_type === 'Freshwater' 
                         ? 'status-badge-blue'
                         : 'status-badge-teal'
-                  }`}>
-                    {fishItem.water_type}
-                  </span>
-                </td>
+                    }`}>
+                      {fishItem.water_type}
+                    </span>
+                  </td>
                   <td className="table-mobile-cell">
                     <span className={`status-badge ${
-                      fishItem.care_level === 'Beginner' 
+                      fishItem.active 
                         ? 'status-badge-green'
-                        : fishItem.care_level === 'Intermediate'
-                        ? 'status-badge-yellow'
                         : 'status-badge-red'
                     }`}>
-                      {fishItem.care_level || 'N/A'}
+                      {fishItem.active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
-                  <td className="table-mobile-cell">
-                    <span className="status-badge status-badge-gray">
-                      {fishItem.tank_level || 'N/A'}
-                    </span>
-                  </td>
-                  <td className="table-mobile-cell">
-                    <span className={`status-badge ${
-                    fishItem.active 
-                        ? 'status-badge-green'
-                        : 'status-badge-red'
-                  }`}>
-                    {fishItem.active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
                   <td className="table-mobile-cell">
                   <div className="flex space-x-2">
                     <button
@@ -1596,26 +1593,6 @@ function FishManagement() {
                     : 'status-badge-teal'
                 }`}>
                   {fishItem.water_type}
-                </span>
-              </div>
-              
-              <div className="mobile-card-row">
-                <span className="mobile-card-label">Care Level</span>
-                <span className={`mobile-card-value status-badge ${
-                  fishItem.care_level === 'Beginner' 
-                    ? 'status-badge-green'
-                    : fishItem.care_level === 'Intermediate'
-                    ? 'status-badge-yellow'
-                    : 'status-badge-red'
-                }`}>
-                  {fishItem.care_level || 'N/A'}
-                </span>
-              </div>
-              
-              <div className="mobile-card-row">
-                <span className="mobile-card-label">Tank Level</span>
-                <span className="mobile-card-value status-badge status-badge-gray">
-                  {fishItem.tank_level || 'N/A'}
                 </span>
               </div>
             </div>

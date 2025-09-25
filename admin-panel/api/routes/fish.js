@@ -465,6 +465,21 @@ router.post('/bulk', async (req, res) => {
         }
       }
 
+      // Validate optional enum fields
+      if (fishData['tank_level'] && fishData['tank_level'].trim() !== '') {
+        const validTankLevels = ['Top', 'Mid', 'Bottom', 'All'];
+        if (!validTankLevels.includes(fishData['tank_level'])) {
+          errors.push(`Row ${rowNumber}: tank_level must be one of: ${validTankLevels.join(', ')} (found: "${fishData['tank_level']}")`);
+        }
+      }
+
+      if (fishData['care_level'] && fishData['care_level'].trim() !== '') {
+        const validCareLevels = ['Beginner', 'Intermediate', 'Expert'];
+        if (!validCareLevels.includes(fishData['care_level'])) {
+          errors.push(`Row ${rowNumber}: care_level must be one of: ${validCareLevels.join(', ')} (found: "${fishData['care_level']}")`);
+        }
+      }
+
       // Check for suspiciously short text fields
       const textFields = ['common_name', 'scientific_name', 'ph_range', 'temperature_range', 'social_behavior', 'lifespan', 'preferred_food', 'feeding_frequency', 'feeding_notes'];
       textFields.forEach(field => {
