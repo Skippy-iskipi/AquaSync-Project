@@ -922,7 +922,7 @@ function FishManagement() {
                   <option value="">All Sizes</option>
                   <option value="small">Small (≤10cm)</option>
                   <option value="medium">Medium (10-30cm)</option>
-                  <option value="large">Large (>30cm)</option>
+                  <option value="large">Large (&gt;30cm)</option>
                 </select>
               </div>
 
@@ -937,7 +937,7 @@ function FishManagement() {
                   <option value="">All Tank Sizes</option>
                   <option value="small">Small (≤50L)</option>
                   <option value="medium">Medium (50-200L)</option>
-                  <option value="large">Large (>200L)</option>
+                  <option value="large">Large (&gt;200L)</option>
                 </select>
               </div>
             </div>
