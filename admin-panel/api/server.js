@@ -34,8 +34,8 @@ app.use('/api/', limiter);
 // CORS configuration
 const allowedOrigins = process.env.NODE_ENV === 'production' 
   ? [
-      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://your-admin-domain.com',
-      process.env.REACT_APP_API_URL || 'https://your-admin-domain.com'
+      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://aquasync-admin.vercel.app',
+      process.env.REACT_APP_API_URL || 'https://aquasync-admin.vercel.app'
     ]
   : ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:3001', 'http://localhost:5002', 'http://127.0.0.1:5002'];
 
