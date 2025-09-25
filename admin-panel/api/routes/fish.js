@@ -21,15 +21,19 @@ router.get('/', async (req, res) => {
         water_type,
         ph_range,
         social_behavior,
+        tank_level,
         "minimum_tank_size_(l)",
         temperature_range,
         diet,
         lifespan,
+        care_level,
         preferred_food,
         feeding_frequency,
         bioload,
         portion_grams,
         feeding_notes,
+        description,
+        overfeeding_risks,
         active
       `)
       .order('common_name', { ascending: true });
@@ -57,15 +61,19 @@ router.get('/', async (req, res) => {
             water_type,
             ph_range,
             social_behavior,
+            tank_level,
             "minimum_tank_size_(l)",
             temperature_range,
             diet,
             lifespan,
+            care_level,
             preferred_food,
             feeding_frequency,
             bioload,
             portion_grams,
-            feeding_notes
+            feeding_notes,
+            description,
+            overfeeding_risks
           `)
           .order('common_name', { ascending: true });
         
