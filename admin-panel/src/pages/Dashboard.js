@@ -117,7 +117,7 @@ function Dashboard() {
 
       const token = localStorage.getItem('admin_token');
       if (!token || token === 'null' || token === 'undefined') {
-        console.error('No valid authentication token found');
+        // No valid authentication token found
         setLoading(false);
         return;
       }
@@ -147,7 +147,7 @@ function Dashboard() {
       setRecentActivities(activitiesData);
       setUserLogins(loginsData);
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+      // Error fetching dashboard data
       setStats({ 
         totalUsers: 0, 
         totalFish: 0, 

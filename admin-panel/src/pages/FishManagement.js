@@ -533,7 +533,7 @@ function FishManagement() {
       setFish(Array.isArray(data) ? data : []);
     } catch (error) {
       toast.error('Failed to fetch fish data');
-      console.error('Error fetching fish:', error);
+      // Error fetching fish data
       setFish([]); // Ensure fish is always an array
     } finally {
       setLoading(false);
@@ -603,7 +603,7 @@ function FishManagement() {
       }
     } catch (error) {
       toast.error(`Error ${newStatus ? 'activating' : 'deactivating'} fish species`);
-      console.error('Error:', error);
+      // Error occurred during operation
     } finally {
       setShowStatusDialog(false);
       setFishToToggle(null);
@@ -630,9 +630,9 @@ function FishManagement() {
         fetchFish();
       } else {
         const errorData = await response.json();
-        console.error('API Error:', errorData);
+        // API Error occurred
         if (errorData.errors && errorData.errors.length > 0) {
-          console.error('Validation errors:', errorData.errors);
+          // Validation errors occurred
           const errorMessages = errorData.errors.map(err => `${err.path}: ${err.msg}`).join(', ');
           toast.error(`Validation failed: ${errorMessages}`);
         } else {
@@ -641,7 +641,7 @@ function FishManagement() {
       }
     } catch (error) {
       toast.error('Error saving fish species');
-      console.error('Error:', error);
+      // Error occurred during operation
     }
   };
 

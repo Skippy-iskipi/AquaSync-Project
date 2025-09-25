@@ -16,7 +16,7 @@ import toast from 'react-hot-toast';
 const getAuthToken = () => {
   const token = localStorage.getItem('admin_token');
   if (!token || token === 'null' || token === 'undefined') {
-    console.error('No valid authentication token found');
+    // No valid authentication token found
     toast.error('Authentication required. Please log in again.');
     return null;
   }
@@ -110,20 +110,12 @@ function UserManagement() {
       }
       
       const data = await response.json();
-      console.log('Fetched users data:', data);
-      console.log('Number of users:', Array.isArray(data) ? data.length : 0);
-      
-      // Log each user's status to debug status updates
-      if (Array.isArray(data)) {
-        data.forEach(user => {
-          console.log(`User: ${user.email}, Active: ${user.active}, Type: ${typeof user.active}`);
-        });
-      }
+      // Data fetched successfully - no need to log sensitive information
       
       setUsers(Array.isArray(data) ? data : []);
     } catch (error) {
       toast.error('Failed to fetch users data');
-      console.error('Error fetching users:', error);
+      // Error fetching users data
       setUsers([]); // Ensure users is always an array
     } finally {
       setLoading(false);
@@ -169,11 +161,11 @@ function UserManagement() {
             const data = await response.json();
             return { tableName, data: data || [] };
           } else {
-            console.warn(`Failed to fetch ${tableName}:`, response.status);
+            // Failed to fetch data
             return { tableName, data: [] };
           }
         } catch (error) {
-          console.warn(`Error fetching ${tableName}:`, error);
+          // Error fetching data
           return { tableName, data: [] };
         }
       });
@@ -186,7 +178,7 @@ function UserManagement() {
 
       setUserActivities(activities);
     } catch (error) {
-      console.error('Error fetching user activities:', error);
+      // Error fetching user activities
       toast.error('Failed to load user activities');
     } finally {
       setLoadingActivities(false);
@@ -233,7 +225,7 @@ function UserManagement() {
         return;
       }
       
-      console.log('Sending user data:', cleanedData);
+      // Sending user data to server
       
       const url = modalMode === 'add' ? '/api/users' : `/api/users/${userData.id}`;
       const method = modalMode === 'add' ? 'POST' : 'PUT';
@@ -254,9 +246,9 @@ function UserManagement() {
 
       if (response.status === 400) {
         const errorData = await response.json();
-        console.error('Bad Request Error:', errorData);
+        // Bad Request Error
         if (errorData.errors && errorData.errors.length > 0) {
-          console.error('Validation errors:', errorData.errors);
+          // Validation errors occurred
           const errorMessages = errorData.errors.map(err => `${err.path}: ${err.msg}`).join(', ');
           toast.error(`Validation failed: ${errorMessages}`);
         } else {
@@ -271,7 +263,7 @@ function UserManagement() {
         fetchUsers();
       } else {
         const errorData = await response.json();
-        console.error('Save Error:', errorData);
+        // Save Error occurred
         toast.error(`Failed to ${modalMode === 'add' ? 'create' : 'update'} user: ${errorData.message || 'Unknown error'}`);
       }
     } catch (error) {
@@ -293,12 +285,7 @@ function UserManagement() {
       const token = getAuthToken();
       if (!token) return;
       
-      console.log('Toggling user status:', {
-        userId: userToToggle.id,
-        currentStatus: userToToggle.currentStatus,
-        newStatus: newStatus,
-        token: token ? 'Present' : 'Missing'
-      });
+      // Toggling user status
       
       const response = await fetch(`/api/users/${userToToggle.id}/status`, {
         method: 'PATCH',
@@ -309,10 +296,7 @@ function UserManagement() {
         body: JSON.stringify({ active: newStatus }),
       });
 
-      console.log('Status update response:', {
-        status: response.status,
-        statusText: response.statusText
-      });
+      // Status update response received
 
       if (response.status === 401) {
         toast.error('Authentication expired. Please log in again.');
@@ -320,17 +304,15 @@ function UserManagement() {
       }
 
       if (response.ok) {
-        const result = await response.json();
-        console.log('Status update result:', result);
+        await response.json();
+        // Status update successful
         toast.success(`User ${newStatus ? 'activated' : 'deactivated'} successfully`);
         
         // Force refresh the users list
-        console.log('Refreshing users list...');
         await fetchUsers();
-        console.log('Users list refreshed');
       } else {
         const errorData = await response.json();
-        console.error('Status update error:', errorData);
+        // Status update error occurred
         toast.error(`Failed to update user status: ${errorData.message || 'Unknown error'}`);
       }
     } catch (error) {
@@ -350,7 +332,7 @@ function UserManagement() {
                    (user.email && user.email.toLowerCase().includes('admin'));
     
     if (isAdmin) {
-      console.log('Filtering out admin user:', user.email, 'role:', user.role);
+      // Filtering out admin user from display
       return false;
     }
     
