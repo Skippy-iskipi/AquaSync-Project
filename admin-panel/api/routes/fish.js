@@ -346,6 +346,143 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
+// Bulk upload fish species
+router.post('/bulk', async (req, res) => {
+  try {
+    const { fish } = req.body;
+
+    if (!Array.isArray(fish) || fish.length === 0) {
+      return res.status(400).json({ message: 'Fish array is required' });
+    }
+
+    // Validate each fish entry
+    const validationErrors = [];
+    const validFish = [];
+
+    fish.forEach((fishData, index) => {
+      const errors = [];
+      
+      // Required fields validation
+      const requiredFields = [
+        'common_name', 'scientific_name', 'water_type', 'temperament', 
+        'diet', 'max_size_(cm)', 'minimum_tank_size_(l)', 'ph_range',
+        'temperature_range', 'social_behavior', 'lifespan', 'preferred_food',
+        'feeding_frequency', 'bioload', 'portion_grams', 'feeding_notes'
+      ];
+
+      requiredFields.forEach(field => {
+        if (!fishData[field] || fishData[field].toString().trim() === '') {
+          errors.push(`Row ${index + 1}: ${field} is required`);
+        }
+      });
+
+      // Type validation
+      if (fishData['max_size_(cm)'] && (isNaN(fishData['max_size_(cm)']) || fishData['max_size_(cm)'] <= 0)) {
+        errors.push(`Row ${index + 1}: max_size_(cm) must be a positive number`);
+      }
+      
+      if (fishData['minimum_tank_size_(l)'] && (isNaN(fishData['minimum_tank_size_(l)']) || fishData['minimum_tank_size_(l)'] <= 0)) {
+        errors.push(`Row ${index + 1}: minimum_tank_size_(l) must be a positive number`);
+      }
+      
+      if (fishData['bioload'] && (isNaN(fishData['bioload']) || fishData['bioload'] < 0 || fishData['bioload'] > 10)) {
+        errors.push(`Row ${index + 1}: bioload must be between 0 and 10`);
+      }
+      
+      if (fishData['portion_grams'] && (isNaN(fishData['portion_grams']) || fishData['portion_grams'] <= 0)) {
+        errors.push(`Row ${index + 1}: portion_grams must be a positive number`);
+      }
+
+      if (fishData['water_type'] && !['Freshwater', 'Saltwater'].includes(fishData['water_type'])) {
+        errors.push(`Row ${index + 1}: water_type must be 'Freshwater' or 'Saltwater'`);
+      }
+
+      if (fishData['temperament'] && !['Peaceful', 'Semi-aggressive', 'Aggressive'].includes(fishData['temperament'])) {
+        errors.push(`Row ${index + 1}: temperament must be 'Peaceful', 'Semi-aggressive', or 'Aggressive'`);
+      }
+
+      if (fishData['diet'] && !['Omnivore', 'Herbivore', 'Carnivore'].includes(fishData['diet'])) {
+        errors.push(`Row ${index + 1}: diet must be 'Omnivore', 'Herbivore', or 'Carnivore'`);
+      }
+
+      if (errors.length === 0) {
+        validFish.push(fishData);
+      } else {
+        validationErrors.push(...errors);
+      }
+    });
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ 
+        message: 'Validation failed', 
+        errors: validationErrors 
+      });
+    }
+
+    // Insert valid fish data
+    const results = [];
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const fishData of validFish) {
+      try {
+        const { data, error } = await supabase
+          .from('fish_species')
+          .insert([{
+            common_name: fishData.common_name,
+            scientific_name: fishData.scientific_name,
+            'max_size_(cm)': parseFloat(fishData['max_size_(cm)']),
+            temperament: fishData.temperament,
+            water_type: fishData.water_type,
+            ph_range: fishData.ph_range,
+            social_behavior: fishData.social_behavior,
+            'minimum_tank_size_(l)': parseInt(fishData['minimum_tank_size_(l)']),
+            temperature_range: fishData.temperature_range,
+            diet: fishData.diet,
+            lifespan: fishData.lifespan,
+            preferred_food: fishData.preferred_food,
+            feeding_frequency: fishData.feeding_frequency,
+            bioload: parseFloat(fishData.bioload),
+            portion_grams: parseFloat(fishData.portion_grams),
+            feeding_notes: fishData.feeding_notes,
+            active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+        
+        results.push({ 
+          common_name: fishData.common_name, 
+          success: true, 
+          data 
+        });
+        successCount++;
+      } catch (error) {
+        console.error(`Error inserting ${fishData.common_name}:`, error);
+        results.push({ 
+          common_name: fishData.common_name, 
+          success: false, 
+          error: error.message 
+        });
+        errorCount++;
+      }
+    }
+
+    res.json({
+      message: 'Bulk upload completed',
+      successCount,
+      errorCount,
+      results
+    });
+  } catch (error) {
+    console.error('Bulk upload error:', error);
+    res.status(500).json({ message: 'Failed to perform bulk upload' });
+  }
+});
+
 // Bulk operations
 router.post('/bulk-update', authenticateAdmin, async (req, res) => {
   try {
