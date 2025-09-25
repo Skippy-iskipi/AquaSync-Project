@@ -409,77 +409,145 @@ function UserManagement() {
         </div>
       </div>
 
-      {/* Users Table */}
-      <div className="bg-white shadow overflow-hidden sm:rounded-md">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="table-header">Email</th>
-              <th className="table-header">Status</th>
-              <th className="table-header">Created</th>
-              <th className="table-header">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {currentItems.map((user) => (
-              <tr key={user.id} className="hover:bg-gray-50">
-                <td className="table-cell">
-                  {user.email || 'N/A'}
-                </td>
-                <td className="table-cell">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.active === true || user.active === 'true'
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-red-100 text-red-800'
-                  }`}>
-                    {user.active === true || user.active === 'true' ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td className="table-cell">
-                  <div className="text-sm text-gray-500">
-                    {user.updated_at ? format(new Date(user.updated_at), 'MMM dd, yyyy') : 'N/A'}
-                  </div>
-                </td>
-                <td className="table-cell">
-                  <div className="flex space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => handleViewUser(user)}
-                      className="text-aqua-600 hover:text-aqua-900"
-                      title="View Details"
-                    >
-                      <EyeIcon className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleEditUser(user)}
-                      className="text-indigo-600 hover:text-indigo-900"
-                      title="Edit User"
-                    >
-                      <PencilIcon className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleUserStatus(user.id, user.active)}
-                      className={`${
-                        user.active === true || user.active === 'true'
-                          ? 'text-red-600 hover:text-red-900'
-                          : 'text-green-600 hover:text-green-900'
-                      }`}
-                      title={user.active === true || user.active === 'true' ? 'Deactivate User' : 'Activate User'}
-                    >
-                      {user.active === true || user.active === 'true' ? (
-                        <XCircleIcon className="h-4 w-4" />
-                      ) : (
-                        <CheckCircleIcon className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
-                </td>
+      {/* Users Table - Desktop View */}
+      <div className="hidden md:block bg-white shadow overflow-hidden sm:rounded-md">
+        <div className="table-container">
+          <table className="table-mobile">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="table-mobile-header">Email</th>
+                <th className="table-mobile-header">Status</th>
+                <th className="table-mobile-header">Created</th>
+                <th className="table-mobile-header">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {currentItems.map((user) => (
+                <tr key={user.id} className="hover:bg-gray-50">
+                  <td className="table-mobile-cell">
+                    {user.email || 'N/A'}
+                  </td>
+                  <td className="table-mobile-cell">
+                    <span className={`status-badge ${
+                      user.active === true || user.active === 'true'
+                        ? 'status-badge-green'
+                        : 'status-badge-red'
+                    }`}>
+                      {user.active === true || user.active === 'true' ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="table-mobile-cell">
+                    <div className="text-sm text-gray-500">
+                      {user.updated_at ? format(new Date(user.updated_at), 'MMM dd, yyyy') : 'N/A'}
+                    </div>
+                  </td>
+                  <td className="table-mobile-cell">
+                    <div className="flex space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => handleViewUser(user)}
+                        className="text-aqua-600 hover:text-aqua-900"
+                        title="View Details"
+                      >
+                        <EyeIcon className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleEditUser(user)}
+                        className="text-indigo-600 hover:text-indigo-900"
+                        title="Edit User"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleUserStatus(user.id, user.active)}
+                        className={`${
+                          user.active === true || user.active === 'true'
+                            ? 'text-red-600 hover:text-red-900'
+                            : 'text-green-600 hover:text-green-900'
+                        }`}
+                        title={user.active === true || user.active === 'true' ? 'Deactivate User' : 'Activate User'}
+                      >
+                        {user.active === true || user.active === 'true' ? (
+                          <XCircleIcon className="h-4 w-4" />
+                        ) : (
+                          <CheckCircleIcon className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Users Cards - Mobile View */}
+      <div className="md:hidden space-y-4">
+        {currentItems.map((user) => (
+          <div key={user.id} className="mobile-card">
+            <div className="mobile-card-header">
+              <div>
+                <h3 className="mobile-card-title">{user.email || 'N/A'}</h3>
+                <p className="mobile-card-subtitle">
+                  {user.updated_at ? format(new Date(user.updated_at), 'MMM dd, yyyy') : 'N/A'}
+                </p>
+              </div>
+              <span className={`status-badge ${
+                user.active === true || user.active === 'true'
+                  ? 'status-badge-green'
+                  : 'status-badge-red'
+              }`}>
+                {user.active === true || user.active === 'true' ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+            
+            <div className="mobile-card-actions">
+              <button
+                type="button"
+                onClick={() => handleViewUser(user)}
+                className="mobile-action-btn mobile-action-btn-primary"
+                title="View Details"
+              >
+                <EyeIcon className="h-4 w-4 mr-1" />
+                View
+              </button>
+              <button
+                type="button"
+                onClick={() => handleEditUser(user)}
+                className="mobile-action-btn mobile-action-btn-secondary"
+                title="Edit User"
+              >
+                <PencilIcon className="h-4 w-4 mr-1" />
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleUserStatus(user.id, user.active)}
+                className={`mobile-action-btn ${
+                  user.active === true || user.active === 'true'
+                    ? 'mobile-action-btn-danger'
+                    : 'mobile-action-btn-primary'
+                }`}
+                title={user.active === true || user.active === 'true' ? 'Deactivate User' : 'Activate User'}
+              >
+                {user.active === true || user.active === 'true' ? (
+                  <>
+                    <XCircleIcon className="h-4 w-4 mr-1" />
+                    Deactivate
+                  </>
+                ) : (
+                  <>
+                    <CheckCircleIcon className="h-4 w-4 mr-1" />
+                    Activate
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Pagination */}

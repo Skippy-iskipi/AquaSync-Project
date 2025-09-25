@@ -721,86 +721,175 @@ function FishManagement() {
         </div>
       </div>
 
-      {/* Fish Table */}
-      <div className="bg-white shadow overflow-hidden sm:rounded-md">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="table-header">Common Name</th>
-              <th className="table-header">Scientific Name</th>
-              <th className="table-header">Temperament</th>
-              <th className="table-header">Water Type</th>
-              <th className="table-header">Status</th>
-              <th className="table-header">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {currentItems.map((fishItem, index) => (
-              <tr key={fishItem.id || `fish-${index}`} className="hover:bg-gray-50">
-                <td className="table-cell font-medium">{fishItem.common_name}</td>
-                <td className="table-cell italic">{fishItem.scientific_name}</td>
-                <td className="table-cell">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    fishItem.temperament === 'Peaceful' 
-                      ? 'bg-green-100 text-green-800'
-                      : fishItem.temperament === 'Semi-aggressive'
-                      ? 'bg-yellow-100 text-yellow-800'
-                      : 'bg-red-100 text-red-800'
-                  }`}>
-                    {fishItem.temperament}
-                  </span>
-                </td>
-                <td className="table-cell">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    fishItem.water_type === 'Freshwater' 
-                      ? 'bg-blue-100 text-blue-800'
-                      : 'bg-teal-100 text-teal-800'
-                  }`}>
-                    {fishItem.water_type}
-                  </span>
-                </td>
-                <td className="table-cell">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    fishItem.active 
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-red-100 text-red-800'
-                  }`}>
-                    {fishItem.active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td className="table-cell">
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => handleViewFish(fishItem)}
-                      className="text-aqua-600 hover:text-aqua-900"
-                      title="View Details"
-                    >
-                      <EyeIcon className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => handleEditFish(fishItem)}
-                      className="text-indigo-600 hover:text-indigo-900"
-                      title="Edit Fish"
-                    >
-                      <PencilIcon className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => handleToggleStatus(fishItem)}
-                      className={`${fishItem.active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
-                      title={fishItem.active ? 'Deactivate Fish' : 'Activate Fish'}
-                    >
-                      {fishItem.active ? (
-                        <XCircleIcon className="h-4 w-4" />
-                      ) : (
-                        <CheckCircleIcon className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
-                </td>
+      {/* Fish Table - Desktop View */}
+      <div className="hidden md:block bg-white shadow overflow-hidden sm:rounded-md">
+        <div className="table-container">
+          <table className="table-mobile">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="table-mobile-header">Common Name</th>
+                <th className="table-mobile-header">Scientific Name</th>
+                <th className="table-mobile-header">Temperament</th>
+                <th className="table-mobile-header">Water Type</th>
+                <th className="table-mobile-header">Status</th>
+                <th className="table-mobile-header">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {currentItems.map((fishItem, index) => (
+                <tr key={fishItem.id || `fish-${index}`} className="hover:bg-gray-50">
+                  <td className="table-mobile-cell font-medium">{fishItem.common_name}</td>
+                  <td className="table-mobile-cell italic">{fishItem.scientific_name}</td>
+                  <td className="table-mobile-cell">
+                    <span className={`status-badge ${
+                      fishItem.temperament === 'Peaceful' 
+                        ? 'status-badge-green'
+                        : fishItem.temperament === 'Semi-aggressive'
+                        ? 'status-badge-yellow'
+                        : 'status-badge-red'
+                    }`}>
+                      {fishItem.temperament}
+                    </span>
+                  </td>
+                  <td className="table-mobile-cell">
+                    <span className={`status-badge ${
+                      fishItem.water_type === 'Freshwater' 
+                        ? 'status-badge-blue'
+                        : 'status-badge-teal'
+                    }`}>
+                      {fishItem.water_type}
+                    </span>
+                  </td>
+                  <td className="table-mobile-cell">
+                    <span className={`status-badge ${
+                      fishItem.active 
+                        ? 'status-badge-green'
+                        : 'status-badge-red'
+                    }`}>
+                      {fishItem.active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="table-mobile-cell">
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => handleViewFish(fishItem)}
+                        className="text-aqua-600 hover:text-aqua-900"
+                        title="View Details"
+                      >
+                        <EyeIcon className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleEditFish(fishItem)}
+                        className="text-indigo-600 hover:text-indigo-900"
+                        title="Edit Fish"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleToggleStatus(fishItem)}
+                        className={`${fishItem.active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
+                        title={fishItem.active ? 'Deactivate Fish' : 'Activate Fish'}
+                      >
+                        {fishItem.active ? (
+                          <XCircleIcon className="h-4 w-4" />
+                        ) : (
+                          <CheckCircleIcon className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Fish Cards - Mobile View */}
+      <div className="md:hidden space-y-4">
+        {currentItems.map((fishItem, index) => (
+          <div key={fishItem.id || `fish-${index}`} className="mobile-card">
+            <div className="mobile-card-header">
+              <div>
+                <h3 className="mobile-card-title">{fishItem.common_name}</h3>
+                <p className="mobile-card-subtitle italic">{fishItem.scientific_name}</p>
+              </div>
+              <span className={`status-badge ${
+                fishItem.active 
+                  ? 'status-badge-green'
+                  : 'status-badge-red'
+              }`}>
+                {fishItem.active ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+            
+            <div className="mobile-card-content">
+              <div className="mobile-card-row">
+                <span className="mobile-card-label">Temperament</span>
+                <span className={`mobile-card-value status-badge ${
+                  fishItem.temperament === 'Peaceful' 
+                    ? 'status-badge-green'
+                    : fishItem.temperament === 'Semi-aggressive'
+                    ? 'status-badge-yellow'
+                    : 'status-badge-red'
+                }`}>
+                  {fishItem.temperament}
+                </span>
+              </div>
+              
+              <div className="mobile-card-row">
+                <span className="mobile-card-label">Water Type</span>
+                <span className={`mobile-card-value status-badge ${
+                  fishItem.water_type === 'Freshwater' 
+                    ? 'status-badge-blue'
+                    : 'status-badge-teal'
+                }`}>
+                  {fishItem.water_type}
+                </span>
+              </div>
+            </div>
+            
+            <div className="mobile-card-actions">
+              <button
+                onClick={() => handleViewFish(fishItem)}
+                className="mobile-action-btn mobile-action-btn-primary"
+                title="View Details"
+              >
+                <EyeIcon className="h-4 w-4 mr-1" />
+                View
+              </button>
+              <button
+                onClick={() => handleEditFish(fishItem)}
+                className="mobile-action-btn mobile-action-btn-secondary"
+                title="Edit Fish"
+              >
+                <PencilIcon className="h-4 w-4 mr-1" />
+                Edit
+              </button>
+              <button
+                onClick={() => handleToggleStatus(fishItem)}
+                className={`mobile-action-btn ${
+                  fishItem.active 
+                    ? 'mobile-action-btn-danger' 
+                    : 'mobile-action-btn-primary'
+                }`}
+                title={fishItem.active ? 'Deactivate' : 'Activate'}
+              >
+                {fishItem.active ? (
+                  <>
+                    <XCircleIcon className="h-4 w-4 mr-1" />
+                    Deactivate
+                  </>
+                ) : (
+                  <>
+                    <CheckCircleIcon className="h-4 w-4 mr-1" />
+                    Activate
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Pagination */}
