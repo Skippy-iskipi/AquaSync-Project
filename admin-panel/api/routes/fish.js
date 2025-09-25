@@ -147,15 +147,19 @@ router.post('/', [
       water_type: req.body.water_type,
       ph_range: req.body.ph_range,
       social_behavior: req.body.social_behavior,
+      tank_level: req.body.tank_level,
       'minimum_tank_size_(l)': req.body['minimum_tank_size_(l)'],
-      temperature_range: req.body.temperature_range,
       diet: req.body.diet,
       lifespan: req.body.lifespan,
+      care_level: req.body.care_level,
       preferred_food: req.body.preferred_food,
       feeding_frequency: req.body.feeding_frequency,
       bioload: req.body.bioload,
       portion_grams: req.body.portion_grams,
-      feeding_notes: req.body.feeding_notes
+      feeding_notes: req.body.feeding_notes,
+      description: req.body.description,
+      overfeeding_risks: req.body.overfeeding_risks,
+      temperature_range: req.body.temperature_range
     };
 
     console.log('Inserting fish data:', fishData);
@@ -222,15 +226,19 @@ router.put('/:id', [
       water_type: req.body.water_type,
       ph_range: req.body.ph_range,
       social_behavior: req.body.social_behavior,
+      tank_level: req.body.tank_level,
       'minimum_tank_size_(l)': req.body['minimum_tank_size_(l)'],
-      temperature_range: req.body.temperature_range,
       diet: req.body.diet,
       lifespan: req.body.lifespan,
+      care_level: req.body.care_level,
       preferred_food: req.body.preferred_food,
       feeding_frequency: req.body.feeding_frequency,
       bioload: req.body.bioload,
       portion_grams: req.body.portion_grams,
-      feeding_notes: req.body.feeding_notes
+      feeding_notes: req.body.feeding_notes,
+      description: req.body.description,
+      overfeeding_risks: req.body.overfeeding_risks,
+      temperature_range: req.body.temperature_range
     };
 
     // Remove undefined values
@@ -361,6 +369,17 @@ router.post('/bulk', async (req, res) => {
 
     fish.forEach((fishData, index) => {
       const errors = [];
+      const rowNumber = index + 1;
+      
+      // Check for completely empty rows
+      const hasAnyData = Object.values(fishData).some(value => 
+        value !== null && value !== undefined && value.toString().trim() !== ''
+      );
+      
+      if (!hasAnyData) {
+        validationErrors.push(`Row ${rowNumber}: Empty row detected - skipping`);
+        return; // Skip this row entirely
+      }
       
       // Required fields validation
       const requiredFields = [
@@ -371,39 +390,88 @@ router.post('/bulk', async (req, res) => {
       ];
 
       requiredFields.forEach(field => {
-        if (!fishData[field] || fishData[field].toString().trim() === '') {
-          errors.push(`Row ${index + 1}: ${field} is required`);
+        const value = fishData[field];
+        
+        // Check for null, undefined, empty string, or whitespace-only
+        if (value === null || value === undefined || value === '' || value.toString().trim() === '') {
+          errors.push(`Row ${rowNumber}: ${field} is required but found empty/null value`);
         }
       });
 
-      // Type validation
-      if (fishData['max_size_(cm)'] && (isNaN(fishData['max_size_(cm)']) || fishData['max_size_(cm)'] <= 0)) {
-        errors.push(`Row ${index + 1}: max_size_(cm) must be a positive number`);
+      // Enhanced numeric validation with better error messages
+      if (fishData['max_size_(cm)'] !== null && fishData['max_size_(cm)'] !== undefined && fishData['max_size_(cm)'] !== '') {
+        const size = parseFloat(fishData['max_size_(cm)']);
+        if (isNaN(size)) {
+          errors.push(`Row ${rowNumber}: max_size_(cm) must be a number (found: "${fishData['max_size_(cm)']}")`);
+        } else if (size <= 0) {
+          errors.push(`Row ${rowNumber}: max_size_(cm) must be greater than 0 (found: ${size})`);
+        } else if (size > 200) {
+          errors.push(`Row ${rowNumber}: max_size_(cm) seems too large (found: ${size}cm) - please verify`);
+        }
       }
       
-      if (fishData['minimum_tank_size_(l)'] && (isNaN(fishData['minimum_tank_size_(l)']) || fishData['minimum_tank_size_(l)'] <= 0)) {
-        errors.push(`Row ${index + 1}: minimum_tank_size_(l) must be a positive number`);
+      if (fishData['minimum_tank_size_(l)'] !== null && fishData['minimum_tank_size_(l)'] !== undefined && fishData['minimum_tank_size_(l)'] !== '') {
+        const tankSize = parseFloat(fishData['minimum_tank_size_(l)']);
+        if (isNaN(tankSize)) {
+          errors.push(`Row ${rowNumber}: minimum_tank_size_(l) must be a number (found: "${fishData['minimum_tank_size_(l)']}")`);
+        } else if (tankSize <= 0) {
+          errors.push(`Row ${rowNumber}: minimum_tank_size_(l) must be greater than 0 (found: ${tankSize})`);
+        } else if (tankSize > 10000) {
+          errors.push(`Row ${rowNumber}: minimum_tank_size_(l) seems too large (found: ${tankSize}L) - please verify`);
+        }
       }
       
-      if (fishData['bioload'] && (isNaN(fishData['bioload']) || fishData['bioload'] < 0 || fishData['bioload'] > 10)) {
-        errors.push(`Row ${index + 1}: bioload must be between 0 and 10`);
+      if (fishData['bioload'] !== null && fishData['bioload'] !== undefined && fishData['bioload'] !== '') {
+        const bioload = parseFloat(fishData['bioload']);
+        if (isNaN(bioload)) {
+          errors.push(`Row ${rowNumber}: bioload must be a number (found: "${fishData['bioload']}")`);
+        } else if (bioload < 0) {
+          errors.push(`Row ${rowNumber}: bioload cannot be negative (found: ${bioload})`);
+        } else if (bioload > 10) {
+          errors.push(`Row ${rowNumber}: bioload must be between 0-10 (found: ${bioload})`);
+        }
       }
       
-      if (fishData['portion_grams'] && (isNaN(fishData['portion_grams']) || fishData['portion_grams'] <= 0)) {
-        errors.push(`Row ${index + 1}: portion_grams must be a positive number`);
+      if (fishData['portion_grams'] !== null && fishData['portion_grams'] !== undefined && fishData['portion_grams'] !== '') {
+        const portion = parseFloat(fishData['portion_grams']);
+        if (isNaN(portion)) {
+          errors.push(`Row ${rowNumber}: portion_grams must be a number (found: "${fishData['portion_grams']}")`);
+        } else if (portion <= 0) {
+          errors.push(`Row ${rowNumber}: portion_grams must be greater than 0 (found: ${portion})`);
+        } else if (portion > 100) {
+          errors.push(`Row ${rowNumber}: portion_grams seems too large (found: ${portion}g) - please verify`);
+        }
       }
 
-      if (fishData['water_type'] && !['Freshwater', 'Saltwater'].includes(fishData['water_type'])) {
-        errors.push(`Row ${index + 1}: water_type must be 'Freshwater' or 'Saltwater'`);
+      // Enhanced enum validation with better error messages
+      if (fishData['water_type'] && fishData['water_type'].trim() !== '') {
+        const validWaterTypes = ['Freshwater', 'Saltwater'];
+        if (!validWaterTypes.includes(fishData['water_type'])) {
+          errors.push(`Row ${rowNumber}: water_type must be one of: ${validWaterTypes.join(', ')} (found: "${fishData['water_type']}")`);
+        }
       }
 
-      if (fishData['temperament'] && !['Peaceful', 'Semi-aggressive', 'Aggressive'].includes(fishData['temperament'])) {
-        errors.push(`Row ${index + 1}: temperament must be 'Peaceful', 'Semi-aggressive', or 'Aggressive'`);
+      if (fishData['temperament'] && fishData['temperament'].trim() !== '') {
+        const validTemperaments = ['Peaceful', 'Semi-aggressive', 'Aggressive'];
+        if (!validTemperaments.includes(fishData['temperament'])) {
+          errors.push(`Row ${rowNumber}: temperament must be one of: ${validTemperaments.join(', ')} (found: "${fishData['temperament']}")`);
+        }
       }
 
-      if (fishData['diet'] && !['Omnivore', 'Herbivore', 'Carnivore'].includes(fishData['diet'])) {
-        errors.push(`Row ${index + 1}: diet must be 'Omnivore', 'Herbivore', or 'Carnivore'`);
+      if (fishData['diet'] && fishData['diet'].trim() !== '') {
+        const validDiets = ['Omnivore', 'Herbivore', 'Carnivore'];
+        if (!validDiets.includes(fishData['diet'])) {
+          errors.push(`Row ${rowNumber}: diet must be one of: ${validDiets.join(', ')} (found: "${fishData['diet']}")`);
+        }
       }
+
+      // Check for suspiciously short text fields
+      const textFields = ['common_name', 'scientific_name', 'ph_range', 'temperature_range', 'social_behavior', 'lifespan', 'preferred_food', 'feeding_frequency', 'feeding_notes'];
+      textFields.forEach(field => {
+        if (fishData[field] && fishData[field].toString().trim().length < 2) {
+          errors.push(`Row ${rowNumber}: ${field} seems too short (found: "${fishData[field]}") - please verify`);
+        }
+      });
 
       if (errors.length === 0) {
         validFish.push(fishData);
@@ -436,15 +504,19 @@ router.post('/bulk', async (req, res) => {
             water_type: fishData.water_type,
             ph_range: fishData.ph_range,
             social_behavior: fishData.social_behavior,
+            tank_level: fishData.tank_level,
             'minimum_tank_size_(l)': parseInt(fishData['minimum_tank_size_(l)']),
-            temperature_range: fishData.temperature_range,
             diet: fishData.diet,
             lifespan: fishData.lifespan,
+            care_level: fishData.care_level,
             preferred_food: fishData.preferred_food,
             feeding_frequency: fishData.feeding_frequency,
             bioload: parseFloat(fishData.bioload),
             portion_grams: parseFloat(fishData.portion_grams),
             feeding_notes: fishData.feeding_notes,
+            description: fishData.description,
+            overfeeding_risks: fishData.overfeeding_risks,
+            temperature_range: fishData.temperature_range,
             active: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()

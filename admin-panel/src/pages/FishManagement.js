@@ -81,42 +81,102 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
 
     data.forEach((row, index) => {
       const rowErrors = [];
+      const rowNumber = index + 2; // +2 because Excel rows start at 1 and we skip header
       
-      // Check required fields
+      // Check for completely empty rows
+      const hasAnyData = Object.values(row).some(value => 
+        value !== null && value !== undefined && value.toString().trim() !== ''
+      );
+      
+      if (!hasAnyData) {
+        errors.push(`Row ${rowNumber}: Empty row detected - skipping`);
+        return; // Skip this row entirely
+      }
+      
+      // Check required fields for null/empty values
       requiredFields.forEach(field => {
-        if (!row[field] || row[field].toString().trim() === '') {
-          rowErrors.push(`Row ${index + 2}: ${field} is required`);
+        const value = row[field];
+        
+        // Check for null, undefined, empty string, or whitespace-only
+        if (value === null || value === undefined || value === '' || value.toString().trim() === '') {
+          rowErrors.push(`Row ${rowNumber}: ${field} is required but found empty/null value`);
         }
       });
 
-      // Validate specific fields
-      if (row['max_size_(cm)'] && (isNaN(row['max_size_(cm)']) || row['max_size_(cm)'] <= 0)) {
-        rowErrors.push(`Row ${index + 2}: max_size_(cm) must be a positive number`);
+      // Validate numeric fields with better error messages
+      if (row['max_size_(cm)'] !== null && row['max_size_(cm)'] !== undefined && row['max_size_(cm)'] !== '') {
+        const size = parseFloat(row['max_size_(cm)']);
+        if (isNaN(size)) {
+          rowErrors.push(`Row ${rowNumber}: max_size_(cm) must be a number (found: "${row['max_size_(cm)']}")`);
+        } else if (size <= 0) {
+          rowErrors.push(`Row ${rowNumber}: max_size_(cm) must be greater than 0 (found: ${size})`);
+        } else if (size > 200) {
+          rowErrors.push(`Row ${rowNumber}: max_size_(cm) seems too large (found: ${size}cm) - please verify`);
+        }
       }
       
-      if (row['minimum_tank_size_(l)'] && (isNaN(row['minimum_tank_size_(l)']) || row['minimum_tank_size_(l)'] <= 0)) {
-        rowErrors.push(`Row ${index + 2}: minimum_tank_size_(l) must be a positive number`);
+      if (row['minimum_tank_size_(l)'] !== null && row['minimum_tank_size_(l)'] !== undefined && row['minimum_tank_size_(l)'] !== '') {
+        const tankSize = parseFloat(row['minimum_tank_size_(l)']);
+        if (isNaN(tankSize)) {
+          rowErrors.push(`Row ${rowNumber}: minimum_tank_size_(l) must be a number (found: "${row['minimum_tank_size_(l)']}")`);
+        } else if (tankSize <= 0) {
+          rowErrors.push(`Row ${rowNumber}: minimum_tank_size_(l) must be greater than 0 (found: ${tankSize})`);
+        } else if (tankSize > 10000) {
+          rowErrors.push(`Row ${rowNumber}: minimum_tank_size_(l) seems too large (found: ${tankSize}L) - please verify`);
+        }
       }
       
-      if (row['bioload'] && (isNaN(row['bioload']) || row['bioload'] < 0 || row['bioload'] > 10)) {
-        rowErrors.push(`Row ${index + 2}: bioload must be between 0 and 10`);
+      if (row['bioload'] !== null && row['bioload'] !== undefined && row['bioload'] !== '') {
+        const bioload = parseFloat(row['bioload']);
+        if (isNaN(bioload)) {
+          rowErrors.push(`Row ${rowNumber}: bioload must be a number (found: "${row['bioload']}")`);
+        } else if (bioload < 0) {
+          rowErrors.push(`Row ${rowNumber}: bioload cannot be negative (found: ${bioload})`);
+        } else if (bioload > 10) {
+          rowErrors.push(`Row ${rowNumber}: bioload must be between 0-10 (found: ${bioload})`);
+        }
       }
       
-      if (row['portion_grams'] && (isNaN(row['portion_grams']) || row['portion_grams'] <= 0)) {
-        rowErrors.push(`Row ${index + 2}: portion_grams must be a positive number`);
+      if (row['portion_grams'] !== null && row['portion_grams'] !== undefined && row['portion_grams'] !== '') {
+        const portion = parseFloat(row['portion_grams']);
+        if (isNaN(portion)) {
+          rowErrors.push(`Row ${rowNumber}: portion_grams must be a number (found: "${row['portion_grams']}")`);
+        } else if (portion <= 0) {
+          rowErrors.push(`Row ${rowNumber}: portion_grams must be greater than 0 (found: ${portion})`);
+        } else if (portion > 100) {
+          rowErrors.push(`Row ${rowNumber}: portion_grams seems too large (found: ${portion}g) - please verify`);
+        }
       }
 
-      if (row['water_type'] && !['Freshwater', 'Saltwater'].includes(row['water_type'])) {
-        rowErrors.push(`Row ${index + 2}: water_type must be 'Freshwater' or 'Saltwater'`);
+      // Validate enum fields with better error messages
+      if (row['water_type'] && row['water_type'].trim() !== '') {
+        const validWaterTypes = ['Freshwater', 'Saltwater'];
+        if (!validWaterTypes.includes(row['water_type'])) {
+          rowErrors.push(`Row ${rowNumber}: water_type must be one of: ${validWaterTypes.join(', ')} (found: "${row['water_type']}")`);
+        }
       }
 
-      if (row['temperament'] && !['Peaceful', 'Semi-aggressive', 'Aggressive'].includes(row['temperament'])) {
-        rowErrors.push(`Row ${index + 2}: temperament must be 'Peaceful', 'Semi-aggressive', or 'Aggressive'`);
+      if (row['temperament'] && row['temperament'].trim() !== '') {
+        const validTemperaments = ['Peaceful', 'Semi-aggressive', 'Aggressive'];
+        if (!validTemperaments.includes(row['temperament'])) {
+          rowErrors.push(`Row ${rowNumber}: temperament must be one of: ${validTemperaments.join(', ')} (found: "${row['temperament']}")`);
+        }
       }
 
-      if (row['diet'] && !['Omnivore', 'Herbivore', 'Carnivore'].includes(row['diet'])) {
-        rowErrors.push(`Row ${index + 2}: diet must be 'Omnivore', 'Herbivore', or 'Carnivore'`);
+      if (row['diet'] && row['diet'].trim() !== '') {
+        const validDiets = ['Omnivore', 'Herbivore', 'Carnivore'];
+        if (!validDiets.includes(row['diet'])) {
+          rowErrors.push(`Row ${rowNumber}: diet must be one of: ${validDiets.join(', ')} (found: "${row['diet']}")`);
+        }
       }
+
+      // Check for suspiciously short text fields
+      const textFields = ['common_name', 'scientific_name', 'ph_range', 'temperature_range', 'social_behavior', 'lifespan', 'preferred_food', 'feeding_frequency', 'feeding_notes'];
+      textFields.forEach(field => {
+        if (row[field] && row[field].toString().trim().length < 2) {
+          rowErrors.push(`Row ${rowNumber}: ${field} seems too short (found: "${row[field]}") - please verify`);
+        }
+      });
 
       if (rowErrors.length === 0) {
         valid.push(row);
@@ -161,12 +221,16 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
       'ph_range': '6.0-8.0',
       'temperature_range': '18-22°C',
       'social_behavior': 'Community',
+      'tank_level': 'All',
       'lifespan': '10-15 years',
+      'care_level': 'Beginner',
       'preferred_food': 'Pellets, Flakes',
       'feeding_frequency': '2 times daily',
       'bioload': 3,
       'portion_grams': 5,
-      'feeding_notes': 'Feed small amounts twice daily'
+      'feeding_notes': 'Feed small amounts twice daily',
+      'description': 'A popular freshwater fish known for its bright colors and hardy nature.',
+      'overfeeding_risks': 'Can lead to swim bladder issues and water quality problems.'
     }];
 
     const ws = XLSX.utils.json_to_sheet(templateData);
@@ -231,12 +295,36 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
             {/* Errors */}
             {errors.length > 0 && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-red-900 mb-2">Validation Errors</h4>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-medium text-red-900">
+                    Validation Errors ({errors.length} found)
+                  </h4>
+                  <span className="text-xs text-red-600 bg-red-100 px-2 py-1 rounded">
+                    Fix these errors to proceed
+                  </span>
+                </div>
+                
+                {/* Error Summary */}
+                <div className="mb-3 p-2 bg-red-100 rounded text-xs text-red-800">
+                  <strong>Common Issues:</strong> Empty cells, invalid data types, wrong values, or missing required fields.
+                  <br />
+                  <strong>Tip:</strong> Download the template to see the correct format.
+                </div>
+                
                 <ul className="text-sm text-red-700 space-y-1 max-h-32 overflow-y-auto">
                   {errors.map((error, index) => (
-                    <li key={index}>• {error}</li>
+                    <li key={index} className="flex items-start">
+                      <span className="text-red-500 mr-2 mt-0.5">•</span>
+                      <span className="flex-1">{error}</span>
+                    </li>
                   ))}
                 </ul>
+                
+                {errors.length > 10 && (
+                  <div className="mt-2 text-xs text-red-600 bg-red-100 p-2 rounded">
+                    Showing first 10 errors. Fix these and re-upload to see remaining errors.
+                  </div>
+                )}
               </div>
             )}
 
@@ -407,6 +495,16 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
       newErrors.social_behavior = 'Social behavior must be at least 2 characters';
     }
     
+    // Tank level validation
+    if (formData.tank_level && !['Top', 'Mid', 'Bottom', 'All'].includes(formData.tank_level)) {
+      newErrors.tank_level = 'Tank level must be Top, Mid, Bottom, or All';
+    }
+    
+    // Care level validation
+    if (formData.care_level && !['Beginner', 'Intermediate', 'Expert'].includes(formData.care_level)) {
+      newErrors.care_level = 'Care level must be Beginner, Intermediate, or Expert';
+    }
+    
     // Make preferred food required
     if (!formData.preferred_food?.trim()) {
       newErrors.preferred_food = 'Preferred food is required';
@@ -446,6 +544,16 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
       if (isNaN(portion) || portion <= 0 || portion > 100) {
         newErrors.portion_grams = 'Portion must be between 0.1 and 100 grams';
       }
+    }
+    
+    // Description validation (optional but if provided, should be meaningful)
+    if (formData.description && formData.description.trim().length < 10) {
+      newErrors.description = 'Description should be at least 10 characters if provided';
+    }
+    
+    // Overfeeding risks validation (optional but if provided, should be meaningful)
+    if (formData.overfeeding_risks && formData.overfeeding_risks.trim().length < 10) {
+      newErrors.overfeeding_risks = 'Overfeeding risks should be at least 10 characters if provided';
     }
     
     setErrors(newErrors);
@@ -609,6 +717,26 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700">Tank Level</label>
+                <select
+                  name="tank_level"
+                  value={formData.tank_level || ''}
+                  onChange={handleChange}
+                  disabled={isReadOnly}
+                  className={`input-field ${errors.tank_level ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''}`}
+                >
+                  <option value="">Select tank level</option>
+                  <option value="Top">Top</option>
+                  <option value="Mid">Mid</option>
+                  <option value="Bottom">Bottom</option>
+                  <option value="All">All</option>
+                </select>
+                {errors.tank_level && (
+                  <p className="mt-1 text-sm text-red-600">{errors.tank_level}</p>
+                )}
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700">Minimum Tank Size (L) *</label>
                 <input
                   type="number"
@@ -677,6 +805,25 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
                 />
                 {errors.lifespan && (
                   <p className="mt-1 text-sm text-red-600">{errors.lifespan}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Care Level</label>
+                <select
+                  name="care_level"
+                  value={formData.care_level || ''}
+                  onChange={handleChange}
+                  disabled={isReadOnly}
+                  className={`input-field ${errors.care_level ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''}`}
+                >
+                  <option value="">Select care level</option>
+                  <option value="Beginner">Beginner</option>
+                  <option value="Intermediate">Intermediate</option>
+                  <option value="Expert">Expert</option>
+                </select>
+                {errors.care_level && (
+                  <p className="mt-1 text-sm text-red-600">{errors.care_level}</p>
                 )}
               </div>
 
@@ -768,6 +915,38 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
                   <p className="mt-1 text-sm text-red-600">{errors.feeding_notes}</p>
                 )}
               </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700">Description</label>
+                <textarea
+                  name="description"
+                  value={formData.description || ''}
+                  onChange={handleChange}
+                  readOnly={isReadOnly}
+                  className={`input-field ${errors.description ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''}`}
+                  rows="3"
+                  placeholder="Detailed description of the fish species..."
+                />
+                {errors.description && (
+                  <p className="mt-1 text-sm text-red-600">{errors.description}</p>
+                )}
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700">Overfeeding Risks</label>
+                <textarea
+                  name="overfeeding_risks"
+                  value={formData.overfeeding_risks || ''}
+                  onChange={handleChange}
+                  readOnly={isReadOnly}
+                  className={`input-field ${errors.overfeeding_risks ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''}`}
+                  rows="3"
+                  placeholder="Information about overfeeding risks and consequences..."
+                />
+                {errors.overfeeding_risks && (
+                  <p className="mt-1 text-sm text-red-600">{errors.overfeeding_risks}</p>
+                )}
+              </div>
             </div>
 
             {!isReadOnly && (
@@ -852,15 +1031,19 @@ function FishManagement() {
       water_type: 'Freshwater',
       ph_range: '',
       social_behavior: 'Community',
+      tank_level: 'All',
       'minimum_tank_size_(l)': '',
-      temperature_range: '',
       diet: 'Omnivore',
       lifespan: '',
+      care_level: 'Beginner',
       preferred_food: '',
       feeding_frequency: '',
       bioload: '',
       portion_grams: '',
-      feeding_notes: ''
+      feeding_notes: '',
+      description: '',
+      overfeeding_risks: '',
+      temperature_range: ''
     });
     setModalMode('add');
     setShowModal(true);
@@ -1103,21 +1286,25 @@ function FishManagement() {
             Manage fish species in the database with CRUD operations
           </p>
         </div>
-        <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none space-x-3">
-          <button
-            onClick={() => setShowBulkUpload(true)}
-            className="inline-flex items-center justify-center rounded-md border border-aqua-300 bg-white px-4 py-2 text-sm font-medium text-aqua-700 shadow-sm hover:bg-aqua-50 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2 sm:w-auto"
-          >
-            <DocumentArrowUpIcon className="h-4 w-4 mr-2" />
-            Bulk Upload
-          </button>
+        <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={() => setShowBulkUpload(true)}
+              className="inline-flex items-center justify-center rounded-md border border-aqua-300 bg-white px-4 py-2 text-sm font-medium text-aqua-700 shadow-sm hover:bg-aqua-50 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2 w-full sm:w-auto"
+            >
+              <DocumentArrowUpIcon className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">Bulk Upload</span>
+              <span className="sm:hidden">Upload Excel</span>
+            </button>
           <button
             onClick={handleAddFish}
-            className="inline-flex items-center justify-center rounded-md border border-transparent bg-aqua-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-aqua-700 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2 sm:w-auto"
+              className="inline-flex items-center justify-center rounded-md border border-transparent bg-aqua-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-aqua-700 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2 w-full sm:w-auto"
           >
             <PlusIcon className="h-4 w-4 mr-2" />
-            Add Fish Species
+              <span className="hidden sm:inline">Add Fish Species</span>
+              <span className="sm:hidden">Add Fish</span>
           </button>
+          </div>
         </div>
       </div>
 
@@ -1277,6 +1464,8 @@ function FishManagement() {
                 <th className="table-mobile-header">Scientific Name</th>
                 <th className="table-mobile-header">Temperament</th>
                 <th className="table-mobile-header">Water Type</th>
+                <th className="table-mobile-header">Care Level</th>
+                <th className="table-mobile-header">Tank Level</th>
                 <th className="table-mobile-header">Status</th>
                 <th className="table-mobile-header">Actions</th>
             </tr>
@@ -1306,6 +1495,22 @@ function FishManagement() {
                     {fishItem.water_type}
                   </span>
                 </td>
+                  <td className="table-mobile-cell">
+                    <span className={`status-badge ${
+                      fishItem.care_level === 'Beginner' 
+                        ? 'status-badge-green'
+                        : fishItem.care_level === 'Intermediate'
+                        ? 'status-badge-yellow'
+                        : 'status-badge-red'
+                    }`}>
+                      {fishItem.care_level || 'N/A'}
+                    </span>
+                  </td>
+                  <td className="table-mobile-cell">
+                    <span className="status-badge status-badge-gray">
+                      {fishItem.tank_level || 'N/A'}
+                    </span>
+                  </td>
                   <td className="table-mobile-cell">
                     <span className={`status-badge ${
                     fishItem.active 
@@ -1391,6 +1596,26 @@ function FishManagement() {
                     : 'status-badge-teal'
                 }`}>
                   {fishItem.water_type}
+                </span>
+              </div>
+              
+              <div className="mobile-card-row">
+                <span className="mobile-card-label">Care Level</span>
+                <span className={`mobile-card-value status-badge ${
+                  fishItem.care_level === 'Beginner' 
+                    ? 'status-badge-green'
+                    : fishItem.care_level === 'Intermediate'
+                    ? 'status-badge-yellow'
+                    : 'status-badge-red'
+                }`}>
+                  {fishItem.care_level || 'N/A'}
+                </span>
+              </div>
+              
+              <div className="mobile-card-row">
+                <span className="mobile-card-label">Tank Level</span>
+                <span className="mobile-card-value status-badge status-badge-gray">
+                  {fishItem.tank_level || 'N/A'}
                 </span>
               </div>
             </div>
