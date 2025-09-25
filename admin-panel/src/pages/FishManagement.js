@@ -51,8 +51,8 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
     
     if (!formData.water_type) {
       newErrors.water_type = 'Water type is required';
-    } else if (!['Freshwater', 'Saltwater', 'Brackish'].includes(formData.water_type)) {
-      newErrors.water_type = 'Water type must be Freshwater, Saltwater, or Brackish';
+    } else if (!['Freshwater', 'Saltwater'].includes(formData.water_type)) {
+      newErrors.water_type = 'Water type must be Freshwater or Saltwater';
     }
     
     // Make temperament required
@@ -278,7 +278,6 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
                   <option value="">Select water type *</option>
                   <option value="Freshwater">Freshwater</option>
                   <option value="Saltwater">Saltwater</option>
-                  <option value="Brackish">Brackish</option>
                 </select>
                 {errors.water_type && (
                   <p className="mt-1 text-sm text-red-600">{errors.water_type}</p>
@@ -878,7 +877,6 @@ function FishManagement() {
                   <option value="">All Water Types</option>
                   <option value="Freshwater">Freshwater</option>
                   <option value="Saltwater">Saltwater</option>
-                  <option value="Brackish">Brackish</option>
                 </select>
               </div>
 
