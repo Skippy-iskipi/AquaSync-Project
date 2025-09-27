@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (including OpenCV dependencies)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
@@ -16,6 +16,12 @@ RUN apt-get update && \
         libsm6 \
         libxext6 \
         libxrender-dev \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
+        libgtk2.0-dev \
+        libavcodec-dev \
+        libavformat-dev \
+        libswscale-dev \
         git \
         && rm -rf /var/lib/apt/lists/*
 
