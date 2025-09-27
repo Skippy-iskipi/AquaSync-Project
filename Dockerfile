@@ -23,8 +23,11 @@ RUN apt-get update && \
 COPY backend/requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy the rest of your application code
-COPY backend/app /app
+# Copy the entire backend directory to maintain structure
+COPY backend/ .
+
+# Create model cache directory
+RUN mkdir -p /app/model_cache
 
 # Expose the port FastAPI will use
 EXPOSE 8000
