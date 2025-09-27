@@ -17,6 +17,7 @@ from typing import Dict, List, Any
 sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 
 from app.conditional_compatibility import check_conditional_compatibility
+from app.enhanced_compatibility_integration import check_enhanced_fish_compatibility
 from supabase import create_client, Client
 
 # Configuration - Update these with your actual Supabase credentials
@@ -55,10 +56,10 @@ async def get_fish_species_sample(limit: int = None) -> List[Dict[str, Any]]:
         return []
 
 def calculate_compatibility_for_pair(fish1: Dict[str, Any], fish2: Dict[str, Any]) -> Dict[str, Any]:
-    """Calculate compatibility for a single fish pair using the conditional compatibility system"""
+    """Calculate compatibility for a single fish pair using the enhanced compatibility system (same as real-time API)"""
     try:
-        # Use the conditional compatibility system directly
-        compatibility_level, reasons, conditions = check_conditional_compatibility(fish1, fish2)
+        # Use the enhanced compatibility system (same as real-time API)
+        compatibility_level, reasons, conditions = check_enhanced_fish_compatibility(fish1, fish2)
         
         # Calculate compatibility score based on level (scale to 0-9.99 range)
         if compatibility_level == "compatible":
@@ -84,7 +85,7 @@ def calculate_compatibility_for_pair(fish1: Dict[str, Any], fish2: Dict[str, Any
             "conditions": conditions,
             "compatibility_score": compatibility_score,
             "confidence_score": confidence_score,
-            "generation_method": "conditional_compatibility_system"
+            "generation_method": "enhanced_compatibility_system"
         }
         return validate_numeric_values(result, "compatibility")
         

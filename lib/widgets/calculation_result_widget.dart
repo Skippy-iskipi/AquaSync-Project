@@ -95,15 +95,17 @@ class CalculationResultWidget extends StatelessWidget {
   }
 
   Widget _buildInfoRow(BuildContext context, CalculationInfoRow row) {
-    return Container(
+    Widget content = Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: row.onTap != null ? Colors.grey[100] : Colors.grey[50],
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color: const Color(0xFF00ACC1).withOpacity(0.3),
-          width: 1,
+          color: row.onTap != null 
+              ? const Color(0xFF00ACC1).withOpacity(0.5)
+              : const Color(0xFF00ACC1).withOpacity(0.3),
+          width: row.onTap != null ? 2 : 1,
         ),
       ),
       child: Row(
@@ -119,13 +121,21 @@ class CalculationResultWidget extends StatelessWidget {
           Expanded(
             child: Text(
               row.label.isEmpty ? row.value : '${row.label}: ${row.value}',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
-                fontWeight: FontWeight.normal,
+                fontWeight: row.onTap != null ? FontWeight.w500 : FontWeight.normal,
                 color: Colors.black,
               ),
             ),
           ),
+          if (row.showArrowIcon && row.onTap != null) ...[
+            const SizedBox(width: 8),
+            Icon(
+              Icons.arrow_forward_ios,
+              size: 12,
+              color: Colors.black.withOpacity(0.4),
+            ),
+          ],
           if (row.showEyeIcon) ...[
             const SizedBox(width: 8),
             GestureDetector(
@@ -165,6 +175,16 @@ class CalculationResultWidget extends StatelessWidget {
         ],
       ),
     );
+
+    // Wrap with GestureDetector if onTap is provided
+    if (row.onTap != null) {
+      return GestureDetector(
+        onTap: row.onTap,
+        child: content,
+      );
+    }
+
+    return content;
   }
 
   Widget _buildAdditionalCard(CalculationCard card) {
@@ -208,12 +228,16 @@ class CalculationInfoRow {
   final String label;
   final String value;
   final bool showEyeIcon;
+  final VoidCallback? onTap;
+  final bool showArrowIcon;
 
   const CalculationInfoRow({
     this.icon,
     required this.label,
     required this.value,
     this.showEyeIcon = false,
+    this.onTap,
+    this.showArrowIcon = false,
   });
 }
 

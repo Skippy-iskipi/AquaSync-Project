@@ -132,28 +132,31 @@ def check_water_parameter_compatibility(fish1: EnhancedFishData, fish2: Enhanced
     
     # Water type must match
     if fish1.water_type != fish2.water_type:
-        incompatible.append(f"Water type mismatch: {fish1.water_type.value} vs {fish2.water_type.value}")
+        incompatible.append(f"These fish cannot live together because one needs {fish1.water_type.value.lower()} while the other needs {fish2.water_type.value.lower()} - their bodies are adapted to completely different environments")
         return False, incompatible, conditions
     
     # Temperature range overlap
     temp_overlap = max(fish1.temperature_min, fish2.temperature_min) <= min(fish1.temperature_max, fish2.temperature_max)
     if not temp_overlap:
-        incompatible.append(f"No temperature overlap: {fish1.temperature_min}-{fish1.temperature_max}°C vs {fish2.temperature_min}-{fish2.temperature_max}°C")
+        incompatible.append(f"These fish need very different water temperatures - one prefers {fish1.temperature_min}-{fish1.temperature_max}°C while the other needs {fish2.temperature_min}-{fish2.temperature_max}°C, which will stress both fish")
     elif (min(fish1.temperature_max, fish2.temperature_max) - max(fish1.temperature_min, fish2.temperature_min)) < 2:
-        conditions.append("Very narrow temperature range compatibility - monitor carefully")
+        conditions.append("The temperature requirements are quite different but might be manageable")
+        conditions.append("You'll need to carefully maintain temperature between the overlapping range")
     
     # pH range overlap
     ph_overlap = max(fish1.ph_min, fish2.ph_min) <= min(fish1.ph_max, fish2.ph_max)
     if not ph_overlap:
-        incompatible.append(f"No pH overlap: {fish1.ph_min}-{fish1.ph_max} vs {fish2.ph_min}-{fish2.ph_max}")
+        incompatible.append(f"These fish need very different water acidity levels - one needs pH {fish1.ph_min}-{fish1.ph_max} while the other needs pH {fish2.ph_min}-{fish2.ph_max}, which will stress both fish")
     elif (min(fish1.ph_max, fish2.ph_max) - max(fish1.ph_min, fish2.ph_min)) < 0.5:
-        conditions.append("Narrow pH compatibility - maintain stable water parameters")
+        conditions.append("The pH requirements are quite different but might be manageable")
+        conditions.append("You'll need to carefully maintain pH between the overlapping range")
     
     # Hardness compatibility (more flexible)
     if fish1.hardness_min > 0 and fish2.hardness_min > 0:
         hardness_overlap = max(fish1.hardness_min, fish2.hardness_min) <= min(fish1.hardness_max, fish2.hardness_max)
         if not hardness_overlap:
-            conditions.append("Different hardness preferences - gradual acclimation needed")
+            conditions.append("These fish prefer different water hardness levels")
+            conditions.append("Gradually adjust the water hardness so both fish can adapt comfortably")
     
     return len(incompatible) == 0, incompatible, conditions
 
@@ -174,32 +177,37 @@ def check_behavioral_compatibility(fish1: EnhancedFishData, fish2: EnhancedFishD
     score2 = temp_scores.get(fish2.temperament, 1)
     
     if score1 == 2 and score2 == 0:
-        incompatible.append(f"Temperament mismatch: {fish1.temperament.value} fish with {fish2.temperament.value} fish")
+        incompatible.append(f"The aggressive nature of {fish1.common_name} will stress and likely harm your peaceful {fish2.common_name}")
     elif score2 == 2 and score1 == 0:
-        incompatible.append(f"Temperament mismatch: {fish2.temperament.value} fish with {fish1.temperament.value} fish")
+        incompatible.append(f"The aggressive nature of {fish2.common_name} will stress and likely harm your peaceful {fish1.common_name}")
     elif score1 == 2 and score2 == 2:
-        incompatible.append("Both fish are aggressive/territorial - high conflict risk")
+        incompatible.append("Both fish are very aggressive and will constantly fight, causing stress and injury")
     elif (score1 == 1 and score2 == 0) or (score2 == 1 and score1 == 0):
-        conditions.append("Semi-aggressive with peaceful fish - provide hiding spots and monitor")
+        conditions.append("Semi-aggressive fish can stress peaceful fish, but it's manageable with proper setup")
+        conditions.append("Use a large tank with plenty of hiding spots and territories")
+        conditions.append("Add the peaceful fish first so they can establish their own territories")
     
     # Social behavior compatibility
     if fish1.social_behavior == SocialBehavior.SOLITARY or fish2.social_behavior == SocialBehavior.SOLITARY:
         if fish1.tank_zone != fish2.tank_zone:
-            conditions.append("Solitary fish with different tank zones - provide separate territories")
+            conditions.append("One fish prefers to be alone but can live with fish that occupy different areas of the tank")
+            conditions.append("Create separate territories and caves where the solitary fish can retreat")
         else:
-            incompatible.append("Solitary fish sharing same tank zone")
+            incompatible.append("One of these fish prefers to live alone and will be stressed by having tankmates")
     
     # Activity level compatibility
     if fish1.activity_level == ActivityLevel.HIGH and fish2.activity_level == ActivityLevel.LOW:
-        conditions.append("High activity fish may stress slow-moving fish")
+        conditions.append("The very active fish may stress the slow-moving fish")
+        conditions.append("Provide plenty of hiding spots where the slower fish can rest")
     elif fish2.activity_level == ActivityLevel.HIGH and fish1.activity_level == ActivityLevel.LOW:
-        conditions.append("High activity fish may stress slow-moving fish")
+        conditions.append("The very active fish may stress the slow-moving fish")
+        conditions.append("Provide plenty of hiding spots where the slower fish can rest")
     
     # Fin nipping concerns
     if fish1.fin_nipper and fish2.fin_vulnerability == FinVulnerability.VULNERABLE:
-        incompatible.append(f"{fish1.common_name} may nip {fish2.common_name}'s fins")
+        incompatible.append(f"{fish1.common_name} will likely nip at {fish2.common_name}'s beautiful fins, causing stress and potential injury")
     elif fish2.fin_nipper and fish1.fin_vulnerability == FinVulnerability.VULNERABLE:
-        incompatible.append(f"{fish2.common_name} may nip {fish1.common_name}'s fins")
+        incompatible.append(f"{fish2.common_name} will likely nip at {fish1.common_name}'s beautiful fins, causing stress and potential injury")
     
     return len(incompatible) == 0, incompatible, conditions
 
@@ -214,20 +222,23 @@ def check_physical_compatibility(fish1: EnhancedFishData, fish2: EnhancedFishDat
         
         # Very large size difference
         if size_ratio >= 5.0:
-            incompatible.append(f"Extreme size difference ({size_ratio:.1f}:1) - predation risk")
+            incompatible.append(f"One fish is {size_ratio:.1f} times larger than the other - the larger fish will likely eat or seriously injure the smaller one")
         elif size_ratio >= 3.0:
-            conditions.append(f"Significant size difference ({size_ratio:.1f}:1) - monitor for bullying")
+            conditions.append(f"There's a significant size difference ({size_ratio:.1f}:1) between these fish")
+            conditions.append("Watch for any bullying behavior and provide plenty of hiding spots for the smaller fish")
     
     # Tank size requirements
     min_tank_needed = max(fish1.min_tank_size_l, fish2.min_tank_size_l)
     if min_tank_needed >= 400:
-        conditions.append(f"Large tank required: minimum {min_tank_needed}L")
+        conditions.append(f"These fish need a very large tank to thrive")
+        conditions.append(f"Your tank must be at least {min_tank_needed} liters - smaller tanks will stress your fish")
     
     # Tank zone competition
     if fish1.tank_zone == fish2.tank_zone and fish1.tank_zone != TankZone.ALL:
         if fish1.temperament in [Temperament.TERRITORIAL, Temperament.AGGRESSIVE] or \
            fish2.temperament in [Temperament.TERRITORIAL, Temperament.AGGRESSIVE]:
-            conditions.append(f"Both fish prefer {fish1.tank_zone.value} zone - provide extra space")
+            conditions.append(f"Both fish prefer the {fish1.tank_zone.value.lower()} area of the tank")
+            conditions.append("Provide extra space and hiding spots to reduce territorial conflicts")
     
     return len(incompatible) == 0, incompatible, conditions
 
@@ -238,18 +249,20 @@ def check_dietary_compatibility(fish1: EnhancedFishData, fish2: EnhancedFishData
     
     # Piscivore with smaller fish
     if fish1.diet == Diet.PISCIVORE and fish1.max_size_cm >= fish2.max_size_cm * 1.5:
-        incompatible.append("Piscivorous fish may eat smaller tankmate")
+        incompatible.append("One fish is a predator that eats other fish, and the other fish is small enough to be eaten")
     elif fish2.diet == Diet.PISCIVORE and fish2.max_size_cm >= fish1.max_size_cm * 1.5:
-        incompatible.append("Piscivorous fish may eat smaller tankmate")
+        incompatible.append("One fish is a predator that eats other fish, and the other fish is small enough to be eaten")
     
     # Feeding competition
     if fish1.diet == fish2.diet and fish1.activity_level == ActivityLevel.HIGH and fish2.activity_level == ActivityLevel.LOW:
-        conditions.append("Fast feeders may outcompete slow feeders - target feeding needed")
+        conditions.append("The fast-feeding fish may eat all the food before the slower fish gets a chance")
+        conditions.append("Feed them separately or use feeding techniques that ensure both fish get enough food")
     
     # Special diet requirements
     if fish1.special_diet_requirements and fish2.special_diet_requirements:
         if fish1.special_diet_requirements != fish2.special_diet_requirements:
-            conditions.append("Different special diet requirements - separate feeding may be needed")
+            conditions.append("These fish have different special diet needs")
+            conditions.append("You may need to feed them separately to ensure each gets the right nutrition")
     
     return len(incompatible) == 0, incompatible, conditions
 
@@ -281,4 +294,4 @@ def check_enhanced_compatibility(fish1: EnhancedFishData, fish2: EnhancedFishDat
     elif all_conditions:
         return "conditional", all_conditions, all_conditions
     else:
-        return "compatible", ["These fish are compatible"], []
+        return "compatible", ["These fish should get along well based on their water needs, temperament, size, and behavior"], []

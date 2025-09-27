@@ -10,25 +10,3 @@ restartPolicyMaxRetries = 3
 
 [environments.production]
 variables = { ENVIRONMENT = "production" }
-
-# Health check configuration
-[healthcheck]
-path = "/health"
-timeout = 300
-interval = 30
-retries = 3
-
-# Resource limits (adjust based on your Railway plan)
-[resources]
-memory = "1GB"  # Adjust based on your plan (free tier: 512MB, pro: 8GB)
-cpu = "1"
-
-# Build configuration
-[build.env]
-PYTHON_VERSION = "3.11.9"
-PIP_NO_CACHE_DIR = "1"
-PIP_DISABLE_PIP_VERSION_CHECK = "1"
-
-# Runtime configuration
-[runtime]
-python_version = "3.11.9"

@@ -150,7 +150,7 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
         fish2_in_aggressive = any(aggressive in name2 for aggressive in aggressive_group)
         
         if (fish1_in_aggressive and fish2_in_peaceful) or (fish1_in_peaceful and fish2_in_aggressive):
-            incompatible_reasons.append(f"Known incompatible combination: aggressive fish with peaceful fish")
+            incompatible_reasons.append(f"These fish have conflicting temperaments - one is aggressive while the other is peaceful, which will likely result in stress and injury")
             break
     
     is_public_only_1 = any(name in name1 for name in public_aquarium_only)
@@ -158,7 +158,7 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
     
     if is_public_only_1 or is_public_only_2:
         if name1 != name2:  # Different species
-            incompatible_reasons.append("Public aquarium species - not suitable for home aquarium community tanks")
+            incompatible_reasons.append("This fish is designed for large public aquariums and requires specialized care that's not suitable for home tanks")
     
     # Extremely limited compatibility fish - only with other large aggressive fish
     extremely_limited = [
@@ -186,7 +186,7 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             # Check for incompatible species first
             is_incompatible_species = any(incompatible in other_fish for incompatible in betta_incompatible)
             if is_incompatible_species:
-                incompatible_reasons.append(f"Betta is not compatible with {other_fish} - {other_fish} is aggressive/territorial or may nip fins")
+                incompatible_reasons.append(f"Bettas cannot live with {other_fish} because they are territorial fish that will stress or injure your betta")
             else:
                 # Betta-compatible species (peaceful bottom dwellers, small peaceful fish)
                 betta_compatible = [
@@ -200,12 +200,12 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
                 is_compatible_species = any(compatible in other_fish for compatible in betta_compatible)
                 
                 if is_peaceful and is_compatible_species:
-                    conditional_reasons.append(f"Betta can be housed with {other_fish} with careful monitoring")
-                    conditions.append("Requires 20+ gallon tank for community setup")
-                    conditions.append("Monitor for aggression and be prepared to separate")
-                    conditions.append("Ensure peaceful, non-fin-nipping tankmates only")
+                    conditional_reasons.append(f"Your betta can live with {other_fish}, but you'll need to create the right environment")
+                    conditions.append("Use a tank that's at least 20 gallons - smaller tanks increase aggression")
+                    conditions.append("Watch your fish closely for the first few weeks and be ready to separate them if needed")
+                    conditions.append("Only add very calm fish that won't nip at your betta's beautiful fins")
                 else:
-                    incompatible_reasons.append(f"Betta is not compatible with {other_fish} - requires very specific peaceful tankmates")
+                    incompatible_reasons.append(f"Bettas need very specific tankmates - {other_fish} is not suitable for your betta's peaceful nature")
     
     # Angelfish compatibility - semi-aggressive, can be territorial
     elif "angelfish" in name1 or "angelfish" in name2:
@@ -222,7 +222,7 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             # Check for incompatible species
             is_incompatible_species = any(incompatible in other_fish for incompatible in angelfish_incompatible)
             if is_incompatible_species:
-                incompatible_reasons.append(f"Angelfish is not compatible with {other_fish} - {other_fish} may nip fins or cause territorial conflicts")
+                incompatible_reasons.append(f"Angelfish cannot live with {other_fish} because they will damage your angelfish's long fins or fight over territory")
             else:
                 # Angelfish-compatible species
                 angelfish_compatible = [
@@ -236,12 +236,12 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
                 is_compatible_species = any(compatible in other_fish for compatible in angelfish_compatible)
                 
                 if is_peaceful and is_compatible_species:
-                    conditional_reasons.append(f"Angelfish can be housed with {other_fish} with proper tank setup")
-                    conditions.append("Requires 30+ gallon tank with tall plants and hiding spots")
-                    conditions.append("Avoid fin-nipping species")
-                    conditions.append("Monitor for territorial behavior")
+                    conditional_reasons.append(f"Angelfish can live with {other_fish} if you set up their tank properly")
+                    conditions.append("Provide a spacious tank (30+ gallons) with tall plants where your angelfish can feel secure")
+                    conditions.append("Choose only gentle fish that won't harm your angelfish's delicate fins")
+                    conditions.append("Watch for any territorial behavior and be ready to rearrange decorations if needed")
                 else:
-                    incompatible_reasons.append(f"Angelfish is not compatible with {other_fish} - requires peaceful, non-fin-nipping tankmates")
+                    incompatible_reasons.append(f"Angelfish need calm tankmates - {other_fish} is too aggressive for your angelfish")
     
     # Flowerhorn compatibility - only with other large aggressive cichlids
     elif "flowerhorn" in name1 or "flowerhorn" in name2:
@@ -260,13 +260,13 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             size = float(other_fish_data.get('max_size_(cm)', 0) or 0)
             
             if is_large_aggressive and size > 15:  # Large fish
-                conditional_reasons.append(f"Flowerhorn may be housed with {other_fish} in very large tanks")
-                conditions.append("Requires 75+ gallon tank per fish")
-                conditions.append("Fighting is common even with 'compatible' fish")
-                conditions.append("Monitor closely and be prepared to separate")
-                conditions.append("Often best kept alone")
+                conditional_reasons.append(f"Flowerhorn can potentially live with {other_fish}, but this is very risky")
+                conditions.append("You'll need an extremely large tank (75+ gallons per fish) to reduce fighting")
+                conditions.append("Even with proper setup, these fish may still fight - be prepared for this")
+                conditions.append("Watch your fish constantly and have a backup plan to separate them")
+                conditions.append("Consider that Flowerhorn often do better when kept alone")
             else:
-                incompatible_reasons.append(f"Flowerhorn is not compatible with {other_fish} - requires other large aggressive cichlids only")
+                incompatible_reasons.append(f"Flowerhorn are extremely aggressive and can only live with other large, tough fish - {other_fish} won't survive")
     
     # Dottyback compatibility - with other semi-aggressive marine fish
     elif "dottyback" in name1 or "dottyback" in name2:
@@ -290,14 +290,14 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
                 is_semi_aggressive = "semi" in temperament or "aggressive" in temperament
                 
                 if is_marine_compatible and (is_semi_aggressive or "peaceful" in temperament):
-                    conditional_reasons.append(f"Dottyback can be housed with {other_fish} in marine setup")
-                    conditions.append("Requires 30+ gallon marine tank")
-                    conditions.append("Territorial but manageable with proper tank setup")
-                    conditions.append("Avoid very timid or very large predatory fish")
+                    conditional_reasons.append(f"Dottyback can live with {other_fish} in a proper saltwater setup")
+                    conditions.append("Use a saltwater tank that's at least 30 gallons to give them enough space")
+                    conditions.append("Dottyback can be territorial, so arrange plenty of hiding spots and territories")
+                    conditions.append("Don't mix them with very shy fish or large predators")
                 else:
-                    incompatible_reasons.append(f"Dottyback temperament not compatible with {other_fish}")
+                    incompatible_reasons.append(f"Dottyback have strong personalities that clash with {other_fish}")
             else:
-                incompatible_reasons.append("Dottyback requires saltwater - not compatible with freshwater fish")
+                incompatible_reasons.append("Dottyback are saltwater fish and cannot live with freshwater fish - their needs are completely different")
     
     # Original extremely limited compatibility check for remaining fish
     elif is_extremely_limited_1 or is_extremely_limited_2:
@@ -307,12 +307,12 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             cichlid2 = "cichlid" in name2 or any(name in name2 for name in ["oscar", "jack dempsey", "green terror"])
             
             if cichlid1 and cichlid2:
-                conditional_reasons.append("Large aggressive cichlids - may be compatible in very large tanks")
-                conditions.append("Requires 100+ gallon tank")
-                conditions.append("High risk of aggression - monitor closely")
-                conditions.append("Only for experienced aquarists")
+                conditional_reasons.append("These are very aggressive fish that can potentially live together, but it's extremely challenging")
+                conditions.append("You'll need a massive tank (100+ gallons) to give them enough space to avoid constant fighting")
+                conditions.append("Expect frequent aggression - these fish are natural fighters")
+                conditions.append("This setup is only recommended for very experienced fish keepers")
             else:
-                incompatible_reasons.append("Extremely aggressive fish - only compatible with other large aggressive cichlids")
+                incompatible_reasons.append("These fish are extremely aggressive and will likely kill or severely injure other fish")
     size1 = _to_float(fish1.get('max_size_(cm)')) or 0.0
     size2 = _to_float(fish2.get('max_size_(cm)')) or 0.0
     min_tank1 = (
@@ -338,9 +338,9 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
     water2 = str(fish2.get('water_type') or '').lower().strip()
     if water1 and water2 and water1 != water2:
         if 'fresh' in water1 and 'salt' in water2:
-            incompatible_reasons.append("Water type mismatch: Freshwater vs Saltwater")
+            incompatible_reasons.append("These fish cannot live together because one needs freshwater and the other needs saltwater - their bodies are adapted to completely different environments")
         elif 'salt' in water1 and 'fresh' in water2:
-            incompatible_reasons.append("Water type mismatch: Saltwater vs Freshwater")
+            incompatible_reasons.append("These fish cannot live together because one needs saltwater and the other needs freshwater - their bodies are adapted to completely different environments")
 
     # Rule 3: Size Difference (Conditional based on temperament)
     try:
@@ -351,44 +351,44 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             
             # Critical size difference (5:1 or more)
             if size_ratio >= 5.0:
-                incompatible_reasons.append(f"Extreme size difference ({size_ratio:.1f}:1) - high predation risk")
+                incompatible_reasons.append(f"One fish is {size_ratio:.1f} times larger than the other - the larger fish will likely eat or seriously injure the smaller one")
             # Conditional size difference
             elif size_ratio >= 3.0 and (temp1_score >= 1 or temp2_score >= 1):
-                conditional_reasons.append(f"Size difference ({size_ratio:.1f}:1) with semi-aggressive temperament")
-                conditions.append("Large tank (200L+) with plenty of hiding spots")
-                conditions.append("Monitor for aggression during feeding")
+                conditional_reasons.append(f"There's a significant size difference ({size_ratio:.1f}:1) and one fish is semi-aggressive, which increases the risk")
+                conditions.append("Use a very large tank (200+ liters) with lots of hiding places for the smaller fish")
+                conditions.append("Watch carefully during feeding time when aggression is most likely to occur")
             elif size_ratio >= 4.0 and (temp1_score == 0 and temp2_score == 0):
-                conditional_reasons.append(f"Large size difference ({size_ratio:.1f}:1) between peaceful fish")
-                conditions.append("Ensure smaller fish can't fit in larger fish's mouth")
-                conditions.append("Provide hiding spots for smaller fish")
+                conditional_reasons.append(f"Even though both fish are peaceful, there's a big size difference ({size_ratio:.1f}:1) that could be dangerous")
+                conditions.append("Make sure the smaller fish can't accidentally be eaten by the larger one")
+                conditions.append("Create plenty of hiding spots where the smaller fish can escape if needed")
     except Exception:
         logger.warning("Could not parse size for compatibility check.")
 
     # Rule 4: Temperament Compatibility (More Strict)
     if temp1_score == 2 and temp2_score == 0:
-        incompatible_reasons.append(f"Temperament conflict: '{temp1_str}' fish cannot be kept with '{temp2_str}' fish")
+        incompatible_reasons.append(f"The aggressive nature of {fish1['common_name']} will stress and likely harm your peaceful {fish2['common_name']}")
     elif temp2_score == 2 and temp1_score == 0:
-        incompatible_reasons.append(f"Temperament conflict: '{temp2_str}' fish cannot be kept with '{temp1_str}' fish")
+        incompatible_reasons.append(f"The aggressive nature of {fish2['common_name']} will stress and likely harm your peaceful {fish1['common_name']}")
     elif temp1_score == 2 and temp2_score == 2:
-        incompatible_reasons.append("Both fish are aggressive; high risk of severe fighting")
+        incompatible_reasons.append("Both fish are very aggressive and will constantly fight, causing stress and injury")
     elif (temp1_score == 2 and temp2_score == 1) or (temp1_score == 1 and temp2_score == 2):
         # Aggressive with semi-aggressive - high risk, usually incompatible
-        incompatible_reasons.append("Aggressive fish with semi-aggressive fish creates high risk of fighting and stress")
+        incompatible_reasons.append("Mixing aggressive and semi-aggressive fish creates a dangerous situation where fighting is almost certain")
     elif (temp1_score == 1 and temp2_score == 0) or (temp2_score == 1 and temp1_score == 0):
         # Semi-aggressive with peaceful - be more strict
         if size1 > 0 and size2 > 0:
             size_ratio = max(size1, size2) / min(size1, size2)
             if size_ratio >= 2.0:  # If there's a significant size difference
-                incompatible_reasons.append(f"Semi-aggressive fish with peaceful fish and significant size difference ({size_ratio:.1f}:1) - high risk")
+                incompatible_reasons.append(f"The semi-aggressive fish is much larger than the peaceful one, creating a dangerous situation where bullying is very likely")
             else:
-                conditional_reasons.append("Semi-aggressive fish with peaceful fish may cause stress")
-                conditions.append("Large tank (150L+) with territories and hiding spots")
-                conditions.append("Introduce peaceful fish first to establish territory")
+                conditional_reasons.append("Semi-aggressive fish can stress peaceful fish, but it's manageable with proper setup")
+                conditions.append("Use a large tank (150+ liters) with plenty of territories and hiding spots")
+                conditions.append("Add the peaceful fish first so they can establish their own territories")
         else:
             # No size data - be conservative
-            conditional_reasons.append("Semi-aggressive fish with peaceful fish - monitor closely")
-            conditions.append("Large tank (150L+) with territories and hiding spots")
-            conditions.append("Introduce peaceful fish first to establish territory")
+            conditional_reasons.append("Semi-aggressive fish can stress peaceful fish, so you'll need to watch them carefully")
+            conditions.append("Use a large tank (150+ liters) with plenty of territories and hiding spots")
+            conditions.append("Add the peaceful fish first so they can establish their own territories")
 
     # Rule 5: Social Behavior Compatibility
     tank_level1 = str(fish1.get('tank_level') or '').lower()
@@ -399,21 +399,21 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
         # Allow solitary bottom dwellers with mid/top level fish
         if ("bottom" in tank_level1 and "bottom" not in tank_level2) or \
            ("bottom" in tank_level2 and "bottom" not in tank_level1):
-            conditional_reasons.append("Solitary fish with different tank level fish")
-            conditions.append("Provide separate territories/caves for solitary fish")
+            conditional_reasons.append("One fish prefers to be alone but can live with fish that occupy different areas of the tank")
+            conditions.append("Create separate territories and caves where the solitary fish can retreat")
         else:
-            incompatible_reasons.append("At least one species is solitary and prefers to live alone")
+            incompatible_reasons.append("One of these fish prefers to live alone and will be stressed by having tankmates")
     
     # Check for territorial behavior (separate from solitary)
     if ("territorial" in behavior1) or ("territorial" in behavior2):
         # Territorial fish with aggressive temperament are especially problematic
         if (temp1_score >= 2 and "territorial" in behavior1) or (temp2_score >= 2 and "territorial" in behavior2):
-            incompatible_reasons.append("Territorial aggressive fish are incompatible with most tankmates")
+            incompatible_reasons.append("These territorial fish are too aggressive and will fight constantly over territory")
         elif (temp1_score >= 1 and "territorial" in behavior1) or (temp2_score >= 1 and "territorial" in behavior2):
-            conditional_reasons.append("Territorial fish require careful tank management")
-            conditions.append("Very large tank (300L+) with multiple territories and sight breaks")
-            conditions.append("Introduce territorial fish last to avoid established territory conflicts")
-            conditions.append("Monitor closely for aggression and be prepared to separate")
+            conditional_reasons.append("Territorial fish need careful management to prevent constant fighting")
+            conditions.append("Use a very large tank (300+ liters) with multiple distinct territories and visual barriers")
+            conditions.append("Add the territorial fish last so they don't claim the entire tank")
+            conditions.append("Watch for territorial disputes and be ready to separate if fighting becomes severe")
 
     # Rule 6: pH Compatibility (Conditional for minor differences)
     try:
@@ -424,10 +424,10 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             if ph1_max < ph2_min or ph2_max < ph1_min:
                 ph_diff = min(abs(ph1_max - ph2_min), abs(ph2_max - ph1_min))
                 if ph_diff > 1.0:
-                    incompatible_reasons.append(f"Incompatible pH requirements: {fish1.get('ph_range')} vs {fish2.get('ph_range')}")
+                    incompatible_reasons.append(f"These fish need very different water acidity levels - one needs acidic water while the other needs alkaline water, which will stress both fish")
                 else:
-                    conditional_reasons.append(f"Narrow pH compatibility window")
-                    conditions.append(f"Maintain pH between {max(ph1_min, ph2_min):.1f}-{min(ph1_max, ph2_max):.1f}")
+                    conditional_reasons.append(f"The pH requirements are quite different but might be manageable")
+                    conditions.append(f"You'll need to carefully maintain pH between {max(ph1_min, ph2_min):.1f}-{min(ph1_max, ph2_max):.1f}")
     except (ValueError, TypeError):
         pass
 
@@ -440,10 +440,10 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             if t1_max < t2_min or t2_max < t1_min:
                 temp_diff = min(abs(t1_max - t2_min), abs(t2_max - t1_min))
                 if temp_diff > 3.0:
-                    incompatible_reasons.append(f"Incompatible temperature requirements")
+                    incompatible_reasons.append(f"These fish need very different water temperatures - one prefers cold water while the other needs warm water, which will stress both fish")
                 else:
-                    conditional_reasons.append(f"Narrow temperature compatibility window")
-                    conditions.append(f"Maintain temperature between {max(t1_min, t2_min):.0f}-{min(t1_max, t2_max):.0f}°C")
+                    conditional_reasons.append(f"The temperature requirements are different but might work")
+                    conditions.append(f"You'll need to carefully maintain temperature between {max(t1_min, t2_min):.0f}-{min(t1_max, t2_max):.0f}°C")
     except (ValueError, TypeError):
         pass
 
@@ -451,10 +451,10 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
     try:
         if (min_tank1 and min_tank1 >= 200) or (min_tank2 and min_tank2 >= 200):
             larger_req = max(min_tank1 or 0, min_tank2 or 0)
-            conditional_reasons.append("Large tank requirements")
-            conditions.append(f"Minimum tank size: {larger_req}L")
+            conditional_reasons.append("These fish need a very large tank to thrive")
+            conditions.append(f"Your tank must be at least {larger_req} liters - smaller tanks will stress your fish")
             if larger_req >= 400:
-                conditions.append("Consider dedicated large aquarium system")
+                conditions.append("Consider investing in a dedicated large aquarium system for these fish")
     except Exception:
         pass
 
@@ -482,13 +482,13 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
     try:
         if size1 > 0 and size2 > 0:
             if cat1 == "piscivore" and size1 >= size2 * 2.0:
-                incompatible_reasons.append("Piscivorous fish with much smaller tankmate increases predation risk")
+                incompatible_reasons.append("One fish is a predator that eats other fish, and the other fish is small enough to be eaten")
             elif cat2 == "piscivore" and size2 >= size1 * 2.0:
-                incompatible_reasons.append("Piscivorous fish with much smaller tankmate increases predation risk")
+                incompatible_reasons.append("One fish is a predator that eats other fish, and the other fish is small enough to be eaten")
             elif (cat1 == "carnivore" and size1 >= size2 * 3.0) or (cat2 == "carnivore" and size2 >= size1 * 3.0):
-                conditional_reasons.append("Carnivorous fish with significantly smaller tankmate")
-                conditions.append("Feed carnivorous fish well to reduce hunting behavior")
-                conditions.append("Provide hiding spots for smaller fish")
+                conditional_reasons.append("One fish is much larger and carnivorous, which could be dangerous for the smaller fish")
+                conditions.append("Make sure to feed the carnivorous fish well so it doesn't hunt the smaller fish")
+                conditions.append("Create plenty of hiding spots where the smaller fish can escape")
     except Exception:
         pass
 
@@ -513,10 +513,10 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             if not has_size_data:
                 missing_data.append("size information")
             
-            conditional_reasons.append(f"Insufficient data for complete compatibility assessment (missing: {', '.join(missing_data)})")
-            conditions.append("Monitor fish behavior closely when introducing")
-            conditions.append("Be prepared to separate if any aggression occurs")
-            conditions.append("Consider consulting with aquarium experts")
+            conditional_reasons.append(f"We don't have enough information about these fish to give you a complete compatibility assessment (missing: {', '.join(missing_data)})")
+            conditions.append("Watch your fish very carefully when you first introduce them to each other")
+            conditions.append("Be ready to separate them immediately if you see any signs of fighting or stress")
+            conditions.append("Consider talking to experienced aquarium keepers or fish store staff for advice")
             return "conditional", conditional_reasons, conditions
         # Generate detailed compatibility reasons for compatible fish
         compatible_reasons = []
@@ -525,48 +525,48 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
         if t1_min and t1_max and t2_min and t2_max:
             temp_overlap = min(t1_max, t2_max) - max(t1_min, t2_min)
             if temp_overlap > 0:
-                compatible_reasons.append(f"Compatible temperature ranges: {name1.title()} ({t1_min}-{t1_max}°C) and {name2.title()} ({t2_min}-{t2_max}°C)")
+                compatible_reasons.append(f"Great news! Both fish are comfortable in the same temperature range ({max(t1_min, t2_min):.0f}-{min(t1_max, t2_max):.0f}°C)")
         
         # pH compatibility
         if ph1_min and ph1_max and ph2_min and ph2_max:
             ph_overlap = min(ph1_max, ph2_max) - max(ph1_min, ph2_min)
             if ph_overlap > 0:
-                compatible_reasons.append(f"Similar pH preferences: {name1.title()} ({ph1_min}-{ph1_max}) and {name2.title()} ({ph2_min}-{ph2_max})")
+                compatible_reasons.append(f"Both fish like similar water acidity levels (pH {max(ph1_min, ph2_min):.1f}-{min(ph1_max, ph2_max):.1f})")
         
         # Temperament compatibility
         temp1_str = str(fish1.get('temperament', '')).lower()
         temp2_str = str(fish2.get('temperament', '')).lower()
         if temp1_str and temp2_str:
             if 'peaceful' in temp1_str and 'peaceful' in temp2_str:
-                compatible_reasons.append("Both species have peaceful temperaments, making them ideal tankmates")
+                compatible_reasons.append("Both fish are peaceful and gentle, making them perfect tankmates")
             elif 'community' in temp1_str or 'community' in temp2_str:
-                compatible_reasons.append("Community-friendly species that coexist well with other fish")
+                compatible_reasons.append("These fish are known for being friendly and getting along well with other fish")
         
         # Size compatibility
         if size1 > 0 and size2 > 0:
             size_ratio = max(size1, size2) / min(size1, size2)
             if size_ratio < 2.0:
-                compatible_reasons.append(f"Similar sizes reduce aggression risk: {name1.title()} ({size1}cm) and {name2.title()} ({size2}cm)")
+                compatible_reasons.append(f"Both fish are similar in size, which reduces the risk of bullying or accidental injuries")
         
         # Diet compatibility
         if cat1 and cat2 and cat1 != "unknown" and cat2 != "unknown":
             if cat1 == cat2:
-                compatible_reasons.append(f"Both species share similar dietary needs ({cat1})")
+                compatible_reasons.append(f"Both fish eat the same type of food ({cat1}), making feeding easier")
             elif cat1 in ["herbivore", "omnivore"] and cat2 in ["herbivore", "omnivore"]:
-                compatible_reasons.append("Compatible feeding habits - both accept plant-based foods")
+                compatible_reasons.append("Both fish enjoy plant-based foods, so you can feed them similar diets")
         
         # Social behavior compatibility
         social1 = str(fish1.get('social_behavior', '')).lower()
         social2 = str(fish2.get('social_behavior', '')).lower()
         if social1 and social2:
             if 'school' in social1 and 'school' in social2:
-                compatible_reasons.append("Both are schooling species that benefit from group environments")
+                compatible_reasons.append("Both fish enjoy being in groups, so they'll be happy together")
             elif 'peaceful' in social1 or 'peaceful' in social2:
-                compatible_reasons.append("Peaceful social behaviors promote harmonious coexistence")
+                compatible_reasons.append("These fish have calm personalities that work well together")
         
         # Fallback if no specific reasons found
         if not compatible_reasons:
-            compatible_reasons.append("Species compatibility confirmed through comprehensive analysis of water parameters, temperament, size, and behavioral traits")
+            compatible_reasons.append("These fish should get along well based on their water needs, temperament, size, and behavior")
         
         return "compatible", compatible_reasons, []
 

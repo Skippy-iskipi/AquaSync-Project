@@ -1,12 +1,12 @@
 {
-  "generation_date": "2025-08-30T08:49:08.297924+00:00",
-  "total_fish_species": 109,
-  "total_compatibility_pairs": 5886,
-  "total_tankmate_recommendations": 109,
+  "generation_date": "2025-09-27T07:51:51.191650+00:00",
+  "total_fish_species": 112,
+  "total_compatibility_pairs": 6216,
+  "total_tankmate_recommendations": 112,
   "compatibility_distribution": {
-    "compatible": 1036,
-    "conditional": 1211,
-    "incompatible": 3639,
+    "compatible": 1114,
+    "conditional": 1154,
+    "incompatible": 3948,
     "unknown": 0
   },
   "method": "enhanced_attributes",

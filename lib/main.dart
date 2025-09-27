@@ -150,13 +150,23 @@ class _AuthWrapperState extends State<AuthWrapper> {
   User? _currentUser;
   bool _isLoadingUser = true;
   bool _hasSeenOnboarding = false;
+  bool _hasSeenTour = false;
 
   @override
   void initState() {
     super.initState();
     _setupAuthListener();
+    _checkOnboardingStatus();
     // Debug authentication state on startup
     _debugAuthState();
+  }
+
+  Future<void> _checkOnboardingStatus() async {
+    // Always show onboarding and tour - remove the SharedPreferences checks
+    setState(() {
+      _hasSeenOnboarding = false; // Always show onboarding
+      _hasSeenTour = false; // Always show tour
+    });
   }
 
   Future<void> _debugAuthState() async {
@@ -332,9 +342,17 @@ class _AuthWrapperState extends State<AuthWrapper> {
         },
       );
     }
-    // After onboarding, go directly to Capture screen to start fish identification
-    // Authentication will be required only when trying to save or use premium features
-    return const CaptureScreen();
+    if (!_hasSeenTour) {
+      return AppTourScreen(
+        onFinish: () {
+          setState(() {
+            _hasSeenTour = true;
+          });
+        },
+      );
+    }
+    // After onboarding and tour, go to the main app
+    return const HomePage();
   }
 }
 
@@ -516,13 +534,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Icon(
-                                    Icons.camera_alt,
+                                    Icons.arrow_forward,
                                     color: Colors.white,
                                     size: 18,
                                   ),
                                   SizedBox(width: 8),
                                   Text(
-                                    'Capture Fish',
+                                    'Get Started',
                                     style: TextStyle(
                                       color: Colors.white,
                                       fontSize: 14,
@@ -616,6 +634,795 @@ class _FeatureItem extends StatelessWidget {
   }
 }
 
+
+class AppTourScreen extends StatefulWidget {
+  final VoidCallback? onFinish;
+  const AppTourScreen({super.key, this.onFinish});
+
+  @override
+  State<AppTourScreen> createState() => _AppTourScreenState();
+}
+
+class _AppTourScreenState extends State<AppTourScreen> 
+    with TickerProviderStateMixin {
+  late AnimationController _animationController;
+  late PageController _pageViewController;
+  late Animation<Offset> _slideAnimation;
+  int _currentStep = 0;
+  
+  final List<TourStep> _tourSteps = [
+    TourStep(
+      title: 'Welcome to AquaSync!',
+      description: 'Let\'s take a quick tour of the app to help you get started.',
+      icon: Icons.waving_hand,
+      highlightIndex: -1, // No highlight for welcome
+      previewImage: null,
+    ),
+    TourStep(
+      title: 'Home Tab',
+      description: 'Explore your fish collection, view recent activity, and manage your tanks.',
+      icon: Icons.explore_outlined,
+      highlightIndex: 0,
+      previewImage: 'lib/icons/homepage_preview.jpg',
+    ),
+    TourStep(
+      title: 'Sync Tab',
+      description: 'Check fish compatibility and find perfect tank mates for your aquarium.',
+      icon: Icons.sync_outlined,
+      highlightIndex: 1,
+      previewImage: 'lib/icons/sync_preview.jpg',
+    ),
+    TourStep(
+      title: 'Capture Button',
+      description: 'Tap here to identify fish species using AI-powered camera recognition.',
+      icon: Icons.camera_alt,
+      highlightIndex: 2, // Capture button is index 2
+      previewImage: 'lib/icons/capture_preview.jpg',
+      customIcon: 'lib/icons/capture_icon.png',
+    ),
+    TourStep(
+      title: 'Calculator Tab',
+      description: 'Calculate water requirements, tank capacity, and feeding portions.',
+      icon: Icons.calculate_outlined,
+      highlightIndex: 3,
+      previewImage: 'lib/icons/calculate_preview.jpg',
+    ),
+    TourStep(
+      title: 'History Tab',
+      description: 'View your saved fish collection and identification history.',
+      icon: Icons.book_outlined,
+      highlightIndex: 4,
+      previewImage: 'lib/icons/history_preview.jpg',
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    
+    _pageViewController = PageController(initialPage: _currentStep);
+
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0.0, 0.3), // Slide from bottom
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutCubic,
+    ));
+
+    _animationController.forward();
+  }
+
+  void _showImagePreview(BuildContext context, String imagePath) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext context) {
+        return Dialog(
+          backgroundColor: Colors.black.withOpacity(0.9),
+          insetPadding: EdgeInsets.zero,
+          child: Container(
+            width: double.infinity,
+            height: double.infinity,
+            color: Colors.black.withOpacity(0.9),
+            child: Stack(
+              children: [
+                // Full-screen image viewer
+                Positioned.fill(
+                  child: InteractiveViewer(
+                    panEnabled: true,
+                    boundaryMargin: const EdgeInsets.all(20),
+                    minScale: 0.5,
+                    maxScale: 4.0,
+                    child: Container(
+                      width: double.infinity,
+                      height: double.infinity,
+                      child: Image.asset(
+                        imagePath,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            width: 200,
+                            height: 200,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF00BFB3).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Icon(
+                              Icons.image_not_supported,
+                              size: 60,
+                              color: Color(0xFF00BFB3),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                
+                // Close button
+                Positioned(
+                  top: 50,
+                  right: 20,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                    child: IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ),
+                
+                // Zoom instructions
+                Positioned(
+                  bottom: 50,
+                  left: 20,
+                  right: 20,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      'Pinch to zoom • Drag to pan • Tap to close',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _pageViewController.dispose();
+    super.dispose();
+  }
+
+  void _nextStep() {
+    if (_currentStep < _tourSteps.length - 1) {
+      _pageViewController.nextPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    } else {
+      _showActionChoice();
+    }
+  }
+
+  void _previousStep() {
+    if (_currentStep > 0) {
+      _pageViewController.previousPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  void _showActionChoice() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Container(
+            constraints: const BoxConstraints(
+              maxWidth: 400,
+              minHeight: 500,
+            ),
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header with icon and title
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00BFB3).withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.rocket_launch,
+                    color: Color(0xFF00BFB3),
+                    size: 40,
+                  ),
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Title
+                const Text(
+                  'Ready to Start?',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF00BFB3),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                
+                const SizedBox(height: 12),
+                
+                // Description
+                Text(
+                  'Choose how you\'d like to begin your AquaSync journey',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey[600],
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                
+                const SizedBox(height: 32),
+                
+                // Action buttons
+                Column(
+                  children: [
+                    // Capture Fish Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 60,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(builder: (context) => const CaptureScreen()),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00BFB3),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 3,
+                          shadowColor: const Color(0xFF00BFB3).withOpacity(0.3),
+                        ),
+                        icon: const Icon(Icons.camera_alt, size: 24),
+                        label: const Text(
+                          'Capture & Identify Fish',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 12),
+                    
+                    // Compatibility Check Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 60,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 1)),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xFF00BFB3),
+                          side: const BorderSide(color: Color(0xFF00BFB3), width: 2),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 2,
+                        ),
+                        icon: const Icon(Icons.sync, size: 24),
+                        label: const Text(
+                          'Check Compatibility',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 12),
+                    
+                    // Calculator Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 60,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(builder: (context) => const HomePage(initialTabIndex: 2)),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.grey[100],
+                          foregroundColor: const Color(0xFF00BFB3),
+                          side: BorderSide(color: Colors.grey[300]!, width: 1),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 1,
+                        ),
+                        icon: const Icon(Icons.calculate, size: 24),
+                        label: const Text(
+                          'Use Calculator',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    
+                    // Skip button
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        widget.onFinish?.call();
+                      },
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.grey[600],
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      ),
+                      child: const Text(
+                        'Skip for now',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Progress indicator
+            Container(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${_currentStep + 1} of ${_tourSteps.length}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          widget.onFinish?.call();
+                        },
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.grey[600],
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        ),
+                        child: const Text(
+                          'Skip',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    value: (_currentStep + 1) / _tourSteps.length,
+                    backgroundColor: Colors.grey[200],
+                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00BFB3)),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Main content with PageView
+            Expanded(
+              child: PageView.builder(
+                controller: _pageViewController,
+                onPageChanged: (index) {
+                  setState(() {
+                    _currentStep = index;
+                  });
+                  // Reset and restart slide animation smoothly
+                  _animationController.reset();
+                  Future.delayed(const Duration(milliseconds: 100), () {
+                    if (mounted) {
+                      _animationController.forward();
+                    }
+                  });
+                },
+                itemCount: _tourSteps.length,
+                itemBuilder: (context, index) {
+                  final currentTourStep = _tourSteps[index];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Preview Image or Icon
+                        SlideTransition(
+                          position: _slideAnimation,
+                          child: currentTourStep.previewImage != null
+                                  ? GestureDetector(
+                                      onTap: () => _showImagePreview(context, currentTourStep.previewImage!),
+                                      child: Container(
+                                        width: double.infinity,
+                                        height: 160,
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(20),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.grey.withOpacity(0.3),
+                                              blurRadius: 15,
+                                              offset: const Offset(0, 6),
+                                            ),
+                                          ],
+                                        ),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(20),
+                                          child: Stack(
+                                            fit: StackFit.expand,
+                                            children: [
+                                              // Vertically scrollable image that fits container width
+                                              SingleChildScrollView(
+                                                scrollDirection: Axis.vertical,
+                                                child: Image.asset(
+                                                  currentTourStep.previewImage!,
+                                                  fit: BoxFit.fitWidth,
+                                                  errorBuilder: (context, error, stackTrace) {
+                                                    return Container(
+                                                      decoration: BoxDecoration(
+                                                        color: const Color(0xFF00BFB3).withOpacity(0.1),
+                                                        borderRadius: BorderRadius.circular(20),
+                                                      ),
+                                                      child: Icon(
+                                                        currentTourStep.icon,
+                                                        size: 80,
+                                                        color: const Color(0xFF00BFB3),
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
+                                              ),
+                                              // Click indicator overlay - more prominent
+                                              Positioned(
+                                                top: 16,
+                                                right: 16,
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(12),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(0xFF00BFB3).withOpacity(0.9),
+                                                    borderRadius: BorderRadius.circular(25),
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color: Colors.black.withOpacity(0.2),
+                                                        blurRadius: 8,
+                                                        offset: const Offset(0, 2),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons.zoom_in,
+                                                    color: Colors.white,
+                                                    size: 20,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : Container(
+                                      width: 120,
+                                      height: 120,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF00BFB3).withOpacity(0.1),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Icon(
+                                        currentTourStep.icon,
+                                        size: 60,
+                                        color: const Color(0xFF00BFB3),
+                                      ),
+                                    ),
+                        ),
+                        
+                        const SizedBox(height: 24),
+                        
+                        // Title
+                        SlideTransition(
+                          position: _slideAnimation,
+                          child: Text(
+                            currentTourStep.title,
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF00BFB3),
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 20),
+                        
+                        // Description
+                        SlideTransition(
+                          position: _slideAnimation,
+                          child: Text(
+                            currentTourStep.description,
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.grey[600],
+                              height: 1.5,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            
+            // Bottom navigation preview (if not welcome step)
+            if (_tourSteps[_currentStep].highlightIndex >= 0)
+              SlideTransition(
+                position: _slideAnimation,
+                child: Container(
+                    margin: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: const Color(0xFF00BFB3).withOpacity(0.3),
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.15),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: _buildBottomNavPreview(_tourSteps[_currentStep].highlightIndex),
+                  ),
+                ),
+            
+            // Navigation buttons
+            Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: SlideTransition(
+                position: _slideAnimation,
+                child: Row(
+                    children: [
+                      // Back button (only show if not first step)
+                      if (_currentStep > 0) ...[
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _previousStep,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF00BFB3),
+                              side: const BorderSide(color: Color(0xFF00BFB3)),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            child: const Text(
+                              'Back',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                      ],
+                      // Next button
+                      Expanded(
+                        flex: _currentStep == 0 ? 1 : 1,
+                        child: ElevatedButton(
+                          onPressed: _nextStep,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00BFB3),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            elevation: 2,
+                          ),
+                          child: Text(
+                            _currentStep == _tourSteps.length - 1 ? 'Let\'s Go!' : 'Next',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomNavPreview(int highlightIndex) {
+    return Container(
+      height: 60,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.all(Radius.circular(8)),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _buildPreviewNavItem(0, 'Home', Icons.explore_outlined, highlightIndex == 0)),
+          Expanded(child: _buildPreviewNavItem(1, 'Sync', Icons.sync_outlined, highlightIndex == 1)),
+          Expanded(child: _buildPreviewCaptureButton(highlightIndex == 2)),
+          Expanded(child: _buildPreviewNavItem(3, 'Calculator', Icons.calculate_outlined, highlightIndex == 3)),
+          Expanded(child: _buildPreviewNavItem(4, 'History', Icons.book_outlined, highlightIndex == 4)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPreviewNavItem(int index, String label, IconData icon, bool isHighlighted) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        color: isHighlighted ? const Color(0xFF00BFB3).withOpacity(0.1) : Colors.transparent,
+        border: isHighlighted ? Border.all(color: const Color(0xFF00BFB3), width: 2) : null,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: 20,
+            color: isHighlighted ? const Color(0xFF00BFB3) : Colors.grey,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: isHighlighted ? const Color(0xFF00BFB3) : Colors.grey,
+              fontSize: 9,
+              fontWeight: isHighlighted ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPreviewCaptureButton(bool isHighlighted) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        color: isHighlighted ? const Color(0xFF00BFB3).withOpacity(0.1) : Colors.transparent,
+        border: isHighlighted ? Border.all(color: const Color(0xFF00BFB3), width: 2) : null,
+      ),
+      child: Center(
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: const Color(0xFF00BFB3),
+            shape: BoxShape.circle,
+            border: isHighlighted ? Border.all(color: const Color(0xFF00BFB3), width: 2) : null,
+          ),
+          child: Image.asset(
+            'lib/icons/capture_icon.png',
+            width: 20,
+            height: 20,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(
+                Icons.camera_alt,
+                color: Colors.white,
+                size: 20,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class TourStep {
+  final String title;
+  final String description;
+  final IconData icon;
+  final int highlightIndex; // -1 for no highlight, 0-4 for bottom nav items
+  final String? previewImage; // Path to preview image
+  final String? customIcon; // Path to custom icon image
+
+  TourStep({
+    required this.title,
+    required this.description,
+    required this.icon,
+    required this.highlightIndex,
+    this.previewImage,
+    this.customIcon,
+  });
+}
 
 class FeatureScreen extends StatelessWidget {
   final String title;

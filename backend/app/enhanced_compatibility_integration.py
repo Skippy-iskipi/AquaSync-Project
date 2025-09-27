@@ -100,13 +100,13 @@ def check_special_compatibility_cases(fish1_data: Dict, fish2_data: Dict) -> Opt
             
             if is_peaceful and is_compatible_species:
                 return ("conditional", 
-                       [f"Betta can be housed with {other_fish.title()} with careful monitoring"],
-                       ["Requires 20+ gallon tank for community setup",
-                        "Monitor for aggression and be prepared to separate",
-                        "Ensure peaceful, non-fin-nipping tankmates only"])
+                       [f"Your betta can live with {other_fish.title()}, but you'll need to create the right environment"],
+                       ["Use a tank that's at least 20 gallons - smaller tanks increase aggression",
+                        "Watch your fish closely for the first few weeks and be ready to separate them if needed",
+                        "Only add very calm fish that won't nip at your betta's beautiful fins"])
             else:
                 return ("incompatible",
-                       [f"Betta is not compatible with {other_fish.title()} - requires very specific peaceful tankmates"],
+                       [f"Bettas need very specific tankmates - {other_fish.title()} is not suitable for your betta's peaceful nature"],
                        [])
     
     # Flowerhorn compatibility - only with other large aggressive cichlids
@@ -125,14 +125,14 @@ def check_special_compatibility_cases(fish1_data: Dict, fish2_data: Dict) -> Opt
             
             if is_large_aggressive and size > 15:
                 return ("conditional",
-                       [f"Flowerhorn may be housed with {other_fish.title()} in very large tanks"],
-                       ["Requires 75+ gallon tank per fish",
-                        "Fighting is common even with 'compatible' fish",
-                        "Monitor closely and be prepared to separate",
-                        "Often best kept alone"])
+                       [f"Flowerhorn can potentially live with {other_fish.title()}, but this is very risky"],
+                       ["You'll need an extremely large tank (75+ gallons per fish) to reduce fighting",
+                        "Even with proper setup, these fish may still fight - be prepared for this",
+                        "Watch your fish constantly and have a backup plan to separate them",
+                        "Consider that Flowerhorn often do better when kept alone"])
             else:
                 return ("incompatible",
-                       [f"Flowerhorn is not compatible with {other_fish.title()} - requires other large aggressive cichlids only"],
+                       [f"Flowerhorn are extremely aggressive and can only live with other large, tough fish - {other_fish.title()} won't survive"],
                        [])
     
     # Dottyback compatibility - with other semi-aggressive marine fish
@@ -157,17 +157,17 @@ def check_special_compatibility_cases(fish1_data: Dict, fish2_data: Dict) -> Opt
                 
                 if is_marine_compatible and (is_semi_aggressive or "peaceful" in temperament):
                     return ("conditional",
-                           [f"Dottyback can be housed with {other_fish.title()} in marine setup"],
-                           ["Requires 30+ gallon marine tank",
-                            "Territorial but manageable with proper tank setup",
-                            "Avoid very timid or very large predatory fish"])
+                           [f"Dottyback can live with {other_fish.title()} in a proper saltwater setup"],
+                           ["Use a saltwater tank that's at least 30 gallons to give them enough space",
+                            "Dottyback can be territorial, so arrange plenty of hiding spots and territories",
+                            "Don't mix them with very shy fish or large predators"])
                 else:
                     return ("incompatible",
-                           [f"Dottyback temperament not compatible with {other_fish.title()}"],
+                           [f"Dottyback have strong personalities that clash with {other_fish.title()}"],
                            [])
             else:
                 return ("incompatible",
-                       ["Dottyback requires saltwater - not compatible with freshwater fish"],
+                       ["Dottyback are saltwater fish and cannot live with freshwater fish - their needs are completely different"],
                        [])
     
     return None  # No special case, use general logic
@@ -219,10 +219,10 @@ def check_enhanced_fish_compatibility(fish1_data: Dict, fish2_data: Dict) -> Tup
                 logger.warning(f"Insufficient data for {fish1_data.get('common_name')} + {fish2_data.get('common_name')} - being conservative")
                 if compatibility == "compatible":
                     compatibility = "conditional"
-                    if not conditions:
-                        conditions = ["Insufficient data for full compatibility assessment - monitor closely"]
-                    if not reasons:
-                        reasons = ["Limited data available - compatibility assessment based on available information"]
+                if not conditions:
+                    conditions = ["Watch your fish very carefully when you first introduce them to each other"]
+                if not reasons:
+                    reasons = ["We don't have enough information about these fish to give you a complete compatibility assessment"]
             
             return compatibility, reasons, conditions
             
@@ -307,7 +307,7 @@ def get_enhanced_tankmate_compatibility_info(fish_data: Dict) -> Dict[str, Any]:
         if is_public_aquarium_only:
             return {
                 "allow_tankmates": False,
-                "reason": "Public aquarium species - not suitable for home aquariums",
+                "reason": "This fish is designed for large public aquariums and requires specialized care that's not suitable for home tanks",
                 "special_requirements": ["Requires massive public aquarium setup"]
             }
         
@@ -320,7 +320,7 @@ def get_enhanced_tankmate_compatibility_info(fish_data: Dict) -> Dict[str, Any]:
         if is_extremely_limited:
             return {
                 "allow_tankmates": True,
-                "reason": "Very limited tankmate options - only with other large, aggressive cichlids",
+                "reason": "These fish are extremely aggressive and will likely kill or severely injure other fish",
                 "special_requirements": ["Requires very large tank (100+ gallons)", "Only with other large aggressive fish"],
                 "limited_compatibility": True
             }
@@ -331,13 +331,13 @@ def get_enhanced_tankmate_compatibility_info(fish_data: Dict) -> Dict[str, Any]:
         if "betta" in fish_name_lower:
             return {
                 "allow_tankmates": True,
-                "reason": "Can have tankmates with careful selection - peaceful, non-fin-nipping species only",
+                "reason": "Your betta can have tankmates, but you need to choose very carefully - only peaceful fish that won't nip fins",
                 "special_requirements": [
-                    "Requires 20+ gallon tank for community setup",
-                    "Compatible with peaceful bottom dwellers (Corydoras, Kuhli loaches)",
-                    "Compatible with snails and some shrimp",
-                    "Avoid aggressive fish, fin-nippers, and other bettas",
-                    "Monitor for aggression and be prepared to separate"
+                    "Use a tank that's at least 20 gallons - smaller tanks increase aggression",
+                    "Good with peaceful bottom dwellers like Corydoras and Kuhli loaches",
+                    "Safe with snails and some shrimp",
+                    "Never add aggressive fish, fin-nippers, or other bettas",
+                    "Watch for any signs of aggression and be ready to separate immediately"
                 ],
                 "limited_compatibility": True
             }
@@ -346,14 +346,14 @@ def get_enhanced_tankmate_compatibility_info(fish_data: Dict) -> Dict[str, Any]:
         if "flowerhorn" in fish_name_lower:
             return {
                 "allow_tankmates": True,
-                "reason": "Very limited tankmate options - only other large, aggressive cichlids in massive tanks",
+                "reason": "Flowerhorn are extremely aggressive and can only live with other large, tough fish in massive tanks",
                 "special_requirements": [
-                    "Requires 75+ gallon tank per fish",
-                    "Only compatible with other large aggressive cichlids (Oscars, Jack Dempseys)",
-                    "Large plecos may work",
-                    "Fighting is common even with 'compatible' fish",
-                    "Often best kept alone",
-                    "Monitor closely for aggression"
+                    "You'll need an extremely large tank (75+ gallons per fish) to reduce fighting",
+                    "Only compatible with other large aggressive cichlids like Oscars and Jack Dempseys",
+                    "Large plecos might work as tankmates",
+                    "Even with 'compatible' fish, fighting is very common",
+                    "Often these fish do better when kept alone",
+                    "Watch your fish constantly for any signs of aggression"
                 ],
                 "limited_compatibility": True
             }
@@ -362,13 +362,13 @@ def get_enhanced_tankmate_compatibility_info(fish_data: Dict) -> Dict[str, Any]:
         if "dottyback" in fish_name_lower:
             return {
                 "allow_tankmates": True,
-                "reason": "Semi-aggressive marine fish - compatible with other semi-aggressive marine species",
+                "reason": "Dottyback are semi-aggressive marine fish that can live with other similar marine species",
                 "special_requirements": [
-                    "Requires 30+ gallon marine tank",
-                    "Compatible with other semi-aggressive marine fish",
-                    "Good with damsels, other pseudochromis, clownfish, wrasses",
-                    "Avoid very timid or very large predatory fish",
-                    "Territorial but manageable in proper setup"
+                    "Use a saltwater tank that's at least 30 gallons to give them enough space",
+                    "Good with other semi-aggressive marine fish",
+                    "Works well with damsels, other pseudochromis, clownfish, and wrasses",
+                    "Don't mix them with very shy fish or large predators",
+                    "They can be territorial, but it's manageable with the right tank setup"
                 ],
                 "water_type_specific": "marine_only"
             }
@@ -393,7 +393,7 @@ def get_enhanced_tankmate_compatibility_info(fish_data: Dict) -> Dict[str, Any]:
         
         return {
             "allow_tankmates": True,
-            "reason": "Compatible with appropriate tankmates",
+            "reason": "These fish should get along well with appropriate tankmates",
             "special_requirements": special_requirements,
             "care_level": fish_enhanced.care_level,
             "confidence_score": fish_enhanced.confidence_score

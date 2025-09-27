@@ -2284,6 +2284,296 @@ class _LogBookState extends State<LogBook> {
     ) ?? false;
   }
 
+  void _showPairAnalysisDetails(BuildContext context, Map<String, dynamic> pair) {
+    final fish1 = pair['fish1'] ?? '';
+    final fish2 = pair['fish2'] ?? '';
+    final compatibility = pair['compatibility'] ?? '';
+    final reasons = List<String>.from(pair['reasons'] ?? []);
+    final conditions = List<String>.from(pair['conditions'] ?? []);
+    
+    // Capitalize fish names properly
+    final capitalizedFish1 = fish1.isNotEmpty 
+        ? '${fish1[0].toUpperCase()}${fish1.substring(1).toLowerCase()}'
+        : fish1;
+    final capitalizedFish2 = fish2.isNotEmpty 
+        ? '${fish2[0].toUpperCase()}${fish2.substring(1).toLowerCase()}'
+        : fish2;
+    
+    showDialog(
+      context: context,
+      builder: (context) => Dialog.fullscreen(
+        backgroundColor: Colors.white,
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(
+                    bottom: BorderSide(
+                      color: Colors.grey.withOpacity(0.2),
+                      width: 1,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, color: Color(0xFF006064)),
+                    ),
+                    Expanded(
+                      child: Text(
+                        'Pair Analysis: $capitalizedFish1 & $capitalizedFish2',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF006064),
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(width: 48), // Balance the close button
+                  ],
+                ),
+              ),
+              
+              // Content
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 16),
+                      
+                      // Fish Images Section
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Image.network(
+                                    ApiConfig.getFishImageUrl(fish1),
+                                    width: double.infinity,
+                                    height: 120,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) => Container(
+                                      width: double.infinity,
+                                      height: 120,
+                                      color: Colors.grey[200],
+                                      child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 40),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  capitalizedFish1,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Column(
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: compatibility == 'compatible' ? Colors.green[100] :
+                                         compatibility == 'conditional' ? Colors.orange[100] : Colors.red[100],
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Icon(
+                                  compatibility == 'compatible' ? Icons.check :
+                                  compatibility == 'conditional' ? Icons.warning : Icons.close,
+                                  color: compatibility == 'compatible' ? Colors.green[700] :
+                                         compatibility == 'conditional' ? Colors.orange[700] : Colors.red[700],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                compatibility.toUpperCase(),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: compatibility == 'compatible' ? Colors.green[700] :
+                                         compatibility == 'conditional' ? Colors.orange[700] : Colors.red[700],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Image.network(
+                                    ApiConfig.getFishImageUrl(fish2),
+                                    width: double.infinity,
+                                    height: 120,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) => Container(
+                                      width: double.infinity,
+                                      height: 120,
+                                      color: Colors.grey[200],
+                                      child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 40),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  capitalizedFish2,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 24),
+                      
+                      // Analysis Card
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.black.withOpacity(0.1)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  compatibility == 'compatible' ? Icons.check_circle :
+                                  compatibility == 'conditional' ? Icons.warning : Icons.cancel,
+                                  color: compatibility == 'compatible' ? Colors.green :
+                                         compatibility == 'conditional' ? Colors.orange : Colors.red,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Analysis',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              compatibility == 'compatible' 
+                                  ? 'These fish should get along well based on their water needs, temperament, size, and behavior'
+                                  : compatibility == 'conditional'
+                                      ? 'These fish can live together, but you\'ll need to create the right environment'
+                                      : 'These fish are not compatible and should not be kept together',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: Colors.black,
+                                height: 1.4,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      
+                      
+                      // Conditions Section (for conditional compatibility)
+                      if (compatibility == 'conditional' && conditions.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.black.withOpacity(0.1)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(Icons.checklist, color: Colors.black, size: 20),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Required Conditions',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              ...conditions.map((condition) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Container(
+                                      margin: const EdgeInsets.only(top: 6),
+                                      width: 6,
+                                      height: 6,
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        condition,
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          color: Colors.black,
+                                          height: 1.4,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showCompatibilityDetails(BuildContext context, CompatibilityResult result) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -2388,6 +2678,8 @@ class _LogBookState extends State<LogBook> {
                                compatibility == 'conditional' ? Icons.warning : Icons.cancel,
                          label: '$capitalizedFish1 & $capitalizedFish2',
                          value: compatibility.toUpperCase(),
+                         onTap: () => _showPairAnalysisDetails(context, pair),
+                         showArrowIcon: true,
                        );
                      }).toList(),
                    ),

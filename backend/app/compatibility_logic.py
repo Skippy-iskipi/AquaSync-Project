@@ -75,17 +75,17 @@ def can_same_species_coexist(fish_name: str, fish_info: Dict[str, Any]) -> Tuple
     # Check for known incompatible species
     for species in incompatible_species:
         if species in fish_name_lower:
-            return False, f"{fish_name} are known to be aggressive/territorial with their own kind."
+            return False, f"{fish_name} are known to fight with their own species and should be kept alone"
     
     # Check temperament keywords
     if "aggressive" in temperament or "territorial" in temperament and "community" not in temperament:
-        return False, f"{fish_name} have an aggressive or territorial temperament and may fight with each other."
+        return False, f"{fish_name} have aggressive personalities and will likely fight if kept together"
     
     # Check social behavior keywords
     if "solitary" in behavior:
-        return False, f"{fish_name} are solitary and prefer to live alone."
+        return False, f"{fish_name} prefer to live alone and will be stressed by other fish of the same species"
     
-    return True, f"{fish_name} can generally live together in groups."
+    return True, f"{fish_name} can live together peacefully in groups"
 
 def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -> Tuple[str, List[str], List[str]]:
     """
@@ -110,9 +110,9 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
     water2 = str(fish2.get('water_type') or '').lower().strip()
     if water1 and water2 and water1 != water2:
         if 'fresh' in water1 and 'salt' in water2:
-            incompatible_reasons.append("Water type mismatch: Freshwater vs Saltwater")
+            incompatible_reasons.append("These fish cannot live together because one needs freshwater and the other needs saltwater - their bodies are adapted to completely different environments")
         elif 'salt' in water1 and 'fresh' in water2:
-            incompatible_reasons.append("Water type mismatch: Saltwater vs Freshwater")
+            incompatible_reasons.append("These fish cannot live together because one needs saltwater and the other needs freshwater - their bodies are adapted to completely different environments")
 
     # Extract commonly used fields safely
     def _to_float(val) -> Optional[float]:
@@ -152,20 +152,20 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
             # More restrictive for aggressive fish, more lenient for peaceful fish
             max_ratio = 4.0 if (temp1_score == 0 and temp2_score == 0) else 3.0 if (temp1_score <= 1 and temp2_score <= 1) else 2.0
             if size_ratio >= max_ratio:
-                reasons.append("Significant size difference may lead to predation or bullying.")
+                incompatible_reasons.append(f"One fish is {size_ratio:.1f} times larger than the other - the larger fish will likely bully or eat the smaller one")
     except Exception:
         logger.warning("Could not parse size for compatibility check.")
 
     # Rule 3: Temperament (more realistic - only flag aggressive vs peaceful, not semi-aggressive)
     if temp1_score == 2 and temp2_score == 0:
-        reasons.append(f"Temperament conflict: '{temp1_str}' fish cannot be kept with '{temp2_str}' fish.")
+        incompatible_reasons.append(f"The aggressive nature of {fish1.get('common_name', 'this fish')} will stress and likely harm your peaceful {fish2.get('common_name', 'fish')}")
     if temp2_score == 2 and temp1_score == 0:
-        reasons.append(f"Temperament conflict: '{temp2_str}' fish cannot be kept with '{temp1_str}' fish.")
+        incompatible_reasons.append(f"The aggressive nature of {fish2.get('common_name', 'this fish')} will stress and likely harm your peaceful {fish1.get('common_name', 'fish')}")
     # Semi-aggressive (score 1) can often work with peaceful fish in larger tanks - don't auto-reject
 
     # New Rule 3b: Aggressive vs Aggressive is high-risk
     if temp1_score == 2 and temp2_score == 2:
-        reasons.append("Both fish are aggressive; high risk of severe fighting and territorial disputes.")
+        incompatible_reasons.append("Both fish are very aggressive and will constantly fight, causing stress and injury")
 
     # New Rule 3c: Territorial or Solitary behavior (more realistic)
     # Only flag solitary if both fish occupy the same tank level
@@ -178,21 +178,23 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
            ("bottom" in tank_level2 and "bottom" not in tank_level1):
             pass  # Allow different levels
         else:
-            reasons.append("At least one species is solitary and prefers to live alone.")
+            incompatible_reasons.append("One of these fish prefers to live alone and will be stressed by having tankmates")
     if (temp1_str and isinstance(temp1_str, str) and "territorial" in temp1_str.lower()) or \
        (temp2_str and isinstance(temp2_str, str) and "territorial" in temp2_str.lower()):
         # Escalate if both are medium/large
         if (size1 >= 20 and size2 >= 20):
-            reasons.append("Territorial species pairing (both medium/large) is likely to lead to conflict.")
+            incompatible_reasons.append("Both fish are territorial and large - they will constantly fight over territory")
         else:
-            reasons.append("Territorial behavior increases conflict risk, especially in limited space.")
+            conditional_reasons.append("Territorial fish need careful management to prevent constant fighting")
+            conditions.append("Use a large tank with plenty of hiding spots and territories")
+            conditions.append("Watch for territorial disputes and be ready to separate if fighting becomes severe")
 
     # Rule 4: pH Range Overlap
     try:
         ph1_min, ph1_max = parse_range(fish1.get('ph_range'))
         ph2_min, ph2_max = parse_range(fish2.get('ph_range'))
         if ph1_min is not None and ph2_min is not None and (ph1_max < ph2_min or ph2_max < ph1_min):
-            reasons.append(f"Incompatible pH requirements: {fish1.get('ph_range')} vs {fish2.get('ph_range')}")
+            incompatible_reasons.append(f"These fish need very different water acidity levels - one needs acidic water while the other needs alkaline water, which will stress both fish")
     except (ValueError, TypeError):
         pass
 
@@ -201,7 +203,7 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
         t1_min, t1_max = parse_range(fish1.get('temperature_range_c') or fish1.get('temperature_range_(Â°c)'))
         t2_min, t2_max = parse_range(fish2.get('temperature_range_c') or fish2.get('temperature_range_(Â°c)'))
         if t1_min is not None and t2_min is not None and (t1_max < t2_min or t2_max < t1_min):
-            reasons.append(f"Incompatible temperature requirements.")
+            incompatible_reasons.append(f"These fish need very different water temperatures - one prefers cold water while the other needs warm water, which will stress both fish")
     except (ValueError, TypeError):
         pass
 
@@ -214,7 +216,7 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
     is_pred1 = any(k in name1 for k in predator_keywords)
     is_pred2 = any(k in name2 for k in predator_keywords)
     if is_pred1 and is_pred2:
-        reasons.append("Both species are large predatory/territorial fish; cohabitation is generally unsafe.")
+        incompatible_reasons.append("Both fish are large predators that will constantly fight and likely injure each other")
 
     # New Rule 7: Predation risk using size and temperament (more realistic)
     try:
@@ -223,14 +225,16 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
             # More strict thresholds: 3:1 for semi-aggressive, 2:1 for aggressive/predatory
             if ratio and (is_pred1 or is_pred2):
                 if ratio >= 2.0:
-                    reasons.append("Size imbalance with predatory/territorial temperament increases predation/bullying risk.")
+                    incompatible_reasons.append(f"One fish is a predator that's {ratio:.1f} times larger than the other - the smaller fish will likely be eaten")
             elif temp1_score >= 2 or temp2_score >= 2:  # Aggressive only
                 if ratio >= 2.0:
-                    reasons.append("Size imbalance with aggressive temperament increases predation/bullying risk.")
+                    incompatible_reasons.append(f"The aggressive fish is {ratio:.1f} times larger than the other - this creates a dangerous bullying situation")
             # For semi-aggressive (score 1), only flag if ratio is very high
             elif temp1_score >= 1 or temp2_score >= 1:
                 if ratio >= 3.5:
-                    reasons.append("Large size imbalance with semi-aggressive fish may cause stress.")
+                    conditional_reasons.append(f"There's a large size difference ({ratio:.1f}:1) with semi-aggressive fish, which could cause stress")
+                    conditions.append("Use a very large tank with lots of hiding places for the smaller fish")
+                    conditions.append("Watch carefully during feeding time when aggression is most likely")
     except Exception:
         pass
 
@@ -266,30 +270,38 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
     try:
         if size1 > 0 and size2 > 0:
             if cat1 in ("piscivore", "carnivore") and size1 >= size2 * 1.3:
-                reasons.append("Carnivorous/piscivorous diet with a much smaller tankmate increases predation risk.")
+                incompatible_reasons.append("One fish is a predator that eats other fish, and the other fish is small enough to be eaten")
             if cat2 in ("piscivore", "carnivore") and size2 >= size1 * 1.3:
-                reasons.append("Carnivorous/piscivorous diet with a much smaller tankmate increases predation risk.")
+                incompatible_reasons.append("One fish is a predator that eats other fish, and the other fish is small enough to be eaten")
     except Exception:
         pass
 
     # Both carnivorous/piscivorous and medium/large size → feeding aggression
     if (cat1 in ("piscivore", "carnivore")) and (cat2 in ("piscivore", "carnivore")) and (size1 >= 20 and size2 >= 20):
-        reasons.append("Both species are carnivorous/piscivorous and medium/large; high competition and aggression during feeding.")
+        incompatible_reasons.append("Both fish are large predators that will compete aggressively for food and likely fight")
 
     # Herbivore with large carnivore/piscivore
     if (cat1 == "herbivore" and cat2 in ("piscivore", "carnivore") and size2 >= 20) or \
        (cat2 == "herbivore" and cat1 in ("piscivore", "carnivore") and size1 >= 20):
-        reasons.append("Herbivore paired with a large carnivore/piscivore is at risk of harassment or predation.")
+        incompatible_reasons.append("The plant-eating fish will be stressed and harassed by the large predator")
 
     # New Rule 8: Large aggressive/territorial combo
     if (size1 >= 30 and size2 >= 30) and (temp1_score >= 1 and temp2_score >= 1):
-        reasons.append("Both species are large and non-peaceful; high likelihood of severe aggression in shared tanks.")
+        incompatible_reasons.append("Both fish are large and aggressive - they will constantly fight for dominance in the tank")
 
     # New Rule 9: Extremely large minimum tank requirements suggest incompatibility without exceptionally large systems
     try:
         if (min_tank1 and min_tank2) and (min_tank1 >= 300 or min_tank2 >= 300):
-            reasons.append("One or both species require very large tanks; mixing species further increases risk in typical setups.")
+            conditional_reasons.append("These fish need massive tanks to thrive")
+            conditions.append(f"Your tank must be at least {max(min_tank1, min_tank2)} liters - smaller tanks will stress your fish")
+            conditions.append("Consider investing in a dedicated large aquarium system for these fish")
     except Exception:
         pass
 
-    return not reasons, reasons
+    # Determine final compatibility level
+    if incompatible_reasons:
+        return "incompatible", incompatible_reasons, []
+    elif conditional_reasons:
+        return "conditional", conditional_reasons, conditions
+    else:
+        return "compatible", ["These fish should get along well"], []

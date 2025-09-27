@@ -20,14 +20,14 @@ class FishGroup(BaseModel):
 # Compatibility reason logic
 def get_reason(a, b):
     if a["Water Type"] != b["Water Type"]:
-        return "Water type mismatch"
+        return "These fish cannot live together because they need different types of water - one needs freshwater while the other needs saltwater"
     if TEMPERAMENT.get(a["Temperament"], 2) == 3 or TEMPERAMENT.get(b["Temperament"], 2) == 3:
-        return "Aggressive temperament conflict"
+        return "One fish is aggressive and will likely stress or harm the other fish"
     if abs(a["Max Size (cm)"] - b["Max Size (cm)"]) > 8:
-        return "Large size difference"
+        return "There's a large size difference between these fish that could lead to bullying or accidental injury"
     if 4 in {DIET.get(a["Diet"], 3), DIET.get(b["Diet"], 3)} and 1 in {DIET.get(a["Diet"], 3), DIET.get(b["Diet"], 3)}:
-        return "Carnivore-herbivore conflict"
-    return "General incompatibility"
+        return "The carnivorous fish may harass or try to eat the plant-eating fish"
+    return "These fish have incompatible needs that make them unsuitable tankmates"
 
 # Build feature input for a pair
 def build_feature(fish_a, fish_b):
