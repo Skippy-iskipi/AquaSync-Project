@@ -10,10 +10,21 @@ class TankProvider with ChangeNotifier {
   bool _isInitialized = false;
 
   List<Tank> _tanks = [];
+  List<Tank> _archivedTanks = [];
+
   List<Tank> get tanks => _tanks;
+  List<Tank> get archivedTanks => _archivedTanks;
 
   TankProvider() {
     init();
+  }
+
+  // Format numbers without forcing a fixed number of decimals.
+  // Keeps up to 6 decimal places, trimming trailing zeros and any dangling decimal point.
+  String _formatNumber(double value) {
+    final s = value.toStringAsFixed(6);
+    final trimmed = s.replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+    return trimmed.isEmpty ? '0' : trimmed;
   }
 
   Future<void> init() async {
@@ -32,6 +43,7 @@ class TankProvider with ChangeNotifier {
 
   void _clearTanks() {
     _tanks.clear();
+    _archivedTanks.clear();
     notifyListeners();
   }
 
@@ -47,6 +59,7 @@ class TankProvider with ChangeNotifier {
           .from('tanks')
           .select('*')
           .eq('user_id', user.id)
+          .or('archived.is.null,archived.eq.false')
           .order('created_at', ascending: false);
       
       _tanks = tanksData.map((json) => Tank.fromJson(json)).toList();
@@ -140,13 +153,25 @@ class TankProvider with ChangeNotifier {
     }
   }
 
-  Future<void> deleteTank(String tankId) async {
+  Future<void> archiveTank(String tankId) async {
+    Tank? tankToArchive;
     try {
-      await _supabase.from('tanks').delete().eq('id', tankId);
+      // Find the tank to archive
+      tankToArchive = _tanks.firstWhere((tank) => tank.id == tankId);
+      
+      // Remove from local list first to immediately update UI
       _tanks.removeWhere((tank) => tank.id == tankId);
       notifyListeners();
+      
+      // Then update database
+      await _supabase.from('tanks').update({'archived': true, 'archived_at': DateTime.now().toIso8601String()}).eq('id', tankId);
     } catch (e) {
-      print('Error deleting tank from Supabase: $e');
+      print('Error archiving tank from Supabase: $e');
+      // Re-add to list if database update fails
+      if (tankToArchive != null) {
+        _tanks.add(tankToArchive);
+        notifyListeners();
+      }
       rethrow;
     }
   }
@@ -310,12 +335,13 @@ class TankProvider with ChangeNotifier {
           final preferredFood = response['preferred_food'] ?? 'pellets'; // Use database preferred_food
           final feedingNotes = response['feeding_notes'] ?? 'Remove uneaten food after 5 minutes.';
           
-          // Format portion display with preferred food from database
+          // Format portion display with preferred food from database using full precision
           String portionText;
           if (portionGrams >= 1.0) {
-            portionText = '$fishName: ${portionGrams.toStringAsFixed(1)}g of $preferredFood per feeding';
+            portionText = '$fishName: ${_formatNumber(portionGrams)}g of $preferredFood per feeding';
           } else {
-            portionText = '$fishName: ${(portionGrams * 1000).toStringAsFixed(0)}mg of $preferredFood per feeding';
+            final mg = portionGrams * 1000.0;
+            portionText = '$fishName: ${_formatNumber(mg)}mg of $preferredFood per feeding';
           }
           
           portionPerFeeding[fishName] = portionText;
@@ -675,5 +701,59 @@ class TankProvider with ChangeNotifier {
     }
     
     return [];
+  }
+
+  // Load archived tanks
+  Future<void> loadArchivedTanks() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      _archivedTanks.clear();
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final List<dynamic> tanksData = await _supabase
+          .from('tanks')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('archived', true)
+          .order('created_at', ascending: false);
+      
+      _archivedTanks = tanksData.map((json) => Tank.fromJson(json)).toList();
+      print('✅ Loaded ${_archivedTanks.length} archived tanks');
+    } catch (e) {
+      print('❌ Error loading archived tanks from Supabase: $e');
+      _archivedTanks.clear();
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  // Restore archived tank
+  Future<void> restoreTank(String tankId) async {
+    Tank? tankToRestore;
+    try {
+      // Find the tank to restore
+      tankToRestore = _archivedTanks.firstWhere((tank) => tank.id == tankId);
+
+      // Remove from archived list first
+      _archivedTanks.removeWhere((tank) => tank.id == tankId);
+      notifyListeners();
+
+      // Then update database
+      await _supabase.from('tanks').update({'archived': false, 'archived_at': null}).eq('id', tankId);
+      
+      // Reload active tanks
+      await loadTanks();
+    } catch (e) {
+      print('Error restoring tank from Supabase: $e');
+      // Re-add to archived list if database update fails
+      if (tankToRestore != null) {
+        _archivedTanks.add(tankToRestore);
+        notifyListeners();
+      }
+      rethrow;
+    }
   }
 }

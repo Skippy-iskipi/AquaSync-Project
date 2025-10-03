@@ -19,6 +19,8 @@ class WaterCalculation {
   final String? tankAnalysisResponse;
   final String? filtrationResponse;
   final String? dietCareResponse;
+  final bool archived;
+  final DateTime? archivedAt;
 
   WaterCalculation({
     this.id,
@@ -38,6 +40,8 @@ class WaterCalculation {
     this.tankAnalysisResponse,
     this.filtrationResponse,
     this.dietCareResponse,
+    this.archived = false,
+    this.archivedAt,
   });
 
   Map<String, dynamic> toJson() {
@@ -59,6 +63,8 @@ class WaterCalculation {
       'tank_analysis_response': tankAnalysisResponse,
       'filtration_response': filtrationResponse,
       'diet_care_response': dietCareResponse,
+      'archived': archived,
+      'archived_at': archivedAt?.toIso8601String(),
     };
   }
 
@@ -91,6 +97,8 @@ class WaterCalculation {
       tankAnalysisResponse: json['tank_analysis_response'],
       filtrationResponse: json['filtration_response'],
       dietCareResponse: json['diet_care_response'],
+      archived: json['archived'] ?? false,
+      archivedAt: json['archived_at'] != null ? DateTime.parse(json['archived_at']) : null,
     );
   }
 } 

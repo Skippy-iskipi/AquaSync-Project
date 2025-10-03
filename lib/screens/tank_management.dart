@@ -18,6 +18,7 @@ class TankManagement extends StatefulWidget {
 }
 
 class _TankManagementState extends State<TankManagement> {
+  bool _showArchived = false; // Track if showing archived tanks
 
   @override
   void initState() {
@@ -32,11 +33,74 @@ class _TankManagementState extends State<TankManagement> {
   Widget build(BuildContext context) {
     return Consumer<TankProvider>(
       builder: (context, tankProvider, child) {
+        // Load archived data if showing archived and data is empty
+        if (_showArchived && tankProvider.archivedTanks.isEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            tankProvider.loadArchivedTanks();
+          });
+        }
+
+        final tanks = _showArchived ? tankProvider.archivedTanks : tankProvider.tanks;
+        
         return Scaffold(
           backgroundColor: Colors.white,
-          body: tankProvider.tanks.isEmpty
-              ? _buildEmptyState()
-              : _buildTankList(tankProvider.tanks),
+          body: Column(
+            children: [
+              // Archived toggle button
+              Container(
+                margin: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _showArchived = !_showArchived;
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                          decoration: BoxDecoration(
+                            color: _showArchived ? const Color(0xFF00BFB3).withOpacity(0.08) : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: _showArchived ? const Color(0xFF00BFB3) : Colors.grey[300]!,
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                _showArchived ? Icons.archive : Icons.archive_outlined,
+                                size: 18,
+                                color: _showArchived ? const Color(0xFF00BFB3) : Colors.grey[600],
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _showArchived ? 'Show Active Tanks' : 'Show Archived Tanks',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: _showArchived ? const Color(0xFF00BFB3) : Colors.grey[600],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Tank list
+              Expanded(
+                child: tanks.isEmpty
+                    ? _buildEmptyState()
+                    : _buildTankList(tanks),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -48,6 +112,13 @@ class _TankManagementState extends State<TankManagement> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const SizedBox(height: 8),
+          Text(
+            _showArchived ? 'No archived tanks' : 'No tanks created yet',
+            style: const TextStyle(
+              fontSize: 16,
+              color: Colors.grey,
+            ),
+          ),
           const Text(
             'Create your first tank to start managing\nyour aquarium setup',
             textAlign: TextAlign.center,
@@ -96,7 +167,10 @@ class _TankManagementState extends State<TankManagement> {
 
 
   Widget _buildTankCard(Tank tank) {
-    
+    return _showArchived ? _buildArchivedTankCard(tank) : _buildActiveTankCard(tank);
+  }
+
+  Widget _buildActiveTankCard(Tank tank) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 16),
@@ -173,8 +247,8 @@ class _TankManagementState extends State<TankManagement> {
                           case 'edit':
                             _navigateToEditTank(context, tank);
                             break;
-                          case 'delete':
-                            _showDeleteDialog(context, tank);
+                          case 'archive':
+                            _showArchiveDialog(context, tank);
                             break;
                         }
                       },
@@ -200,12 +274,12 @@ class _TankManagementState extends State<TankManagement> {
                           ),
                         ),
                         const PopupMenuItem(
-                          value: 'delete',
+                          value: 'archive',
                           child: Row(
-        children: [
-                              Icon(Icons.delete, size: 16, color: Colors.red),
+                            children: [
+                              Icon(Icons.archive, size: 16, color: Colors.orange),
                               SizedBox(width: 8),
-                              Text('Delete Tank'),
+                              Text('Archive Tank'),
                             ],
                           ),
                         ),
@@ -312,6 +386,39 @@ class _TankManagementState extends State<TankManagement> {
           ),
           const SizedBox(height: 12),
         ],
+                // Action buttons: Edit Fish and Edit Feeds
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _navigateToEditTank(context, tank, initialStep: 1, lockedMode: true),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: const Color(0xFF006064).withOpacity(0.4)),
+                          foregroundColor: const Color(0xFF006064),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        label: const Text('Edit Fish'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _navigateToEditTank(context, tank, initialStep: 2, lockedMode: true),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: const Color(0xFF006064).withOpacity(0.4)),
+                          foregroundColor: const Color(0xFF006064),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        label: const Text('Edit Feeds'),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -396,8 +503,151 @@ class _TankManagementState extends State<TankManagement> {
     );
   }
 
+  Widget _buildArchivedTankCard(Tank tank) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            spreadRadius: 2,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => _navigateToTankDetails(context, tank),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                tank.name,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF006064),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withOpacity(0.9),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.archive,
+                                      color: Colors.white,
+                                      size: 12,
+                                    ),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'Archived',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            tank.tankShape,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Restore button
+                    IconButton(
+                      onPressed: () async {
+                        final shouldRestore = await _showRestoreConfirmationDialog(tank);
+                        if (shouldRestore) {
+                          await Provider.of<TankProvider>(context, listen: false).restoreTank(tank.id!);
+                          showDialog(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Tank Restored'),
+                              content: Text('${tank.name} has been restored to your active tanks.'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('OK'),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(
+                        Icons.restore,
+                        color: Colors.green,
+                        size: 24,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(child: _buildStatCard(
+                      icon: Icons.water_drop,
+                      label: 'Volume',
+                      value: '${tank.volume}L',
+                      color: const Color(0xFF00BCD4),
+                    )),
+                    const SizedBox(width: 8),
+                    Expanded(child: _buildStatCard(
+                      icon: FontAwesomeIcons.fish,
+                      label: 'Fish',
+                      value: '${tank.fishSelections.length}',
+                      color: Colors.green,
+                    )),
+                    const SizedBox(width: 8),
+                    Expanded(child: _buildStatCard(
+                      icon: Icons.thermostat,
+                      label: 'Shape',
+                      value: tank.tankShape,
+                      color: Colors.orange,
+                    )),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-  void _navigateToEditTank(BuildContext context, Tank tank) {
+  void _navigateToEditTank(BuildContext context, Tank tank, {int? initialStep, bool lockedMode = false}) {
     // Check if user is authenticated before allowing tank editing
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!authService.isAuthenticated) {
@@ -408,7 +658,7 @@ class _TankManagementState extends State<TankManagement> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => AddEditTank(tank: tank),
+        builder: (context) => AddEditTank(tank: tank, initialStep: initialStep, lockedMode: lockedMode),
       ),
     );
   }
@@ -422,42 +672,100 @@ class _TankManagementState extends State<TankManagement> {
     );
   }
 
-  void _showDeleteDialog(BuildContext context, Tank tank) {
-    // Check if user is authenticated before allowing tank deletion
+  void _showArchiveDialog(BuildContext context, Tank tank) {
+    // Check if user is authenticated before allowing tank archiving
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!authService.isAuthenticated) {
-      _showAuthRequiredDialog(context, 'Delete Tank', 'You need to be logged in to delete tanks.');
+      _showAuthRequiredDialog(context, 'Archive Tank', 'You need to be logged in to archive tanks.');
       return;
     }
     
     showDialog(
       context: context,
+      barrierDismissible: true,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Tank'),
-        content: Text('Are you sure you want to delete "${tank.name}"? This action cannot be undone.'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+        contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        title: Row(
+          children: const [
+            Icon(Icons.archive_outlined, color: Colors.orange, size: 22),
+            SizedBox(width: 8),
+            Text('Archive Tank'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will move "${tank.name}" to Archived. You can restore it anytime from the Archived list.',
+              style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.4),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Archived tanks are hidden from your active list but not deleted.',
+                      style: TextStyle(fontSize: 12, color: Colors.black87),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         actions: [
-          TextButton(
+          OutlinedButton(
             onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
             child: const Text('Cancel'),
           ),
-          ElevatedButton(
+          ElevatedButton.icon(
             onPressed: () async {
               Navigator.pop(context);
               try {
-                await context.read<TankProvider>().deleteTank(tank.id!);
+                await context.read<TankProvider>().archiveTank(tank.id!);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('"${tank.name}" archived'),
+                      backgroundColor: Colors.orange.shade700,
+                    ),
+                  );
+                }
               } catch (e) {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Error deleting tank: $e'),
+                      content: Text('Error archiving tank: $e'),
                       backgroundColor: const Color.fromARGB(255, 255, 17, 0),
                     ),
                   );
                 }
               }
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 255, 17, 0)),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+            icon: const Icon(Icons.archive, size: 16),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            label: const Text('Archive'),
           ),
         ],
       ),
@@ -500,6 +808,79 @@ class _TankManagementState extends State<TankManagement> {
         },
       ),
     );
+  }
+
+  Future<bool> _showRestoreConfirmationDialog(Tank tank) async {
+    return await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          title: Row(
+            children: const [
+              Icon(Icons.restore, color: Colors.green, size: 22),
+              SizedBox(width: 8),
+              Text('Restore Tank'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This will move "${tank.name}" back to your Active Tanks.',
+                style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Icon(Icons.info_outline, color: Colors.green, size: 18),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Restored tanks will appear in your active list immediately.',
+                        style: TextStyle(fontSize: 12, color: Colors.black87),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context, false),
+              style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context, true),
+              icon: const Icon(Icons.restore, size: 16),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              label: const Text('Restore'),
+            ),
+          ],
+        );
+      },
+    ) ?? false;
   }
 
 }

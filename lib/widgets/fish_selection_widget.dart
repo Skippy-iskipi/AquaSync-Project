@@ -20,6 +20,7 @@ class FishSelectionWidget extends StatefulWidget {
   final Function(Map<String, String>)? onTankShapeWarningsChanged;
   final String? nextButtonText;
   final bool hideButtonsWhenKeyboardVisible;
+  final VoidCallback? onCheckCompatibility; // Add compatibility callback
 
   const FishSelectionWidget({
     super.key,
@@ -35,6 +36,7 @@ class FishSelectionWidget extends StatefulWidget {
     this.onTankShapeWarningsChanged,
     this.nextButtonText,
     this.hideButtonsWhenKeyboardVisible = false,
+    this.onCheckCompatibility,
   });
 
   @override
@@ -55,7 +57,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
   // Draggable container state
   double _containerHeight = 0.08; // Initially only show header (8% of screen height)
   bool _isDragging = false;
-  bool _isExpanded = false; // Track if container is expanded
+  bool _isExpanded = false; // Track if container is expanded - start collapsed
 
   @override
   void initState() {
@@ -109,7 +111,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
     }
   }
 
-  void _deleteFish(String fishName) {
+  void _archiveFish(String fishName) {
     final newSelection = Map<String, int>.from(widget.selectedFish);
     newSelection.remove(fishName);
     widget.onFishSelectionChanged(newSelection);
@@ -961,7 +963,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
                   final newHeight = _containerHeight - (deltaY / screenHeight);
                   
                   setState(() {
-                    _containerHeight = newHeight.clamp(0.08, 0.4); // Min 8% (header only), Max 40% of screen height
+                    _containerHeight = newHeight.clamp(0.08, 0.50); // Min 8% (header only), Max 95% of screen height
                     _isExpanded = _containerHeight > 0.12; // Consider expanded if more than header
                   });
                 }
@@ -1036,7 +1038,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
               AnimatedContainer(
                 duration: _isDragging ? Duration.zero : const Duration(milliseconds: 200),
                 curve: Curves.easeInOut,
-                height: (MediaQuery.of(context).size.height * _containerHeight - 60).clamp(100.0, 300.0), // Reduced max height to prevent overflow
+                height: (MediaQuery.of(context).size.height * _containerHeight - 60).clamp(100.0, MediaQuery.of(context).size.height * 0.9), // Allow up to 90% of screen height
                 decoration: BoxDecoration(
                   color: _isDragging ? Colors.grey.shade50 : Colors.white,
                   borderRadius: const BorderRadius.only(
@@ -1109,7 +1111,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     Text(
-                                      'qty',
+                                      'Qty: ${quantity}',
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: Colors.grey.shade600,
@@ -1201,9 +1203,9 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
                                     border: Border.all(color: Colors.grey.shade300),
                                   ),
                                   child: IconButton(
-                                    onPressed: () => _deleteFish(fishName),
+                                    onPressed: () => _archiveFish(fishName),
                                     icon: Icon(
-                                      Icons.delete_outline,
+                                      Icons.delete,
                                       color: Colors.grey.shade600,
                                       size: 14,
                                     ),
@@ -1256,22 +1258,43 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
                               const SizedBox(width: 16),
                             ],
                             
-                            // Next/Save Button
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: widget.canProceed ? widget.onNext : null,
-                                icon: Icon(widget.isLastStep ? Icons.save : Icons.arrow_forward),
-                                label: Text(widget.nextButtonText ?? (widget.isLastStep ? 'Save Tank' : 'Next')),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF00BCD4),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(6),
+                            // Check Compatibility Button - Only show if onCheckCompatibility is provided and there are selected fish
+                            if (widget.onCheckCompatibility != null && widget.selectedFish.isNotEmpty) ...[
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: widget.canProceed ? widget.onCheckCompatibility : null,
+                                  icon: const Icon(Icons.check_circle_outline),
+                                  label: Text(widget.nextButtonText ?? 'Check Compatibility'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF00BCD4),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
+                            ],
+                            
+                            // Next/Save Button - Only show if onNext is provided and there are selected fish
+                            if (widget.onNext != null && widget.selectedFish.isNotEmpty) ...[
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: widget.canProceed ? widget.onNext : null,
+                                  icon: Icon(widget.isLastStep ? Icons.save : Icons.arrow_forward),
+                                  label: Text(widget.nextButtonText ?? (widget.isLastStep ? 'Save Tank' : 'Next')),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF00BCD4),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ],
@@ -1283,56 +1306,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
           ],
           
           // Navigation Buttons Section - Only show when no fish selected or collapsed (and not hiding buttons when keyboard is visible)
-          if ((widget.selectedFish.isEmpty || !_isExpanded) && !(widget.hideButtonsWhenKeyboardVisible && isKeyboardVisible)) ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                children: [
-                  // Back Button
-                  if (widget.onBack != null) ...[
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: widget.onBack,
-                        icon: const Icon(Icons.arrow_back),
-                        label: const Text('Back'),
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF00BCD4),
-                          side: const BorderSide(color: Color(0xFF00BCD4)),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                  ],
-                  
-                  // Next/Save Button
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: widget.canProceed ? widget.onNext : null,
-                      icon: Icon(widget.isLastStep ? Icons.save : Icons.arrow_forward),
-                      label: Text(widget.nextButtonText ?? (widget.isLastStep ? 'Save Tank' : 'Next')),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00BCD4),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          // REMOVED: No longer show buttons at bottom - only inside selected fish container
         ],
       ),
     );

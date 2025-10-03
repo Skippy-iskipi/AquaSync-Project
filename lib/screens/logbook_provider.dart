@@ -31,6 +31,23 @@ class LogBookProvider with ChangeNotifier {
   List<FishVolumeCalculation> get savedFishVolumeCalculations => _savedFishVolumeCalculations;
   List<Tank> get savedTanks => _savedTanks;
 
+  // Archived data lists
+  List<WaterCalculation> _archivedCalculations = [];
+  List<FishCalculation> _archivedFishCalculations = [];
+  List<CompatibilityResult> _archivedCompatibilityResults = [];
+  List<FishPrediction> _archivedPredictions = [];
+  List<DietCalculation> _archivedDietCalculations = [];
+  List<FishVolumeCalculation> _archivedFishVolumeCalculations = [];
+  List<Tank> _archivedTanks = [];
+
+  List<WaterCalculation> get archivedCalculations => _archivedCalculations;
+  List<FishCalculation> get archivedFishCalculations => _archivedFishCalculations;
+  List<CompatibilityResult> get archivedCompatibilityResults => _archivedCompatibilityResults;
+  List<FishPrediction> get archivedPredictions => _archivedPredictions;
+  List<DietCalculation> get archivedDietCalculations => _archivedDietCalculations;
+  List<FishVolumeCalculation> get archivedFishVolumeCalculations => _archivedFishVolumeCalculations;
+  List<Tank> get archivedTanks => _archivedTanks;
+
   LogBookProvider() {
     init();
   }
@@ -66,6 +83,16 @@ class LogBookProvider with ChangeNotifier {
     _savedDietCalculations.clear();
     _savedFishVolumeCalculations.clear();
     _savedTanks.clear();
+    
+    // Clear archived data
+    _archivedPredictions.clear();
+    _archivedCalculations.clear();
+    _archivedFishCalculations.clear();
+    _archivedCompatibilityResults.clear();
+    _archivedDietCalculations.clear();
+    _archivedFishVolumeCalculations.clear();
+    _archivedTanks.clear();
+    
     notifyListeners();
   }
 
@@ -77,25 +104,28 @@ class LogBookProvider with ChangeNotifier {
     }
 
     try {
-      // Load fish predictions
+      // Load fish predictions (excluding archived)
       final List<dynamic> predictionsData = await _supabase
           .from('fish_predictions')
           .select('*')
-          .eq('user_id', user.id);
+          .eq('user_id', user.id)
+          .or('archived.is.null,archived.eq.false');
       _savedPredictions = predictionsData.map((json) => FishPrediction.fromJson(json)).toList();
 
-      // Load water calculations
+      // Load water calculations (excluding archived)
       final List<dynamic> waterCalculationsData = await _supabase
           .from('water_calculations')
           .select('*')
-          .eq('user_id', user.id);
+          .eq('user_id', user.id)
+          .or('archived.is.null,archived.eq.false');
       _savedCalculations = waterCalculationsData.map((json) => WaterCalculation.fromJson(json)).toList();
 
-      // Load fish calculations
+      // Load fish calculations (excluding archived)
       final List<dynamic> fishCalculationsData = await _supabase
           .from('fish_calculations')
           .select('*')
-          .eq('user_id', user.id);
+          .eq('user_id', user.id)
+          .or('archived.is.null,archived.eq.false');
       _savedFishCalculations = fishCalculationsData.map((json) => FishCalculation.fromJson(json)).toList();
 
       // Load compatibility results by calling the database function
@@ -121,6 +151,7 @@ class LogBookProvider with ChangeNotifier {
             .from('diet_calculations')
             .select('*')
             .eq('user_id', user.id)
+            .or('archived.is.null,archived.eq.false')
             .order('created_at', ascending: false);
         print('Raw diet calculations data: $dietCalculationsData');
         _savedDietCalculations = dietCalculationsData.map((json) => DietCalculation.fromJson(json)).toList();
@@ -136,6 +167,7 @@ class LogBookProvider with ChangeNotifier {
             .from('fish_volume_calculations')
             .select('*')
             .eq('user_id', user.id)
+            .or('archived.is.null,archived.eq.false')
             .order('created_at', ascending: false);
         print('Raw fish volume calculations data: $fishVolumeCalculationsData');
         _savedFishVolumeCalculations = fishVolumeCalculationsData.map((json) => FishVolumeCalculation.fromJson(json)).toList();
@@ -244,16 +276,22 @@ class LogBookProvider with ChangeNotifier {
     }
   }
 
-  Future<void> removePrediction(FishPrediction prediction) async {
+  Future<void> archivePrediction(FishPrediction prediction) async {
     try {
-      await _supabase
-          .from('fish_predictions')
-          .delete()
-          .eq('id', prediction.id!);
+      // Remove from local list first to immediately update UI
       _savedPredictions.removeWhere((p) => p.id == prediction.id);
       notifyListeners();
+      
+      // Then update database
+      await _supabase
+          .from('fish_predictions')
+          .update({'archived': true, 'archived_at': DateTime.now().toIso8601String()})
+          .eq('id', prediction.id!);
     } catch (e) {
-      print('Error removing prediction from Supabase: $e');
+      print('Error archiving prediction from Supabase: $e');
+      // Re-add to list if database update fails
+      _savedPredictions.add(prediction);
+      notifyListeners();
     }
   }
 
@@ -291,16 +329,55 @@ class LogBookProvider with ChangeNotifier {
     }
   }
 
-  Future<void> removeWaterCalculation(WaterCalculation calculation) async {
+  Future<void> archiveWaterCalculation(WaterCalculation calculation) async {
     try {
+      print('Archiving water calculation: ${calculation.id}');
+      
+      // Create an updated calculation with archived status
+      final updatedCalculation = WaterCalculation(
+        id: calculation.id,
+        minimumTankVolume: calculation.minimumTankVolume,
+        fishSelections: calculation.fishSelections,
+        recommendedQuantities: calculation.recommendedQuantities,
+        dateCalculated: calculation.dateCalculated,
+        phRange: calculation.phRange,
+        temperatureRange: calculation.temperatureRange,
+        tankStatus: calculation.tankStatus,
+        tankShape: calculation.tankShape,
+        waterRequirements: calculation.waterRequirements,
+        tankmateRecommendations: calculation.tankmateRecommendations,
+        feedingInformation: calculation.feedingInformation,
+        createdAt: calculation.createdAt,
+        waterParametersResponse: calculation.waterParametersResponse,
+        tankAnalysisResponse: calculation.tankAnalysisResponse,
+        filtrationResponse: calculation.filtrationResponse,
+        dietCareResponse: calculation.dietCareResponse,
+        archived: true,
+        archivedAt: DateTime.now(),
+      );
+
+      // Update local list first to immediately update UI
+      _savedCalculations.removeWhere((c) => c.id == calculation.id);
+      _archivedCalculations.add(updatedCalculation);
+      notifyListeners();
+      
+      // Then update database
       await _supabase
           .from('water_calculations')
-          .delete()
+          .update({
+            'archived': true, 
+            'archived_at': DateTime.now().toIso8601String()
+          })
           .eq('id', calculation.id!);
-      _savedCalculations.removeWhere((c) => c.id == calculation.id);
-      notifyListeners();
+          
+      print('Successfully archived water calculation: ${calculation.id}');
     } catch (e) {
-      print('Error removing water calculation from Supabase: $e');
+      print('Error archiving water calculation from Supabase: $e');
+      // Revert local changes if database update fails
+      _savedCalculations.add(calculation);
+      _archivedCalculations.removeWhere((c) => c.id == calculation.id);
+      notifyListeners();
+      rethrow; // Re-throw to allow error handling upstream
     }
   }
 
@@ -331,16 +408,22 @@ class LogBookProvider with ChangeNotifier {
     }
   }
 
-  Future<void> removeFishCalculation(FishCalculation calculation) async {
+  Future<void> archiveFishCalculation(FishCalculation calculation) async {
     try {
-      await _supabase
-          .from('fish_calculations')
-          .delete()
-          .eq('id', calculation.id!);
+      // Remove from local list first to immediately update UI
       _savedFishCalculations.removeWhere((c) => c.id == calculation.id);
       notifyListeners();
+      
+      // Then update database
+      await _supabase
+          .from('fish_calculations')
+          .update({'archived': true, 'archived_at': DateTime.now().toIso8601String()})
+          .eq('id', calculation.id!);
     } catch (e) {
-      print('Error removing fish calculation from Supabase: $e');
+      print('Error archiving fish calculation from Supabase: $e');
+      // Re-add to list if database update fails
+      _savedFishCalculations.add(calculation);
+      notifyListeners();
     }
   }
 
@@ -371,16 +454,22 @@ class LogBookProvider with ChangeNotifier {
     }
   }
 
-  Future<void> removeCompatibilityResult(CompatibilityResult result) async {
+  Future<void> archiveCompatibilityResult(CompatibilityResult result) async {
     try {
-      await _supabase
-          .from('compatibility_results')
-          .delete()
-          .eq('id', result.id!);
+      // Remove from local list first to immediately update UI
       _savedCompatibilityResults.removeWhere((r) => r.id == result.id);
       notifyListeners();
+      
+      // Then update database
+      await _supabase
+          .from('compatibility_results')
+          .update({'archived': true, 'archived_at': DateTime.now().toIso8601String()})
+          .eq('id', result.id!);
     } catch (e) {
-      print('Error removing compatibility result from Supabase: $e');
+      print('Error archiving compatibility result from Supabase: $e');
+      // Re-add to list if database update fails
+      _savedCompatibilityResults.add(result);
+      notifyListeners();
     }
   }
 
@@ -487,6 +576,7 @@ class LogBookProvider with ChangeNotifier {
         .from('fish_calculations')
         .select()
         .eq('user_id', userId)
+        .or('archived.is.null,archived.eq.false')
         .order('date_calculated', ascending: false);
 
     _savedFishCalculations = response
@@ -530,16 +620,22 @@ class LogBookProvider with ChangeNotifier {
     }
   }
 
-  Future<void> removeDietCalculation(DietCalculation calculation) async {
+  Future<void> archiveDietCalculation(DietCalculation calculation) async {
     try {
-      await _supabase
-          .from('diet_calculations')
-          .delete()
-          .eq('id', calculation.id!);
+      // Remove from local list first to immediately update UI
       _savedDietCalculations.removeWhere((c) => c.id == calculation.id);
       notifyListeners();
+      
+      // Then update database
+      await _supabase
+          .from('diet_calculations')
+          .update({'archived': true, 'archived_at': DateTime.now().toIso8601String()})
+          .eq('id', calculation.id!);
     } catch (e) {
-      print('Error removing diet calculation from Supabase: $e');
+      print('Error archiving diet calculation from Supabase: $e');
+      // Re-add to list if database update fails
+      _savedDietCalculations.add(calculation);
+      notifyListeners();
     }
   }
 
@@ -557,6 +653,7 @@ class LogBookProvider with ChangeNotifier {
         .from('diet_calculations')
         .select()
         .eq('user_id', userId)
+        .or('archived.is.null,archived.eq.false')
         .order('date_calculated', ascending: false);
 
     _savedDietCalculations = response
@@ -602,16 +699,22 @@ class LogBookProvider with ChangeNotifier {
     }
   }
 
-  Future<void> removeFishVolumeCalculation(FishVolumeCalculation calculation) async {
+  Future<void> archiveFishVolumeCalculation(FishVolumeCalculation calculation) async {
     try {
-      await _supabase
-          .from('fish_volume_calculations')
-          .delete()
-          .eq('id', calculation.id!);
+      // Remove from local list first to immediately update UI
       _savedFishVolumeCalculations.removeWhere((c) => c.id == calculation.id);
       notifyListeners();
+      
+      // Then update database
+      await _supabase
+          .from('fish_volume_calculations')
+          .update({'archived': true, 'archived_at': DateTime.now().toIso8601String()})
+          .eq('id', calculation.id!);
     } catch (e) {
-      print('Error removing fish volume calculation from Supabase: $e');
+      print('Error archiving fish volume calculation from Supabase: $e');
+      // Re-add to list if database update fails
+      _savedFishVolumeCalculations.add(calculation);
+      notifyListeners();
     }
   }
 
@@ -629,12 +732,285 @@ class LogBookProvider with ChangeNotifier {
         .from('fish_volume_calculations')
         .select()
         .eq('user_id', userId)
+        .or('archived.is.null,archived.eq.false')
         .order('date_calculated', ascending: false);
 
     _savedFishVolumeCalculations = response
         .map((json) => FishVolumeCalculation.fromJson(json))
         .toList();
     notifyListeners();
+  }
+
+  // Load archived data
+  Future<void> loadArchivedData() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      _clearArchivedData();
+      return;
+    }
+
+    try {
+      print('=== LOADING ARCHIVED DATA ===');
+      
+      // Load archived fish predictions
+      print('Loading archived fish predictions...');
+      final List<dynamic> archivedPredictionsData = await _supabase
+          .from('fish_predictions')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('archived', true);
+      _archivedPredictions = archivedPredictionsData.map((json) => FishPrediction.fromJson(json)).toList();
+      print('Loaded ${_archivedPredictions.length} archived fish predictions');
+
+      // Load archived water calculations
+      print('Loading archived water calculations...');
+      final List<dynamic> archivedWaterCalculationsData = await _supabase
+          .from('water_calculations')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('archived', true);
+      print('Raw water calculations data from DB: $archivedWaterCalculationsData');
+      _archivedCalculations = archivedWaterCalculationsData.map((json) => WaterCalculation.fromJson(json)).toList();
+      print('Mapped ${_archivedCalculations.length} archived water calculations');
+
+      // Load archived fish calculations
+      print('Loading archived fish calculations...');
+      final List<dynamic> archivedFishCalculationsData = await _supabase
+          .from('fish_calculations')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('archived', true);
+      _archivedFishCalculations = archivedFishCalculationsData.map((json) => FishCalculation.fromJson(json)).toList();
+      print('Loaded ${_archivedFishCalculations.length} archived fish calculations');
+
+      // Load archived compatibility results
+      print('Loading archived compatibility results...');
+      final List<dynamic> archivedCompatibilityResultsData = await _supabase
+          .from('compatibility_results')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('archived', true);
+      _archivedCompatibilityResults = archivedCompatibilityResultsData.map((json) => CompatibilityResult.fromJson(json)).toList();
+      print('Loaded ${_archivedCompatibilityResults.length} archived compatibility results');
+
+      // Load archived diet calculations
+      print('Loading archived diet calculations...');
+      final List<dynamic> archivedDietCalculationsData = await _supabase
+          .from('diet_calculations')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('archived', true);
+      _archivedDietCalculations = archivedDietCalculationsData.map((json) => DietCalculation.fromJson(json)).toList();
+      print('Loaded ${_archivedDietCalculations.length} archived diet calculations');
+
+      // Load archived fish volume calculations
+      print('Loading archived fish volume calculations...');
+      final List<dynamic> archivedFishVolumeCalculationsData = await _supabase
+          .from('fish_volume_calculations')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('archived', true);
+      _archivedFishVolumeCalculations = archivedFishVolumeCalculationsData.map((json) => FishVolumeCalculation.fromJson(json)).toList();
+      print('Loaded ${_archivedFishVolumeCalculations.length} archived fish volume calculations');
+
+      // Load archived tanks
+      print('Loading archived tanks...');
+      final List<dynamic> archivedTanksData = await _supabase
+          .from('tanks')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('archived', true);
+      _archivedTanks = archivedTanksData.map((json) => Tank.fromJson(json)).toList();
+      print('Loaded ${_archivedTanks.length} archived tanks');
+      
+      print('=== FINISHED LOADING ARCHIVED DATA ===');
+
+    } catch (e) {
+      print('Error loading archived data from Supabase: $e');
+      _clearArchivedData();
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  // Clear archived data
+  void _clearArchivedData() {
+    _archivedPredictions.clear();
+    _archivedCalculations.clear();
+    _archivedFishCalculations.clear();
+    _archivedCompatibilityResults.clear();
+    _archivedDietCalculations.clear();
+    _archivedFishVolumeCalculations.clear();
+    _archivedTanks.clear();
+    notifyListeners();
+  }
+
+  // Restore archived prediction
+  Future<void> restorePrediction(FishPrediction prediction) async {
+    try {
+      // Remove from archived list first
+      _archivedPredictions.removeWhere((p) => p.id == prediction.id);
+      notifyListeners();
+      
+      // Update database to unarchive
+      await _supabase
+          .from('fish_predictions')
+          .update({'archived': false, 'archived_at': null})
+          .eq('id', prediction.id!);
+      
+      // Reload active data
+      await _loadData();
+    } catch (e) {
+      print('Error restoring prediction from Supabase: $e');
+      // Re-add to archived list if database update fails
+      _archivedPredictions.add(prediction);
+      notifyListeners();
+    }
+  }
+
+  // Restore archived water calculation
+  Future<void> restoreWaterCalculation(WaterCalculation calculation) async {
+    try {
+      print('Restoring water calculation: ${calculation.id}');
+      
+      // Create an updated calculation with archived status cleared
+      final updatedCalculation = WaterCalculation(
+        id: calculation.id,
+        minimumTankVolume: calculation.minimumTankVolume,
+        fishSelections: calculation.fishSelections,
+        recommendedQuantities: calculation.recommendedQuantities,
+        dateCalculated: calculation.dateCalculated,
+        phRange: calculation.phRange,
+        temperatureRange: calculation.temperatureRange,
+        tankStatus: calculation.tankStatus,
+        tankShape: calculation.tankShape,
+        waterRequirements: calculation.waterRequirements,
+        tankmateRecommendations: calculation.tankmateRecommendations,
+        feedingInformation: calculation.feedingInformation,
+        createdAt: calculation.createdAt,
+        waterParametersResponse: calculation.waterParametersResponse,
+        tankAnalysisResponse: calculation.tankAnalysisResponse,
+        filtrationResponse: calculation.filtrationResponse,
+        dietCareResponse: calculation.dietCareResponse,
+        archived: false,
+        archivedAt: null,
+      );
+
+      // Update local lists first for immediate UI update
+      _archivedCalculations.removeWhere((c) => c.id == calculation.id);
+      _savedCalculations.add(updatedCalculation);
+      notifyListeners();
+      
+      // Update database to unarchive
+      await _supabase
+          .from('water_calculations')
+          .update({
+            'archived': false, 
+            'archived_at': null
+          })
+          .eq('id', calculation.id!);
+          
+      print('Successfully restored water calculation: ${calculation.id}');
+    } catch (e) {
+      print('Error restoring water calculation from Supabase: $e');
+      // Revert local changes if database update fails
+      _archivedCalculations.add(calculation);
+      _savedCalculations.removeWhere((c) => c.id == calculation.id);
+      notifyListeners();
+      rethrow; // Re-throw to allow error handling upstream
+    }
+  }
+
+  // Restore archived fish calculation
+  Future<void> restoreFishCalculation(FishCalculation calculation) async {
+    try {
+      // Remove from archived list first
+      _archivedFishCalculations.removeWhere((c) => c.id == calculation.id);
+      notifyListeners();
+      
+      // Update database to unarchive
+      await _supabase
+          .from('fish_calculations')
+          .update({'archived': false, 'archived_at': null})
+          .eq('id', calculation.id!);
+      
+      // Reload active data
+      await _loadData();
+    } catch (e) {
+      print('Error restoring fish calculation from Supabase: $e');
+      // Re-add to archived list if database update fails
+      _archivedFishCalculations.add(calculation);
+      notifyListeners();
+    }
+  }
+
+  // Restore archived diet calculation
+  Future<void> restoreDietCalculation(DietCalculation calculation) async {
+    try {
+      // Remove from archived list first
+      _archivedDietCalculations.removeWhere((c) => c.id == calculation.id);
+      notifyListeners();
+      
+      // Update database to unarchive
+      await _supabase
+          .from('diet_calculations')
+          .update({'archived': false, 'archived_at': null})
+          .eq('id', calculation.id!);
+      
+      // Reload active data
+      await _loadData();
+    } catch (e) {
+      print('Error restoring diet calculation from Supabase: $e');
+      // Re-add to archived list if database update fails
+      _archivedDietCalculations.add(calculation);
+      notifyListeners();
+    }
+  }
+
+  // Restore archived fish volume calculation
+  Future<void> restoreFishVolumeCalculation(FishVolumeCalculation calculation) async {
+    try {
+      // Remove from archived list first
+      _archivedFishVolumeCalculations.removeWhere((c) => c.id == calculation.id);
+      notifyListeners();
+      
+      // Update database to unarchive
+      await _supabase
+          .from('fish_volume_calculations')
+          .update({'archived': false, 'archived_at': null})
+          .eq('id', calculation.id!);
+      
+      // Reload active data
+      await _loadData();
+    } catch (e) {
+      print('Error restoring fish volume calculation from Supabase: $e');
+      // Re-add to archived list if database update fails
+      _archivedFishVolumeCalculations.add(calculation);
+      notifyListeners();
+    }
+  }
+
+  // Restore archived compatibility result
+  Future<void> restoreCompatibilityResult(CompatibilityResult result) async {
+    try {
+      // Remove from archived list first
+      _archivedCompatibilityResults.removeWhere((r) => r.id == result.id);
+      notifyListeners();
+      
+      // Update database to unarchive
+      await _supabase
+          .from('compatibility_results')
+          .update({'archived': false, 'archived_at': null})
+          .eq('id', result.id!);
+      
+      // Reload active data
+      await _loadData();
+    } catch (e) {
+      print('Error restoring compatibility result from Supabase: $e');
+      // Re-add to archived list if database update fails
+      _archivedCompatibilityResults.add(result);
+      notifyListeners();
+    }
   }
 
 }

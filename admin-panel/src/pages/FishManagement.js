@@ -1533,17 +1533,6 @@ function FishManagement() {
                     >
                       <PencilIcon className="h-4 w-4" />
                     </button>
-                    <button
-                      onClick={() => handleToggleStatus(fishItem)}
-                      className={`${fishItem.active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
-                      title={fishItem.active ? 'Deactivate Fish' : 'Activate Fish'}
-                    >
-                      {fishItem.active ? (
-                        <XCircleIcon className="h-4 w-4" />
-                      ) : (
-                        <CheckCircleIcon className="h-4 w-4" />
-                      )}
-                    </button>
                   </div>
                 </td>
               </tr>
@@ -1613,27 +1602,6 @@ function FishManagement() {
               >
                 <PencilIcon className="h-4 w-4 mr-1" />
                 Edit
-              </button>
-              <button
-                onClick={() => handleToggleStatus(fishItem)}
-                className={`mobile-action-btn ${
-                  fishItem.active 
-                    ? 'mobile-action-btn-danger' 
-                    : 'mobile-action-btn-primary'
-                }`}
-                title={fishItem.active ? 'Deactivate' : 'Activate'}
-              >
-                {fishItem.active ? (
-                  <>
-                    <XCircleIcon className="h-4 w-4 mr-1" />
-                    Deactivate
-                  </>
-                ) : (
-                  <>
-                    <CheckCircleIcon className="h-4 w-4 mr-1" />
-                    Activate
-                  </>
-                )}
               </button>
             </div>
           </div>

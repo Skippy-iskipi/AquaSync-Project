@@ -15,8 +15,12 @@ import 'auth_screen.dart';
 
 class AddEditTank extends StatefulWidget {
   final Tank? tank;
+  // Optional: specify which step to open initially (0: Tank Setup, 1: Fish Selection, 2: Feed Inventory, 3: Summary)
+  final int? initialStep;
+  // Optional: lock to a specific step (user can only edit that step)
+  final bool lockedMode;
 
-  const AddEditTank({super.key, this.tank});
+  const AddEditTank({super.key, this.tank, this.initialStep, this.lockedMode = false});
 
   @override
   State<AddEditTank> createState() => _AddEditTankState();
@@ -88,6 +92,13 @@ class _AddEditTankState extends State<AddEditTank> {
     super.initState();
     _initializeForm();
     _loadAvailableFish();
+    // If an initial step is provided, navigate directly to that step
+    if (widget.initialStep != null) {
+      final step = widget.initialStep!.clamp(0, _stepTitles.length - 1);
+      setState(() {
+        _currentStep = step.toInt();
+      });
+    }
   }
 
   void _nextStep() {
@@ -552,68 +563,121 @@ class _AddEditTankState extends State<AddEditTank> {
     return false;
   }
 
-  // Generate recommended feeds based on fish preferences
-  List<String> _getRecommendedFeedsForFish() {
+  // Generate recommended feeds based on fish preferences from database
+  Future<List<String>> _getRecommendedFeedsForFish() async {
     if (_fishSelections.isEmpty) return [];
 
-    final Set<String> recommendedFeeds = {};
-    
-    for (final fishName in _fishSelections.keys) {
-      try {
-        // Get fish dietary preferences
-        final fishPreference = _getFishDietaryPreference(fishName);
-        if (fishPreference.isNotEmpty) {
-          // Map preferences to feed types
-          final feeds = _mapPreferenceToFeeds(fishPreference);
-          recommendedFeeds.addAll(feeds);
+    try {
+      // Get preferred food for all selected fish from database
+      final Map<String, String> fishPreferences = {};
+      final supabase = Supabase.instance.client;
+      
+      for (final fishName in _fishSelections.keys) {
+        try {
+          final response = await supabase
+              .from('fish_species')
+              .select('common_name, preferred_food')
+              .eq('active', true)
+              .ilike('common_name', fishName)
+              .maybeSingle();
+
+          if (response != null) {
+            final preferredFood = response['preferred_food']?.toString().toLowerCase() ?? '';
+            fishPreferences[fishName] = preferredFood;
+            print('🐠 $fishName preferred food: $preferredFood');
+          }
+        } catch (e) {
+          print('Error getting fish preferences for $fishName: $e');
         }
-      } catch (e) {
-        print('Error getting recommendations for $fishName: $e');
       }
+
+      if (fishPreferences.isEmpty) return [];
+
+      // Find feeds that are compatible with ALL fish (intersection)
+      Set<String> commonCompatibleFeeds = {};
+      bool isFirstFish = true;
+
+      for (final fishName in fishPreferences.keys) {
+        final preferredFood = fishPreferences[fishName]!;
+        final compatibleFeeds = _getCompatibleFeedsFromPreference(preferredFood);
+        
+        if (isFirstFish) {
+          // For the first fish, start with all its compatible feeds
+          commonCompatibleFeeds = compatibleFeeds.toSet();
+          isFirstFish = false;
+        } else {
+          // For subsequent fish, keep only feeds that are compatible with this fish too
+          commonCompatibleFeeds = commonCompatibleFeeds.intersection(compatibleFeeds.toSet());
+        }
+      }
+
+      print('🐠 Common compatible feeds for all fish: $commonCompatibleFeeds');
+
+      // Filter out feeds already in inventory
+      return commonCompatibleFeeds.where((feed) => !_availableFeeds.containsKey(feed)).toList();
+    } catch (e) {
+      print('Error getting recommended feeds: $e');
+      return [];
     }
-
-    // Filter out feeds already in inventory
-    return recommendedFeeds.where((feed) => !_availableFeeds.containsKey(feed)).toList();
   }
 
-  // Get fish dietary preference (simplified for demo)
-  String _getFishDietaryPreference(String fishName) {
-    final fishNameLower = fishName.toLowerCase();
+  // Get compatible feeds from fish's preferred food preference
+  List<String> _getCompatibleFeedsFromPreference(String preferredFood) {
+    if (preferredFood.isEmpty) return [];
     
-    // Common fish dietary preferences
-    if (fishNameLower.contains('koi') || fishNameLower.contains('goldfish')) {
-      return 'omnivore, pellets, flakes, vegetable, spirulina';
-    } else if (fishNameLower.contains('betta') || fishNameLower.contains('gourami')) {
-      return 'carnivore, pellets, bloodworms, brine shrimp, live food';
-    } else if (fishNameLower.contains('tetra') || fishNameLower.contains('guppy')) {
-      return 'omnivore, flakes, pellets, bloodworms, daphnia';
-    } else if (fishNameLower.contains('cichlid') || fishNameLower.contains('angelfish')) {
-      return 'carnivore, pellets, bloodworms, brine shrimp, live food';
-    } else if (fishNameLower.contains('pleco') || fishNameLower.contains('catfish')) {
-      return 'herbivore, vegetable, spirulina, algae wafers';
+    final List<String> compatibleFeeds = [];
+    final prefLower = preferredFood.toLowerCase();
+    
+    // Map database preferences to available feed types
+    if (prefLower.contains('pellet') || prefLower.contains('pellets')) {
+      compatibleFeeds.add('Pellets');
+    }
+    if (prefLower.contains('flake') || prefLower.contains('flakes')) {
+      compatibleFeeds.add('Flakes');
+    }
+    if (prefLower.contains('bloodworm') || prefLower.contains('bloodworms')) {
+      compatibleFeeds.add('Bloodworms');
+    }
+    if (prefLower.contains('brine shrimp')) {
+      compatibleFeeds.add('Brine Shrimp');
+    }
+    if (prefLower.contains('daphnia')) {
+      compatibleFeeds.add('Daphnia');
+    }
+    if (prefLower.contains('tubifex')) {
+      compatibleFeeds.add('Tubifex');
+    }
+    if (prefLower.contains('freeze-dried') || prefLower.contains('freeze dried')) {
+      compatibleFeeds.add('Freeze-dried');
+    }
+    if (prefLower.contains('spirulina')) {
+      compatibleFeeds.add('Spirulina');
+    }
+    if (prefLower.contains('vegetable') || prefLower.contains('algae') || prefLower.contains('plant')) {
+      compatibleFeeds.add('Vegetable');
+    }
+    if (prefLower.contains('live food') || prefLower.contains('live')) {
+      compatibleFeeds.add('Live Food');
     }
     
-    return 'omnivore, pellets, flakes'; // Default
+    // If no specific feeds found but fish is omnivore, add common feeds
+    if (compatibleFeeds.isEmpty && (prefLower.contains('omnivore') || prefLower.contains('general'))) {
+      compatibleFeeds.addAll(['Pellets', 'Flakes']);
+    }
+    
+    // If no specific feeds found but fish is carnivore, add protein feeds
+    if (compatibleFeeds.isEmpty && prefLower.contains('carnivore')) {
+      compatibleFeeds.addAll(['Bloodworms', 'Brine Shrimp', 'Live Food']);
+    }
+    
+    // If no specific feeds found but fish is herbivore, add plant feeds
+    if (compatibleFeeds.isEmpty && prefLower.contains('herbivore')) {
+      compatibleFeeds.addAll(['Spirulina', 'Vegetable']);
+    }
+    
+    return compatibleFeeds;
   }
 
-  // Map dietary preference to specific feed types
-  List<String> _mapPreferenceToFeeds(String preference) {
-    final List<String> feeds = [];
-    final prefLower = preference.toLowerCase();
-    
-    if (prefLower.contains('pellets')) feeds.add('Pellets');
-    if (prefLower.contains('flakes')) feeds.add('Flakes');
-    if (prefLower.contains('bloodworms')) feeds.add('Bloodworms');
-    if (prefLower.contains('brine shrimp')) feeds.add('Brine Shrimp');
-    if (prefLower.contains('daphnia')) feeds.add('Daphnia');
-    if (prefLower.contains('tubifex')) feeds.add('Tubifex');
-    if (prefLower.contains('freeze-dried')) feeds.add('Freeze-dried');
-    if (prefLower.contains('spirulina')) feeds.add('Spirulina');
-    if (prefLower.contains('vegetable')) feeds.add('Vegetable');
-    if (prefLower.contains('live food')) feeds.add('Live Food');
-    
-    return feeds;
-  }
 
   // Load fish details for summary
   Future<void> _loadFishDetails() async {
@@ -1021,6 +1085,20 @@ class _AddEditTankState extends State<AddEditTank> {
 
   @override
   Widget build(BuildContext context) {
+    // Determine the title based on locked mode
+    String title;
+    if (widget.lockedMode) {
+      if (_currentStep == 1) {
+        title = 'Edit Fish Selection';
+      } else if (_currentStep == 2) {
+        title = 'Edit Feed Inventory';
+      } else {
+        title = widget.tank != null ? 'Edit Tank' : 'Create New Tank';
+      }
+    } else {
+      title = widget.tank != null ? 'Edit Tank' : 'Create New Tank';
+    }
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -1031,18 +1109,18 @@ class _AddEditTankState extends State<AddEditTank> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-              widget.tank != null ? 'Edit Tank' : 'Create New Tank',
+          title,
           style: const TextStyle(
-                color: Colors.black87,
+            color: Colors.black87,
             fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
-            ),
+            fontSize: 18,
+          ),
+        ),
       ),
       body: Form(
         key: _formKey,
-          child: Column(
-            children: [
+        child: Column(
+          children: [
             // Current step content
             Expanded(
               child: _currentStep == 1 
@@ -1053,8 +1131,11 @@ class _AddEditTankState extends State<AddEditTank> {
               ),
             ),
             
-            // Navigation buttons (only show for non-fish selection steps)
-            if (_currentStep != 1) _buildNavigationButtons(),
+            // Navigation buttons
+            if (widget.lockedMode)
+              _buildLockedModeButtons()
+            else if (_currentStep != 1)
+              _buildNavigationButtons(),
           ],
         ),
       ),
@@ -1131,6 +1212,113 @@ class _AddEditTankState extends State<AddEditTank> {
         ],
       ),
     );
+  }
+
+  // Locked mode buttons - only show Update button
+  Widget _buildLockedModeButtons() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: _updateTankInLockedMode,
+          icon: const Icon(Icons.check),
+          label: const Text('Update'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF00BCD4),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Update tank when in locked mode (only update the specific section)
+  Future<void> _updateTankInLockedMode() async {
+    if (widget.tank == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot update: Tank not found'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    try {
+      // If editing fish (step 1), recalculate compatibility and feeding recommendations
+      if (_currentStep == 1 && _fishSelections.isNotEmpty) {
+        // Recalculate compatibility
+        await _checkCompatibility();
+        
+        // Recalculate feeding recommendations
+        final tankProvider = Provider.of<TankProvider>(context, listen: false);
+        _feedingRecommendations = await tankProvider.generateFeedingRecommendations(_fishSelections);
+        _feedPortionData = tankProvider.generateFeedPortionData(_fishSelections, _feedingRecommendations);
+        
+        // Recalculate feed durations based on new fish selections
+        await _calculateFeedDurations();
+      }
+      
+      // If editing feeds (step 2), recalculate feed durations
+      if (_currentStep == 2) {
+        await _calculateFeedDurations();
+      }
+
+      // Create updated tank with modified data
+      final tank = Tank(
+        id: widget.tank!.id,
+        name: widget.tank!.name,
+        tankShape: widget.tank!.tankShape,
+        length: widget.tank!.length,
+        width: widget.tank!.width,
+        height: widget.tank!.height,
+        unit: widget.tank!.unit,
+        volume: widget.tank!.volume,
+        fishSelections: _fishSelections,
+        compatibilityResults: _compatibilityResults,
+        feedingRecommendations: _feedingRecommendations,
+        recommendedFishQuantities: _recommendedFishQuantities,
+        availableFeeds: _availableFeeds,
+        feedInventory: _feedDurationData,
+        feedPortionData: _feedPortionData,
+        dateCreated: widget.tank!.dateCreated,
+        lastUpdated: DateTime.now(),
+        createdAt: widget.tank!.createdAt,
+      );
+
+      final tankProvider = Provider.of<TankProvider>(context, listen: false);
+      await tankProvider.updateTank(tank);
+      
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      print('Error updating tank: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating tank: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildTankSetupStep() {
@@ -1630,33 +1818,33 @@ class _AddEditTankState extends State<AddEditTank> {
   }
 
    Widget _buildFishSelectionStep() {
-     return FishSelectionWidget(
-       selectedFish: _fishSelections,
-       onFishSelectionChanged: (newSelections) {
-         setState(() {
-           _fishSelections = newSelections;
-         });
-         // Check compatibility after fish selection changes
-         _checkCompatibility();
-         // Check tank shape compatibility for all fish
-         _checkAllFishTankShapeCompatibility();
-         // Recalculate feed durations when fish selection changes
-         _calculateFeedDurations();
-       },
-       availableFish: _availableFish,
-       onBack: _currentStep > 0 ? _previousStep : null,
-       onNext: _canProceedToNext() ? _nextStep : null,
-       canProceed: _canProceedToNext(),
-       isLastStep: _currentStep == _stepTitles.length - 1,
-       compatibilityResults: _compatibilityResults,
-       tankShapeWarnings: _fishTankShapeWarnings,
-       onTankShapeWarningsChanged: (warnings) {
-         setState(() {
-           _fishTankShapeWarnings = warnings;
-         });
-       },
-     );
-   }
+    return FishSelectionWidget(
+      selectedFish: _fishSelections,
+      onFishSelectionChanged: (newSelections) {
+        setState(() {
+          _fishSelections = newSelections;
+        });
+        // Check compatibility after fish selection changes
+        _checkCompatibility();
+        // Check tank shape compatibility for all fish
+        _checkAllFishTankShapeCompatibility();
+        // Recalculate feed durations when fish selection changes
+        _calculateFeedDurations();
+      },
+      availableFish: _availableFish,
+      onBack: widget.lockedMode ? null : (_currentStep > 0 ? _previousStep : null),
+      onNext: widget.lockedMode ? null : (_canProceedToNext() ? _nextStep : null),
+      canProceed: _canProceedToNext(),
+      isLastStep: _currentStep == _stepTitles.length - 1,
+      compatibilityResults: _compatibilityResults,
+      tankShapeWarnings: _fishTankShapeWarnings,
+      onTankShapeWarningsChanged: (warnings) {
+        setState(() {
+          _fishTankShapeWarnings = warnings;
+        });
+      },
+    );
+  }
 
 
 
@@ -2048,7 +2236,6 @@ class _AddEditTankState extends State<AddEditTank> {
   }
 
   Widget _buildFeedRecommendationsSection() {
-    final recommendedFeeds = _getRecommendedFeedsForFish();
     final hasIncompatibleFeeds = _incompatibleFeeds.isNotEmpty;
     
     return Center(
@@ -2061,97 +2248,142 @@ class _AddEditTankState extends State<AddEditTank> {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: const Color(0xFF00BCD4).withOpacity(0.2)),
           ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Feed Recommendations',
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF006064),
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 12),
-          
-          // Recommended feeds
-          if (recommendedFeeds.isNotEmpty) ...[
-            Text(
-              'Recommended feeds for your fish:',
-              style: const TextStyle(
-                fontWeight: FontWeight.w500,
-                color: Colors.black87,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: recommendedFeeds.map((feed) => _buildRecommendedFeedChip(feed)).toList(),
-            ),
-            const SizedBox(height: 12),
-          ],
-          
-          // Incompatible feeds warning
-          if (hasIncompatibleFeeds) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Column(
+          child: FutureBuilder<List<String>>(
+            future: _getRecommendedFeedsForFish(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Feed Recommendations',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF006064),
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Finding compatible feeds...',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF006064),
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              }
+              
+              final recommendedFeeds = snapshot.data ?? [];
+              
+              return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.info_outline, color: Color(0xFF006064), size: 16),
-                      const SizedBox(width: 6),
-                      const Text(
-                        'Incompatible Feeds',
-                style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
+                  Text(
+                    'Feed Recommendations',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF006064),
+                      fontSize: 16,
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  ..._incompatibleFeeds.entries.map((entry) {
-                    final feedName = entry.key;
-                    final incompatibleFish = entry.value;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        '• $feedName: Not suitable for ${incompatibleFish.join(', ')}',
-                        style: const TextStyle(
-                          color: Colors.black87,
-                          fontSize: 12,
-                        ),
+                  const SizedBox(height: 12),
+                  
+                  // Recommended feeds
+                  if (recommendedFeeds.isNotEmpty) ...[
+                    Text(
+                      'Recommended feeds for your fish:',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black87,
+                        fontSize: 14,
                       ),
-                    );
-                  }).toList(),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: recommendedFeeds.map((feed) => _buildRecommendedFeedChip(feed)).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  
+                  // Incompatible feeds warning
+                  if (hasIncompatibleFeeds) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.info_outline, color: Color(0xFF006064), size: 16),
+                              const SizedBox(width: 6),
+                              const Text(
+                                'Incompatible Feeds',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          ..._incompatibleFeeds.entries.map((entry) {
+                            final feedName = entry.key;
+                            final incompatibleFish = entry.value;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                '• $feedName: Not suitable for ${incompatibleFish.join(', ')}',
+                                style: const TextStyle(
+                                  color: Colors.black87,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ],
+                  
+                  // No recommendations message
+                  if (recommendedFeeds.isEmpty && !hasIncompatibleFeeds) ...[
+                    Text(
+                      'All your current feeds are compatible with your fish selection.',
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 14,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
                 ],
-              ),
-            ),
-          ],
-          
-          // No recommendations message
-          if (recommendedFeeds.isEmpty && !hasIncompatibleFeeds) ...[
-            Text(
-              'All your current feeds are compatible with your fish selection.',
-              style: const TextStyle(
-                color: Colors.black87,
-                fontSize: 14,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ],
-        ],
-      ),
+              );
+            },
+          ),
         ),
       ),
     );

@@ -15,7 +15,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../widgets/auth_required_dialog.dart';
 import '../widgets/fish_info_dialog.dart';
 import '../widgets/fish_card_tankmates.dart';
-import '../widgets/beginner_guide_dialog.dart';
 
 class FishCalculatorVolume extends StatefulWidget {
   const FishCalculatorVolume({super.key});
@@ -46,6 +45,9 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   
   // Tank shape compatibility warnings
   Map<String, String> _fishTankShapeWarnings = {};
+  
+  // Store conditional compatibility pairs for display
+  List<Map<String, dynamic>> _conditionalCompatibilityPairs = [];
   
   // Debounce timer for volume changes
   Timer? _volumeChangeTimer;
@@ -191,6 +193,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       _showDropdown.clear();
       _searchQueries.clear();
       _fishTankShapeWarnings.clear();
+      _conditionalCompatibilityPairs.clear();
     });
   }
 
@@ -388,21 +391,26 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
 
         print('Found ${incompatiblePairs.length} incompatible pairs and ${conditionalPairs.length} conditional pairs');
         
-        if (hasIncompatiblePairs || hasConditionalPairs) {
-          print('Processing compatibility issues...');
-          // Combine both incompatible and conditional pairs
-          final allProblematicPairs = [...incompatiblePairs, ...conditionalPairs];
+        // Only block calculation for truly incompatible pairs, allow conditional compatibility
+        if (hasIncompatiblePairs) {
+          print('Processing incompatible compatibility issues...');
           
           setState(() {
             _calculationData = {
-              'error': hasIncompatiblePairs ? 'Incompatible Fish Combinations' : 'Conditional Fish Compatibility',
+              'error': 'Incompatible Fish Combinations',
               'incompatible_pairs': incompatiblePairs,
-              'conditional_pairs': conditionalPairs,
-              'all_pairs': allProblematicPairs,
+              'conditional_pairs': [], // Clear conditional pairs for incompatible case
+              'all_pairs': incompatiblePairs,
             };
             _isCalculating = false;
           });
           return;
+        }
+        
+        // Store conditional pairs for warning display but continue calculation
+        if (hasConditionalPairs) {
+          print('Found conditional compatibility issues, proceeding with warnings...');
+          _conditionalCompatibilityPairs = conditionalPairs;
         }
       }
 
@@ -452,6 +460,10 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
           'fish_selections': _fishSelections,
           'recommended_quantities': recommendedQuantities,
         };
+        // Add conditional compatibility warnings to results if they exist
+        if (_conditionalCompatibilityPairs.isNotEmpty) {
+          _calculationData!['conditional_compatibility_warnings'] = _conditionalCompatibilityPairs;
+        }
         _isCalculating = false;
       });
       
@@ -1455,6 +1467,10 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
               ],
             ),
           ),
+          const SizedBox(height: 20),
+          // Conditional Compatibility Warnings (if any)
+          if (_calculationData != null && _calculationData!['conditional_compatibility_warnings'] != null)
+            _buildConditionalCompatibilityWarning(),
           const SizedBox(height: 20),
           // Water Requirements Card
           Container(
@@ -2759,6 +2775,166 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     }
   }
 
+  Widget _buildConditionalCompatibilityWarning() {
+    final conditionalPairs = _calculationData!['conditional_compatibility_warnings'] as List<Map<String, dynamic>>? ?? [];
+    
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 2,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          dividerColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          childrenPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          collapsedIconColor: const Color(0xFFFF9800),
+          iconColor: const Color(0xFFFF9800),
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF9800).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Icon(
+              Icons.warning,
+              color: Color(0xFFFF9800),
+              size: 20,
+            ),
+          ),
+          title: const Text(
+            'Conditional Compatibility Notice',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFFFF9800),
+            ),
+          ),
+          subtitle: Text(
+            'Tap to view ${conditionalPairs.length} fish combinations that need special attention',
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+          ),
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Info message
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF9800).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFFF9800).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        color: Color(0xFFFF9800),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'These fish can coexist but require careful monitoring and proper tank conditions.',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFFFF9800),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Conditional pairs
+                ...conditionalPairs.map((pair) => Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF9800).withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFFF9800).withOpacity(0.2)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.warning,
+                            color: Color(0xFFFF9800),
+                            size: 14,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${pair['pair'][0]} + ${pair['pair'][1]}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFFFF9800),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      // Reasons
+                      ...(pair['reasons'] as List).map((reason) => Padding(
+                        padding: const EdgeInsets.only(left: 22, bottom: 2),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 6),
+                              width: 4,
+                              height: 4,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFFF9800),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                reason.toString(),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black87,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )).toList(),
+                    ],
+                  ),
+                )).toList(),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildIncompatibilityResult() {
     return Container(
       width: double.infinity,
@@ -3311,7 +3487,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
 
     switch (tankShape) {
       case 'bowl':
-        return '$fishName (max size: ${size}cm, min tank: ${tankVolDisplay}) is too large for a bowl tank. Bowl tanks are limited to 10L and designed for nano fish under 8cm like bettas, small tetras, or shrimp.';
+        return '$fishName (max size: ${size}cm. Bowl tanks are limited to 10L and designed for nano fish under 8cm like bettas, small tetras, or shrimp.';
                
       case 'cylinder':
         return '$fishName (max size: ${size}cm, min tank: ${tankVolDisplay}) needs more horizontal swimming space than a cylinder tank provides. Your ${userVolume}L cylinder tank may not provide enough horizontal swimming space for this fish.';
@@ -3586,7 +3762,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                               )
                             else if (_calculationData!['tank_shape_issues'] != null)
                               _buildTankShapeIncompatibilityResults(_calculationData!)
-                            else if (_calculationData!['incompatible_pairs'] != null || _calculationData!['conditional_pairs'] != null)
+                            else if (_calculationData!['incompatible_pairs'] != null)
                               _buildCompatibilityResults(_calculationData!)
                             else if (_calculationData!['compatibility_issues'] != null && 
                                    (_calculationData!['compatibility_issues'] as List).isNotEmpty)
@@ -3624,7 +3800,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                       )
                     else if ((_calculationData!['compatibility_issues'] == null || 
                            (_calculationData!['compatibility_issues'] as List).isEmpty) && 
-                           !_calculationData!.containsKey('tank_shape_issues'))
+                           !_calculationData!.containsKey('tank_shape_issues') &&
+                           !_calculationData!.containsKey('incompatible_pairs'))
                       Padding(
                         padding: const EdgeInsets.all(16.0),
                         child: Row(

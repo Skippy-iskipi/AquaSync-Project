@@ -55,6 +55,9 @@ class _WaterCalculatorState extends State<WaterCalculator> {
   Map<String, dynamic>? _fishData;
   List<String>? _tankmateRecommendations;
   
+  // Store conditional compatibility pairs for display
+  List<Map<String, dynamic>> _conditionalCompatibilityPairs = [];
+  
   // Dropdown state
   Map<String, bool> _showDropdown = {};
   Map<String, String> _searchQueries = {};
@@ -396,21 +399,26 @@ Widget buildRecommendationsList({
 
         print('Found ${incompatiblePairs.length} incompatible pairs and ${conditionalPairs.length} conditional pairs');
         
-        if (hasIncompatiblePairs || hasConditionalPairs) {
-          print('Processing compatibility issues...');
-          // Combine both incompatible and conditional pairs
-          final allProblematicPairs = [...incompatiblePairs, ...conditionalPairs];
+        // Only block calculation for truly incompatible pairs, allow conditional compatibility
+        if (hasIncompatiblePairs) {
+          print('Processing incompatible compatibility issues...');
           
           setState(() {
             _calculationResult = {
-              'error': hasIncompatiblePairs ? 'Incompatible Fish Combinations' : 'Conditional Fish Compatibility',
+              'error': 'Incompatible Fish Combinations',
               'incompatible_pairs': incompatiblePairs,
-              'conditional_pairs': conditionalPairs,
-              'all_pairs': allProblematicPairs,
+              'conditional_pairs': [], // Clear conditional pairs for incompatible case
+              'all_pairs': incompatiblePairs,
             };
             _isLoading = false;
           });
           return;
+        }
+        
+        // Store conditional pairs for warning display but continue calculation
+        if (hasConditionalPairs) {
+          print('Found conditional compatibility issues, proceeding with warnings...');
+          _conditionalCompatibilityPairs = conditionalPairs;
         }
       }
 
@@ -446,6 +454,10 @@ Widget buildRecommendationsList({
       
       setState(() {
         _calculationResult = responseData;
+        // Add conditional compatibility warnings to results if they exist
+        if (_conditionalCompatibilityPairs.isNotEmpty) {
+          _calculationResult!['conditional_compatibility_warnings'] = _conditionalCompatibilityPairs;
+        }
         _isCalculating = false;
         _isLoading = false;
       });
@@ -1150,6 +1162,10 @@ Widget buildRecommendationsList({
               ],
             ),
           ),
+          const SizedBox(height: 20),
+          // Conditional Compatibility Warnings (if any)
+          if (_calculationResult != null && _calculationResult!['conditional_compatibility_warnings'] != null)
+            _buildConditionalCompatibilityWarning(),
           const SizedBox(height: 20),
           // Water Requirements Card
           Container(
@@ -2124,6 +2140,7 @@ Widget buildRecommendationsList({
       // Clear Supabase data
       _fishData = null;
       _tankmateRecommendations = null;
+      _conditionalCompatibilityPairs.clear(); // Clear conditional compatibility pairs
     });
   }
 
@@ -3015,6 +3032,166 @@ Widget buildRecommendationsList({
       print('Error getting real-time compatibility results: $e');
       return {'incompatible_pairs': [], 'conditional_pairs': []};
     }
+  }
+
+  Widget _buildConditionalCompatibilityWarning() {
+    final conditionalPairs = _calculationResult!['conditional_compatibility_warnings'] as List<Map<String, dynamic>>? ?? [];
+    
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 2,
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          dividerColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          childrenPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          collapsedIconColor: const Color(0xFFFF9800),
+          iconColor: const Color(0xFFFF9800),
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF9800).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Icon(
+              Icons.warning,
+              color: Color(0xFFFF9800),
+              size: 20,
+            ),
+          ),
+          title: const Text(
+            'Conditional Compatibility Notice',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFFFF9800),
+            ),
+          ),
+          subtitle: Text(
+            'Tap to view ${conditionalPairs.length} fish combinations that need special attention',
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+          ),
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Info message
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF9800).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFFF9800).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        color: Color(0xFFFF9800),
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'These fish can coexist but require careful monitoring and proper tank conditions.',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFFFF9800),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Conditional pairs
+                ...conditionalPairs.map((pair) => Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF9800).withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFFF9800).withOpacity(0.2)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.warning,
+                            color: Color(0xFFFF9800),
+                            size: 14,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${pair['pair'][0]} + ${pair['pair'][1]}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFFFF9800),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      // Reasons
+                      ...(pair['reasons'] as List).map((reason) => Padding(
+                        padding: const EdgeInsets.only(left: 22, bottom: 2),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 6),
+                              width: 4,
+                              height: 4,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFFF9800),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                reason.toString(),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black87,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )).toList(),
+                    ],
+                  ),
+                )).toList(),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildTankmateRecommendationsWidget() {
@@ -4235,7 +4412,7 @@ Widget buildRecommendationsList({
                           _buildTemporaryHousingWarning(_calculationResult!)
                         else if (_calculationResult!['tank_shape_issues'] != null)
                           _buildTankShapeIncompatibilityResults(_calculationResult!)
-                        else if (_calculationResult!['incompatible_pairs'] != null || _calculationResult!['conditional_pairs'] != null)
+                        else if (_calculationResult!['incompatible_pairs'] != null)
                           _buildCompatibilityResults(_calculationResult!)
                         else
                           _buildWaterRequirements(),
@@ -4308,7 +4485,7 @@ Widget buildRecommendationsList({
                           ),
                         ),
                       ],
-                      if (_calculationResult != null && !_calculationResult!.containsKey('incompatible_pairs') && !_calculationResult!.containsKey('conditional_pairs') && !_calculationResult!.containsKey('tank_shape_issues') && !_calculationResult!.containsKey('temporary_housing_issues')) ...[
+                      if (_calculationResult != null && !_calculationResult!.containsKey('incompatible_pairs') && !_calculationResult!.containsKey('tank_shape_issues') && !_calculationResult!.containsKey('temporary_housing_issues')) ...[
                         Expanded(
                           child: TextButton(
                             onPressed: _resetCalculator,

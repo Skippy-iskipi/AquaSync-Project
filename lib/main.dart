@@ -7,6 +7,7 @@ import 'providers/tank_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services/auth_service.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Global navigator key for showing dialogs from anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -162,11 +163,25 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   Future<void> _checkOnboardingStatus() async {
-    // Always show onboarding and tour - remove the SharedPreferences checks
-    setState(() {
-      _hasSeenOnboarding = false; // Always show onboarding
-      _hasSeenTour = false; // Always show tour
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final bool hasSeenOnboarding = prefs.getBool('hasSeenOnboarding') ?? false;
+      final bool hasSeenTour = prefs.getBool('hasSeenTour') ?? false;
+      
+      setState(() {
+        _hasSeenOnboarding = hasSeenOnboarding;
+        _hasSeenTour = hasSeenTour;
+      });
+      
+      print('Onboarding status - Seen onboarding: $hasSeenOnboarding, Seen tour: $hasSeenTour');
+    } catch (e) {
+      print('Error checking onboarding status: $e');
+      // Default to showing onboarding if there's an error
+      setState(() {
+        _hasSeenOnboarding = false;
+        _hasSeenTour = false;
+      });
+    }
   }
 
   Future<void> _debugAuthState() async {
@@ -335,19 +350,39 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
     if (!_hasSeenOnboarding) {
       return OnboardingScreen(
-        onFinish: () {
-          setState(() {
-            _hasSeenOnboarding = true;
-          });
+        onFinish: () async {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('hasSeenOnboarding', true);
+            setState(() {
+              _hasSeenOnboarding = true;
+            });
+            print('Onboarding completed and saved to SharedPreferences');
+          } catch (e) {
+            print('Error saving onboarding status: $e');
+            setState(() {
+              _hasSeenOnboarding = true;
+            });
+          }
         },
       );
     }
     if (!_hasSeenTour) {
       return AppTourScreen(
-        onFinish: () {
-          setState(() {
-            _hasSeenTour = true;
-          });
+        onFinish: () async {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('hasSeenTour', true);
+            setState(() {
+              _hasSeenTour = true;
+            });
+            print('Tour completed and saved to SharedPreferences');
+          } catch (e) {
+            print('Error saving tour status: $e');
+            setState(() {
+              _hasSeenTour = true;
+            });
+          }
         },
       );
     }
@@ -533,12 +568,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                               child: const Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(
-                                    Icons.arrow_forward,
-                                    color: Colors.white,
-                                    size: 18,
-                                  ),
-                                  SizedBox(width: 8),
                                   Text(
                                     'Get Started',
                                     style: TextStyle(

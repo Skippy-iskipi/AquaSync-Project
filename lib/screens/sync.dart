@@ -88,7 +88,7 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Card(
             elevation: 1,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Row(
@@ -155,6 +155,7 @@ class _SyncScreenState extends State<SyncScreen> {
   List<Map<String, dynamic>> _storedCompatibilityResults = []; // Store detailed API compatibility results
   bool _showAllPairs = false; // Track if all pairs are shown
   bool _showAllTankmateFish = false; // Track if all tankmate fish cards are shown
+  bool _isSuggestionsExpanded = false; // Track if suggestions section is expanded
   // Confidence threshold for accepting predictions (50%)
   static const double _confidenceThreshold = 0.7;
   // Removed image cache - no longer needed
@@ -315,6 +316,228 @@ class _SyncScreenState extends State<SyncScreen> {
         isError: true,
       );
     }
+  }
+
+  // Get unique fish names from saved predictions for suggestions
+  List<String> _getSuggestedFishNames() {
+    try {
+      final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+      final savedPredictions = logBookProvider.savedPredictions;
+      
+      // Get unique fish names from saved predictions
+      final uniqueFishNames = <String>{};
+      for (final prediction in savedPredictions) {
+        if (prediction.commonName.isNotEmpty) {
+          uniqueFishNames.add(prediction.commonName);
+        }
+      }
+      
+      return uniqueFishNames.toList()..sort();
+    } catch (e) {
+      print('Error getting suggested fish names: $e');
+      return [];
+    }
+  }
+
+  // Build suggestion section widget
+  Widget _buildSuggestionSection() {
+    return Consumer<LogBookProvider>(
+      builder: (context, logBookProvider, child) {
+        final suggestedFish = _getSuggestedFishNames();
+        
+        if (suggestedFish.isEmpty) {
+          return const SizedBox.shrink();
+        }
+    
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.grey[200]!),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.02),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // Collapsible header
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _isSuggestionsExpanded = !_isSuggestionsExpanded;
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), // Reduced vertical padding
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6), // Reduced padding
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00BCD4).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6), // Reduced border radius
+                        ),
+                        child: const Icon(
+                          Icons.history,
+                          color: Color(0xFF00BCD4),
+                          size: 16, // Reduced icon size
+                        ),
+                      ),
+                      const SizedBox(width: 10), // Reduced spacing
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min, // Added to minimize height
+                          children: [
+                            const Text(
+                              'Saved Fish Suggestions',
+                              style: TextStyle(
+                                fontSize: 14, // Reduced font size
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            Text(
+                              '${suggestedFish.length} fish from your collection',
+                              style: TextStyle(
+                                fontSize: 11, // Reduced font size
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      AnimatedRotation(
+                        turns: _isSuggestionsExpanded ? 0.5 : 0.0,
+                        duration: const Duration(milliseconds: 200),
+                        child: Icon(
+                          Icons.keyboard_arrow_down,
+                          color: Colors.grey[600],
+                          size: 20, // Reduced icon size
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // Collapsible content
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                height: _isSuggestionsExpanded ? null : 0,
+                child: _isSuggestionsExpanded
+                    ? Container(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Fish chips with better spacing - aligned to left
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Wrap(
+                                alignment: WrapAlignment.start, // Align to start/left
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: suggestedFish.take(8).map((fishName) {
+                                  final isSelected = _selectedFish.containsKey(fishName);
+                                  return GestureDetector(
+                                    onTap: () {
+                                      setState(() {
+                                        if (isSelected) {
+                                          _selectedFish.remove(fishName);
+                                        } else {
+                                          _selectedFish[fishName] = 1;
+                                        }
+                                      });
+                                    },
+                                    child: AnimatedContainer(
+                                      duration: const Duration(milliseconds: 200),
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                      decoration: BoxDecoration(
+                                        color: isSelected 
+                                            ? const Color(0xFF00BCD4)
+                                            : Colors.grey[50],
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: isSelected 
+                                              ? const Color(0xFF00BCD4)
+                                              : Colors.grey[300]!,
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            fishName,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                              color: isSelected 
+                                                  ? Colors.white
+                                                  : Colors.black87,
+                                            ),
+                                          ),
+                                          if (isSelected) ...[
+                                            const SizedBox(width: 8),
+                                            Container(
+                                              padding: const EdgeInsets.all(2),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: const Icon(
+                                                Icons.check,
+                                                size: 12,
+                                                color: Color(0xFF00BCD4),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                            
+                            // Show more indicator if needed
+                            if (suggestedFish.length > 8) ...[
+                              const SizedBox(height: 12),
+                              Center(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[100],
+                                    borderRadius: BorderRadius.circular(15),
+                                  ),
+                                  child: Text(
+                                    '+${suggestedFish.length - 8} more available',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      )
+                    : null,
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _loadFishSpecies() async {
@@ -514,7 +737,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           height: size.width * 0.8,
                           decoration: BoxDecoration(
                             border: Border.all(color: Colors.teal, width: 2),
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(6),
                           ),
                         ),
                       ),
@@ -693,7 +916,7 @@ class _SyncScreenState extends State<SyncScreen> {
                         Container(
                           decoration: BoxDecoration(
                             color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(20),
+                            borderRadius: BorderRadius.circular(6),
                           ),
                           child: IconButton(
                             icon: const Icon(Icons.close, color: Colors.white),
@@ -715,7 +938,7 @@ class _SyncScreenState extends State<SyncScreen> {
                             width: MediaQuery.of(context).size.width * 0.8,
                             height: MediaQuery.of(context).size.width * 0.8,
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(20),
+                              borderRadius: BorderRadius.circular(6),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withOpacity(0.3),
@@ -728,7 +951,7 @@ class _SyncScreenState extends State<SyncScreen> {
                               children: [
                                 // Fish image
                                 ClipRRect(
-                                  borderRadius: BorderRadius.circular(20),
+                                  borderRadius: BorderRadius.circular(6),
                                   child: Image.file(
                                     io.File(imageFile.path),
                                     width: double.infinity,
@@ -740,7 +963,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                 // Scanning overlay
                                 Container(
                                   decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(20),
+                                    borderRadius: BorderRadius.circular(6),
                                     color: Colors.black.withOpacity(0.4),
                                   ),
                                 ),
@@ -1213,7 +1436,7 @@ class _SyncScreenState extends State<SyncScreen> {
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(6),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withOpacity(0.1),
@@ -1318,7 +1541,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                   backgroundColor: Colors.grey[100],
                                   padding: const EdgeInsets.symmetric(vertical: 12),
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
                                 ),
                                 child: const Text(
@@ -1345,7 +1568,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                   foregroundColor: Colors.white,
                                   padding: const EdgeInsets.symmetric(vertical: 12),
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
                                 ),
                                 child: const Text(
@@ -1413,7 +1636,7 @@ class _SyncScreenState extends State<SyncScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Colors.grey[200]!),
       ),
       child: Row(
@@ -1422,7 +1645,7 @@ class _SyncScreenState extends State<SyncScreen> {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: const Color(0xFF00ACC1).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(6),
             ),
             child: Icon(
               icon,
@@ -1518,7 +1741,23 @@ class _SyncScreenState extends State<SyncScreen> {
   bool _canCheckCompatibility() {
     // Users can check compatibility without being logged in
     // Authentication is only required when saving results
-    return true;
+    
+    if (_selectedFish.isEmpty) {
+      return false;
+    }
+    
+    // Case 1: Multiple fish species (2 or more different fish)
+    if (_selectedFish.length >= 2) {
+      return true;
+    }
+    
+    // Case 2: Single fish species with 2+ quantity
+    if (_selectedFish.length == 1) {
+      final quantity = _selectedFish.values.first;
+      return quantity >= 2;
+    }
+    
+    return false;
   }
 
 
@@ -1536,10 +1775,10 @@ class _SyncScreenState extends State<SyncScreen> {
       return;
     }
     
-    if (_selectedFish.length < 2) {
+    if (_selectedFish.isEmpty) {
       showCustomNotification(
         context,
-        'Please select at least 2 fish to check compatibility.',
+        'Please select at least 1 fish to check compatibility.',
         isError: true,
       );
       return;
@@ -1550,9 +1789,14 @@ class _SyncScreenState extends State<SyncScreen> {
     });
 
     try {
-      // Use the same compatibility checking approach as other calculators
       // Create expanded fish list from selected fish
+      // For single fish, duplicate it to check self-compatibility
       final expandedFishNames = _selectedFish.keys.toList();
+      
+      // If only one fish type is selected, duplicate it to enable self-compatibility checking
+      if (expandedFishNames.length == 1) {
+        expandedFishNames.add(expandedFishNames.first);
+      }
 
       final response = await http.post(
         Uri.parse(ApiConfig.checkGroupEndpoint),
@@ -1996,7 +2240,7 @@ class _SyncScreenState extends State<SyncScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Colors.black.withOpacity(0.1)),
                     boxShadow: [
                       BoxShadow(
@@ -2015,7 +2259,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: const Color(0xFF00BCD4).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                       child: const Icon(
                   FontAwesomeIcons.fish,
@@ -2054,7 +2298,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           width: 60,
                           height: 60,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(6),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(0.1),
@@ -2064,7 +2308,7 @@ class _SyncScreenState extends State<SyncScreen> {
                     ],
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(6),
                             child: _buildFishResultImage(fishName),
                   ),
                 ),
@@ -2117,7 +2361,7 @@ class _SyncScreenState extends State<SyncScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color: statusColor.withOpacity(0.3),
           width: 2,
@@ -2178,7 +2422,7 @@ class _SyncScreenState extends State<SyncScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Colors.black.withOpacity(0.1)),
         boxShadow: [
           BoxShadow(
@@ -2217,7 +2461,7 @@ class _SyncScreenState extends State<SyncScreen> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: const Color(0xFF00BCD4).withOpacity(0.05),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(6),
                 border: Border.all(
                   color: const Color(0xFF00BCD4).withOpacity(0.2),
                 ),
@@ -2241,7 +2485,7 @@ class _SyncScreenState extends State<SyncScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: const Color(0xFF00BCD4).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         name,
@@ -2350,7 +2594,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: const Color(0xFF00BCD4).withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                   border: Border.all(
                     color: const Color(0xFF00BCD4).withOpacity(0.2),
                   ),
@@ -2374,7 +2618,7 @@ class _SyncScreenState extends State<SyncScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: const Color(0xFF00BCD4).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           name,
@@ -2396,7 +2640,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: _getCompatibilityColor(compatibilityLevel).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                   border: Border.all(
                     color: _getCompatibilityColor(compatibilityLevel).withOpacity(0.3),
                   ),
@@ -2470,7 +2714,7 @@ class _SyncScreenState extends State<SyncScreen> {
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(6),
                     ),
                     elevation: 0,
                   ),
@@ -2499,7 +2743,7 @@ class _SyncScreenState extends State<SyncScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Colors.black.withOpacity(0.2)),
         boxShadow: [
           BoxShadow(
@@ -2545,7 +2789,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: _getCompatibilityColor(pairCompatibility).withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                   border: Border.all(
                     color: _getCompatibilityColor(pairCompatibility).withOpacity(0.3),
                   ),
@@ -2596,7 +2840,7 @@ class _SyncScreenState extends State<SyncScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: _getCompatibilityColor(pairCompatibility).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -2691,7 +2935,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(6),
                     side: BorderSide(color: Colors.black.withOpacity(0.3)),
                   ),
                 ),
@@ -2740,7 +2984,7 @@ class _SyncScreenState extends State<SyncScreen> {
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(6),
         ),
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -2773,7 +3017,7 @@ class _SyncScreenState extends State<SyncScreen> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Colors.black.withOpacity(0.1)),
       ),
       child: Column(
@@ -2818,7 +3062,7 @@ class _SyncScreenState extends State<SyncScreen> {
                         width: 40,
                         height: 40,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withOpacity(0.1),
@@ -2828,7 +3072,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           ],
                         ),
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(6),
                           child: _buildFishResultImage(fishName),
                         ),
                       ),
@@ -2861,7 +3105,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
                             color: const Color(0xFF00BCD4).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(6),
                           ),
                           child: const Icon(
                             Icons.arrow_forward_ios,
@@ -2886,7 +3130,7 @@ class _SyncScreenState extends State<SyncScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: Colors.green.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: Colors.green.withOpacity(0.3)),
                         ),
                         child: Text(
@@ -2904,7 +3148,7 @@ class _SyncScreenState extends State<SyncScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: Colors.orange.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: Colors.orange.withOpacity(0.3)),
                         ),
                         child: Text(
@@ -2923,7 +3167,7 @@ class _SyncScreenState extends State<SyncScreen> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
                               color: Colors.grey.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(6),
                               border: Border.all(color: Colors.grey.withOpacity(0.3)),
                             ),
                             child: Text(
@@ -2949,7 +3193,7 @@ class _SyncScreenState extends State<SyncScreen> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
                               color: Colors.green.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               '${fullyCompatible.length} fully compatible',
@@ -2967,7 +3211,7 @@ class _SyncScreenState extends State<SyncScreen> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
                               color: Colors.orange.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               '${conditional.length} conditional',
@@ -3006,7 +3250,7 @@ class _SyncScreenState extends State<SyncScreen> {
                 style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                     side: BorderSide(color: Colors.black.withOpacity(0.3)),
                   ),
                 ),
@@ -3130,41 +3374,8 @@ class _SyncScreenState extends State<SyncScreen> {
                 )
           : Column(
                       children: [
-                // Header
-                Container(
-                  padding: const EdgeInsets.all(20),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-                                const Text(
-                                  'Fish Compatibility Checker',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF006064),
-                ),
-              ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Select multiple fish to check their compatibility',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                    ],
-                  ),
-                ],
-              ),
-                ),
+                // Suggestion Section
+                _buildSuggestionSection(),
                 
                 // Fish Selection Widget
                 Expanded(
@@ -3191,9 +3402,10 @@ class _SyncScreenState extends State<SyncScreen> {
                         _selectedFish = newSelection;
                       });
                     },
-                    canProceed: _selectedFish.length >= 2 && !isKeyboardVisible, // Require at least 2 fish and disable button when keyboard is visible
+                    canProceed: _canCheckCompatibility() && !isKeyboardVisible, // Check if compatibility can be enabled
                     isLastStep: true,
-                    onNext: _checkCompatibility,
+                    onNext: null, // Hide compatibility button from main screen
+                    onCheckCompatibility: _checkCompatibility, // Add compatibility callback
                     compatibilityResults: const {},
                     tankShapeWarnings: const {},
                     nextButtonText: 'Check Compatibility',
@@ -3293,7 +3505,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                 decoration: BoxDecoration(
                                   color: Colors.green.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(20),
+                                  borderRadius: BorderRadius.circular(6),
                                   border: Border.all(color: Colors.green.withOpacity(0.3)),
                                 ),
                                 child: Row(
@@ -3337,7 +3549,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: Colors.orange.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: Colors.orange.withOpacity(0.3)),
                           ),
                           child: Row(
@@ -3563,7 +3775,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                         width: imageSize,
                                         height: imageSize,
                                         decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(6),
                                           boxShadow: [
                                             BoxShadow(
                                               color: Colors.black.withOpacity(0.1),
@@ -3573,7 +3785,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                           ],
                                         ),
                                         child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(6),
                                           child: _buildFishResultImage(fish1),
                                         ),
                                       ),
@@ -3602,7 +3814,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                         padding: EdgeInsets.all(isSmallScreen ? 6 : 8),
                                         decoration: BoxDecoration(
                                           color: Colors.black.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(20),
+                                          borderRadius: BorderRadius.circular(6),
                                         ),
                                         child: Text(
                                           'VS',
@@ -3618,7 +3830,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                                         decoration: BoxDecoration(
                                           color: _getCompatibilityColor(compatibility).withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(6),
                                         ),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
@@ -3655,7 +3867,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                         width: imageSize,
                                         height: imageSize,
                                         decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(6),
                                           boxShadow: [
                                             BoxShadow(
                                               color: Colors.black.withOpacity(0.1),
@@ -3665,7 +3877,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                           ],
                                         ),
                                         child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(6),
                                           child: _buildFishResultImage(fish2),
                                         ),
                                       ),
@@ -3699,7 +3911,7 @@ class _SyncScreenState extends State<SyncScreen> {
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               color: Colors.orange.withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(6),
                               border: Border.all(color: Colors.orange.withOpacity(0.2)),
                             ),
                             child: Column(
@@ -3758,7 +3970,7 @@ class _SyncScreenState extends State<SyncScreen> {
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               color: _getCompatibilityColor(compatibility).withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(6),
                               border: Border.all(
                                 color: _getCompatibilityColor(compatibility).withOpacity(0.2),
                               ),
@@ -3820,7 +4032,7 @@ class _SyncScreenState extends State<SyncScreen> {
       builder: (BuildContext context) {
         return Dialog(
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(6),
           ),
           child: Container(
             padding: const EdgeInsets.all(20),
@@ -3871,7 +4083,7 @@ class _SyncScreenState extends State<SyncScreen> {
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(6),
                     border: Border.all(color: Colors.black.withOpacity(0.1)),
                   ),
                   child: Column(
@@ -3946,7 +4158,7 @@ class _SyncScreenState extends State<SyncScreen> {
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(6),
                     ),
                     elevation: 0,
                   ),

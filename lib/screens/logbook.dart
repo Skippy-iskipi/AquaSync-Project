@@ -37,6 +37,7 @@ class LogBook extends StatefulWidget {
 
 class _LogBookState extends State<LogBook> {
   String _selectedSection = 'Captured';
+  bool _showArchived = false; // Track if showing archived items
   
   final List<String> _sections = [
     'Captured',
@@ -92,39 +93,90 @@ class _LogBookState extends State<LogBook> {
           width: 1,
         ),
       ),
-      child: Row(
-        children: _sections.map((section) {
-          final isSelected = _selectedSection == section;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _selectedSection = section;
-                });
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
-                decoration: BoxDecoration(
-                  color: isSelected ? const Color(0xFF00BFB3) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Center(
-                  child: Text(
-                      section,
-                      style: TextStyle(
-                      color: isSelected ? Colors.white : const Color(0xFF666666),
-                        fontSize: 12,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                      ),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+      child: Column(
+        children: [
+          Row(
+            children: _sections.map((section) {
+              final isSelected = _selectedSection == section;
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedSection = section;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: isSelected ? const Color(0xFF00BFB3) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
                     ),
+                    child: Center(
+                      child: Text(
+                          section,
+                          style: TextStyle(
+                          color: isSelected ? Colors.white : const Color(0xFF666666),
+                            fontSize: 12,
+                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ),
+                  ),
                 ),
-              ),
+              );
+            }).toList(),
+          ),
+          // Archived toggle button
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _showArchived = !_showArchived;
+                      });
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: _showArchived ? Colors.orange[100] : Colors.grey[100],
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: _showArchived ? Colors.orange : Colors.grey[300]!,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _showArchived ? Icons.archive : Icons.archive_outlined,
+                            size: 16,
+                            color: _showArchived ? Colors.orange[700] : Colors.grey[600],
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _showArchived ? 'Show Archived' : 'Show Active',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: _showArchived ? Colors.orange[700] : Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          );
-        }).toList(),
+          ),
+        ],
       ),
     );
   }
@@ -714,14 +766,23 @@ class _LogBookState extends State<LogBook> {
   Widget _buildFishCollectionTab() {
     return Consumer<LogBookProvider>(
       builder: (context, logBookProvider, child) {
-        if (logBookProvider.savedPredictions.isEmpty) {
+        // Load archived data if showing archived and data is empty
+        if (_showArchived && logBookProvider.archivedPredictions.isEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            logBookProvider.loadArchivedData();
+          });
+        }
+
+        final predictions = _showArchived ? logBookProvider.archivedPredictions : logBookProvider.savedPredictions;
+        
+        if (predictions.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text(
-                  'No fish predictions saved yet',
-                  style: TextStyle(
+                Text(
+                  _showArchived ? 'No archived fish predictions' : 'No fish predictions saved yet',
+                  style: const TextStyle(
                     fontSize: 16,
                     color: Colors.grey,
                   ),
@@ -797,37 +858,39 @@ class _LogBookState extends State<LogBook> {
         }
         return ListView.builder(
           padding: const EdgeInsets.all(16),
-          itemCount: logBookProvider.savedPredictions.length + 1, // +1 for capture button
+          itemCount: predictions.length + (_showArchived ? 0 : 1), // +1 for capture button only if not archived
           itemBuilder: (context, index) {
-            if (index == logBookProvider.savedPredictions.length) {
-              // Show capture button at the end
+            if (!_showArchived && index == predictions.length) {
+              // Show capture button at the end (only for active items)
               return _buildCaptureButton();
             }
             
-            final prediction = logBookProvider.savedPredictions[index];
-            return Dismissible(
-              key: Key(prediction.commonName),
-              background: Container(
-                color: const Color.fromARGB(255, 255, 17, 0),
-                alignment: Alignment.center,
-                child: const Text(
-                  'Delete',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
+            final prediction = predictions[index];
+            return _showArchived 
+              ? _buildArchivedFishCard(prediction, logBookProvider)
+              : Dismissible(
+                  key: Key(prediction.commonName),
+                  background: Container(
+                    color: const Color.fromARGB(255, 255, 17, 0),
+                    alignment: Alignment.center,
+                    child: const Text(
+                      'Archive',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              confirmDismiss: (direction) async {
-                return await _showDeleteConfirmationDialogFishPrediction(prediction);
-              },
-              onDismissed: (direction) {
-                logBookProvider.removePrediction(prediction);
-                showCustomNotification(context, '${prediction.commonName} removed from collection');
-              },
-              child: _buildFishCard(prediction),
-            );
+                  confirmDismiss: (direction) async {
+                    return await _showDeleteConfirmationDialogFishPrediction(prediction);
+                  },
+                  onDismissed: (direction) {
+                    logBookProvider.archivePrediction(prediction);
+                    showCustomNotification(context, '${prediction.commonName} archived from collection');
+                  },
+                  child: _buildFishCard(prediction),
+                );
           },
         );
       },
@@ -908,13 +971,13 @@ class _LogBookState extends State<LogBook> {
                               onPressed: () async {
                                 final shouldDelete = await _showDeleteConfirmationDialogFishPrediction(prediction);
                                 if (shouldDelete) {
-                                  Provider.of<LogBookProvider>(context, listen: false).removePrediction(prediction);
-                                  showCustomNotification(context, '${prediction.commonName} removed from collection');
+                                  Provider.of<LogBookProvider>(context, listen: false).archivePrediction(prediction);
+                                  showCustomNotification(context, '${prediction.commonName} archived from collection');
                                 }
                               },
                               icon: const Icon(
-                                Icons.delete,
-                                color: Colors.red,
+                                Icons.archive,
+                                color: Colors.orange,
                                 size: 20,
                               ),
                               padding: const EdgeInsets.all(8),
@@ -980,6 +1043,182 @@ class _LogBookState extends State<LogBook> {
             );
   }
 
+  Widget _buildArchivedFishCard(FishPrediction prediction, LogBookProvider logBookProvider) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        elevation: 2,
+        child: InkWell(
+          onTap: () => _showFishDetails(prediction),
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            height: 200,
+            child: Column(
+              children: [
+                // Fish Image - takes up most of the card
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(6),
+                        topRight: Radius.circular(6),
+                      ),
+                    ),
+                    child: Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(6),
+                            topRight: Radius.circular(6),
+                          ),
+                          child: prediction.imagePath.isNotEmpty
+                              ? kIsWeb
+                                  ? Image.network(
+                                      prediction.imagePath,
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return _buildSimpleImagePlaceholder();
+                                      },
+                                    )
+                                  : Image.file(
+                                      File(prediction.imagePath),
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return _buildSimpleImagePlaceholder();
+                                      },
+                                    )
+                            : _buildSimpleImagePlaceholder(),
+                        ),
+                        // Restore button overlay
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.transparent,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: IconButton(
+                              onPressed: () async {
+                                final shouldRestore = await _showRestoreConfirmationDialogFishPrediction(prediction);
+                                if (shouldRestore) {
+                                  await logBookProvider.restorePrediction(prediction);
+                                  showCustomNotification(context, '${prediction.commonName} restored to collection');
+                                }
+                              },
+                              icon: const Icon(
+                                Icons.restore,
+                                color: Colors.green,
+                                size: 20,
+                              ),
+                              padding: const EdgeInsets.all(8),
+                              constraints: const BoxConstraints(
+                                minWidth: 32,
+                                minHeight: 32,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Archived overlay
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.9),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.archive,
+                                  color: Colors.white,
+                                  size: 12,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Archived',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Fish Names - more space for text
+                Expanded(
+                  flex: 2,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: const BoxDecoration(
+                      borderRadius: BorderRadius.only(
+                        bottomLeft: Radius.circular(6),
+                        bottomRight: Radius.circular(6),
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Common Name
+                        Text(
+                          prediction.commonName,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        // Scientific Name
+                        Text(
+                          prediction.scientificName,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontStyle: FontStyle.italic,
+                            color: Colors.grey[600],
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildCaptureButton() {
     return Container(
@@ -1230,8 +1469,8 @@ class _LogBookState extends State<LogBook> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Colors.red,
+                  Icons.archive_outlined,
+                  color: Colors.orange,
                   size: 28,
                 ),
               ),
@@ -1241,7 +1480,7 @@ class _LogBookState extends State<LogBook> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Remove Fish',
+                      'Archive Fish',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -1269,7 +1508,7 @@ class _LogBookState extends State<LogBook> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Are you sure you want to remove this fish from your collection?',
+                  'Are you sure you want to archive this fish from your collection?',
                   style: const TextStyle(
                     fontSize: 16,
                     color: Color(0xFF374151),
@@ -1374,7 +1613,192 @@ class _LogBookState extends State<LogBook> {
                       elevation: 0,
                     ),
                     child: const Text(
-                      'Remove',
+                      'Archive',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
+
+  Future<bool> _showRestoreConfirmationDialogFishPrediction(FishPrediction prediction) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.green.withOpacity(0.1),
+                      Colors.green.withOpacity(0.05),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.restore,
+                  color: Colors.green,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Restore Fish',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'This will restore the fish to your active collection',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Are you sure you want to restore this fish to your collection?',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFF374151),
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFE2E8F0),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          color: const Color(0xFF00BFB3).withOpacity(0.1),
+                        ),
+                        child: const Icon(
+                          FontAwesomeIcons.fish,
+                          color: Color(0xFF00BFB3),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              prediction.commonName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              prediction.scientificName,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontStyle: FontStyle.italic,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: Colors.grey.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      backgroundColor: Colors.grey.withOpacity(0.05),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Restore',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -1393,7 +1817,29 @@ class _LogBookState extends State<LogBook> {
   Widget _buildCalculatorTab() {
     return Consumer<LogBookProvider>(
       builder: (context, provider, child) {
-        final allCalculations = [
+        // Load archived data if showing archived and data is empty
+        if (_showArchived && provider.archivedCalculations.isEmpty && 
+            provider.archivedFishCalculations.isEmpty && 
+            provider.archivedDietCalculations.isEmpty && 
+            provider.archivedFishVolumeCalculations.isEmpty) {
+          print('No archived calculations found, loading from database...');
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            provider.loadArchivedData();
+          });
+        } else {
+          print('Build calculator tab - Show archived: $_showArchived');
+          print('Water calculations: ${provider.archivedCalculations.length} archived, ${provider.savedCalculations.length} active');
+          print('Fish calculations: ${provider.archivedFishCalculations.length} archived, ${provider.savedFishCalculations.length} active');
+          print('Diet calculations: ${provider.archivedDietCalculations.length} archived, ${provider.savedDietCalculations.length} active');
+          print('Fish volume calculations: ${provider.archivedFishVolumeCalculations.length} archived, ${provider.savedFishVolumeCalculations.length} active');
+        }
+
+        final allCalculations = _showArchived ? [
+          ...provider.archivedCalculations,
+          ...provider.archivedFishCalculations,
+          ...provider.archivedDietCalculations,
+          ...provider.archivedFishVolumeCalculations,
+        ] : [
           ...provider.savedCalculations,
           ...provider.savedFishCalculations,
           ...provider.savedDietCalculations,
@@ -1434,9 +1880,9 @@ class _LogBookState extends State<LogBook> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text(
-                  'No calculations saved yet',
-                  style: TextStyle(
+                Text(
+                  _showArchived ? 'No archived calculations' : 'No calculations saved yet',
+                  style: const TextStyle(
                     fontSize: 16,
                     color: Colors.grey,
                   ),
@@ -1513,15 +1959,17 @@ class _LogBookState extends State<LogBook> {
 
         return ListView.builder(
           padding: const EdgeInsets.all(8),
-          itemCount: allCalculations.length + 1, // +1 for calculate button
+          itemCount: allCalculations.length + (_showArchived ? 0 : 1), // +1 for calculate button only if not archived
           itemBuilder: (context, index) {
-            if (index == allCalculations.length) {
-              // Show calculate button at the end
+            if (!_showArchived && index == allCalculations.length) {
+              // Show calculate button at the end (only for active items)
               return _buildStartCalculatingButton();
             }
             
             final calculation = allCalculations[index];
-            return Dismissible(
+            return _showArchived 
+              ? _buildArchivedCalculationCard(calculation, provider)
+              : Dismissible(
               key: Key((calculation is WaterCalculation) 
                   ? calculation.dateCalculated.toString() 
                   : (calculation is FishCalculation) 
@@ -1533,7 +1981,7 @@ class _LogBookState extends State<LogBook> {
                 color: const Color.fromARGB(255, 255, 17, 0),
                 alignment: Alignment.center,
                 child: const Text(
-                  'Delete',
+                  'Archive',
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -1546,17 +1994,17 @@ class _LogBookState extends State<LogBook> {
               },
               onDismissed: (direction) {
                 if (calculation is WaterCalculation) {
-                  provider.removeWaterCalculation(calculation);
-                  showCustomNotification(context, 'Water calculation removed');
+                  provider.archiveWaterCalculation(calculation);
+                  showCustomNotification(context, 'Water calculation archived');
                 } else if (calculation is FishCalculation) {
-                  provider.removeFishCalculation(calculation);
-                  showCustomNotification(context, 'Fish calculation removed');
+                  provider.archiveFishCalculation(calculation);
+                  showCustomNotification(context, 'Fish calculation archived');
                 } else if (calculation is DietCalculation) {
-                  provider.removeDietCalculation(calculation);
-                  showCustomNotification(context, 'Diet calculation removed');
+                  provider.archiveDietCalculation(calculation);
+                  showCustomNotification(context, 'Diet calculation archived');
                 } else if (calculation is FishVolumeCalculation) {
-                  provider.removeFishVolumeCalculation(calculation);
-                  showCustomNotification(context, 'Fish volume calculation removed');
+                  provider.archiveFishVolumeCalculation(calculation);
+                  showCustomNotification(context, 'Fish volume calculation archived');
                 }
               },
               child: Card(
@@ -1672,26 +2120,26 @@ class _LogBookState extends State<LogBook> {
   }
 
   Future<bool> _showDeleteConfirmationDialogCalculation(dynamic calculation) async {
-    String title = 'Remove Calculation';
-    String content = 'Are you sure you want to remove this calculation?';
+    String title = 'Archive Calculation';
+    String content = 'Are you sure you want to archive this calculation?';
     IconData icon = Icons.calculate;
     String typeName = 'Calculation';
     
     if (calculation is WaterCalculation) {
-      content = 'Are you sure you want to remove this water calculation?';
+      content = 'Are you sure you want to archive this water calculation?';
       icon = Icons.water_drop;
       typeName = 'Water Calculator';
     } else if (calculation is FishCalculation) {
-      content = 'Are you sure you want to remove this fish calculation?';
+      content = 'Are you sure you want to archive this fish calculation?';
       icon = FontAwesomeIcons.fish;
       typeName = 'Fish Calculator';
       icon = FontAwesomeIcons.fish;
     } else if (calculation is FishVolumeCalculation) {
-      content = 'Are you sure you want to remove this fish volume calculation?';
+      content = 'Are you sure you want to archive this fish volume calculation?';
       icon = Icons.calculate;
       typeName = 'Fish Volume Calculator';
     } else if (calculation is DietCalculation) {
-      content = 'Are you sure you want to remove this diet calculation?';
+      content = 'Are you sure you want to archive this diet calculation?';
       icon = Icons.restaurant;
       typeName = 'Diet Calculator';
     }
@@ -1720,8 +2168,8 @@ class _LogBookState extends State<LogBook> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Colors.red,
+                  Icons.archive_outlined,
+                  color: Colors.orange,
                   size: 28,
                 ),
               ),
@@ -1863,7 +2311,7 @@ class _LogBookState extends State<LogBook> {
                       elevation: 0,
                     ),
                     child: const Text(
-                      'Remove',
+                      'Archive',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -1879,25 +2327,434 @@ class _LogBookState extends State<LogBook> {
     ) ?? false;
   }
 
+  Future<bool> _showRestoreConfirmationDialogCalculation(dynamic calculation) async {
+    String title = 'Restore Calculation';
+    String content = 'Are you sure you want to restore this calculation?';
+    IconData icon = Icons.calculate;
+    String typeName = 'Calculation';
+    
+    if (calculation is WaterCalculation) {
+      content = 'Are you sure you want to restore this water calculation?';
+      icon = Icons.water_drop;
+      typeName = 'Water Calculator';
+    } else if (calculation is FishCalculation) {
+      content = 'Are you sure you want to restore this fish calculation?';
+      icon = FontAwesomeIcons.fish;
+      typeName = 'Fish Calculator';
+    } else if (calculation is FishVolumeCalculation) {
+      content = 'Are you sure you want to restore this fish volume calculation?';
+      icon = Icons.calculate;
+      typeName = 'Fish Volume Calculator';
+    } else if (calculation is DietCalculation) {
+      content = 'Are you sure you want to restore this diet calculation?';
+      icon = Icons.restaurant;
+      typeName = 'Diet Calculator';
+    }
+    
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.green.withOpacity(0.1),
+                      Colors.green.withOpacity(0.05),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.restore,
+                  color: Colors.green,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'This will restore the calculation to your active calculations',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  content,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFF374151),
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFE2E8F0),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          color: const Color(0xFF00BFB3).withOpacity(0.1),
+                        ),
+                        child: Icon(
+                          icon,
+                          color: const Color(0xFF00BFB3),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              typeName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Saved calculation',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(
+                          color: Colors.grey.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      backgroundColor: Colors.grey.withOpacity(0.05),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Restore',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
+
+  Widget _buildArchivedCalculationCard(dynamic calculation, LogBookProvider provider) {
+    // Debug information
+    final type = calculation is WaterCalculation 
+        ? 'Water Calculation' 
+        : calculation is FishCalculation 
+          ? 'Fish Calculation'
+          : calculation is FishVolumeCalculation
+            ? 'Fish Volume Calculation'
+            : 'Diet Calculation';
+    
+    print('Rendering archived calculation card - Type: $type');
+    print('Calculation data: $calculation');
+    
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: InkWell(
+        onTap: () {
+          print('Tapped on archived $type: $calculation');
+          _showCalculationDetails(calculation);
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: Colors.teal.shade50,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: calculation is WaterCalculation 
+                    ? Image.asset(
+                        'lib/icons/Create_Aquarium.png',
+                        width: 30,
+                        height: 30,
+                        color: const Color(0xFF006064),
+                      )
+                    : Icon(
+                        calculation is FishCalculation 
+                          ? Icons.water
+                          : calculation is FishVolumeCalculation
+                            ? Icons.calculate
+                            : Icons.restaurant,
+                        color: const Color(0xFF006064),
+                        size: 30,
+                      ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            type,
+                            style: const TextStyle(
+                              color: Color(0xFF006064),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.9),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.archive,
+                                color: Colors.white,
+                                size: 10,
+                              ),
+                              SizedBox(width: 4),
+                              Text(
+                                'Archived',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _getCalculationTitle(calculation),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    if (calculation is DietCalculation) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Daily Portion: ${calculation.totalPortion} pieces',
+                        style: const TextStyle(
+                          color: Color(0xFF006064),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                    Text(
+                      _getFormattedDate(calculation),
+                      style: const TextStyle(
+                        color: Colors.grey,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Restore button
+              IconButton(
+                onPressed: () async {
+                  print('Restoring $type: $calculation');
+                  final shouldRestore = await _showRestoreConfirmationDialogCalculation(calculation);
+                  if (shouldRestore) {
+                    try {
+                      if (calculation is WaterCalculation) {
+                        await provider.restoreWaterCalculation(calculation);
+                      } else if (calculation is FishCalculation) {
+                        await provider.restoreFishCalculation(calculation);
+                      } else if (calculation is DietCalculation) {
+                        await provider.restoreDietCalculation(calculation);
+                      } else if (calculation is FishVolumeCalculation) {
+                        await provider.restoreFishVolumeCalculation(calculation);
+                      }
+                      showCustomNotification(context, 'Calculation restored');
+                    } catch (e) {
+                      print('Error restoring calculation: $e');
+                      showCustomNotification(context, 'Error restoring calculation: $e', isError: true);
+                    }
+                  }
+                },
+                icon: const Icon(
+                  Icons.restore,
+                  color: Colors.green,
+                  size: 20,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  String _getCalculationTitle(dynamic calculation) {
+    if (calculation is WaterCalculation) {
+      return 'Tank Volume: ${calculation.minimumTankVolume ?? 'N/A'}';
+    } else if (calculation is FishCalculation) {
+      return 'Tank Volume: ${calculation.tankVolume ?? 'N/A'}';
+    } else if (calculation is FishVolumeCalculation) {
+      return 'Tank: ${calculation.tankShape ?? 'N/A'} - ${calculation.tankVolume ?? 'N/A'}';
+    } else if (calculation is DietCalculation) {
+      return 'Fish: ${calculation.fishSelections?.keys.join(', ') ?? 'N/A'}';
+    }
+    return 'Unknown Calculation';
+  }
+  
+  String _getFormattedDate(dynamic calculation) {
+    try {
+      final date = calculation is WaterCalculation
+          ? calculation.dateCalculated
+          : calculation is FishCalculation
+              ? calculation.dateCalculated
+              : calculation is FishVolumeCalculation
+                  ? calculation.dateCalculated
+                  : (calculation as DietCalculation).dateCalculated;
+                  
+      return DateFormat('MMM d, y').format(date ?? DateTime.now());
+    } catch (e) {
+      print('Error formatting date: $e');
+      return 'Date unknown';
+    }
+  }
+
   Widget _buildFishCompatibilityTab() {
     final logBookProvider = Provider.of<LogBookProvider>(context);
-    final compatibilityResults = List<CompatibilityResult>.from(logBookProvider.savedCompatibilityResults)
-      ..sort((a, b) => b.dateChecked.compareTo(a.dateChecked));
+    
+    // Load archived data if showing archived and data is empty
+    if (_showArchived && logBookProvider.archivedCompatibilityResults.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        logBookProvider.loadArchivedData();
+      });
+    }
+
+    final compatibilityResults = _showArchived 
+      ? List<CompatibilityResult>.from(logBookProvider.archivedCompatibilityResults)
+      : List<CompatibilityResult>.from(logBookProvider.savedCompatibilityResults);
+    
+    compatibilityResults.sort((a, b) => b.dateChecked.compareTo(a.dateChecked));
 
     if (compatibilityResults.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text(
-              'No compatibility results saved yet',
-              style: TextStyle(
+            Text(
+              _showArchived ? 'No archived compatibility checks' : 'No compatibility results saved yet',
+              style: const TextStyle(
                 fontSize: 16,
                 color: Colors.grey,
               ),
             ),
             const SizedBox(height: 16),
-            Container(
+            if (!_showArchived) Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
@@ -1968,35 +2825,37 @@ class _LogBookState extends State<LogBook> {
 
     return ListView.builder(
        padding: const EdgeInsets.all(16),
-       itemCount: compatibilityResults.length + 1, // +1 for check compatibility button
+       itemCount: compatibilityResults.length + (_showArchived ? 0 : 1), // +1 for check compatibility button only if not archived
       itemBuilder: (context, index) {
-         if (index == compatibilityResults.length) {
-           // Show check compatibility button at the end
+         if (!_showArchived && index == compatibilityResults.length) {
+           // Show check compatibility button at the end (only for active items)
            return _buildCheckCompatibilityButton();
          }
          
         final result = compatibilityResults[index];
-        return Dismissible(
-          key: Key(result.id.toString()),
-          background: Container(
-            color: const Color.fromARGB(255, 255, 17, 0),
-            alignment: Alignment.center,
-            child: const Text(
-              'Delete',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+        return _showArchived 
+          ? _buildArchivedCompatibilityCard(result, logBookProvider)
+          : Dismissible(
+              key: Key(result.id.toString()),
+              background: Container(
+                color: const Color.fromARGB(255, 255, 17, 0),
+                alignment: Alignment.center,
+                child: const Text(
+                  'Archive',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
               ),
-            ),
-          ),
-          direction: DismissDirection.endToStart,
-          confirmDismiss: (direction) async {
-            return await _showDeleteConfirmationDialogCompatibility(result);
-          },
-          onDismissed: (direction) {
-            logBookProvider.removeCompatibilityResult(result);
-            showCustomNotification(context, 'Compatibility result removed');
+              direction: DismissDirection.endToStart,
+              confirmDismiss: (direction) async {
+                return await _showDeleteConfirmationDialogCompatibility(result);
+              },
+              onDismissed: (direction) {
+                logBookProvider.archiveCompatibilityResult(result);
+            showCustomNotification(context, 'Compatibility result archived');
           },
            child: Container(
              margin: const EdgeInsets.only(bottom: 16),
@@ -2095,6 +2954,269 @@ class _LogBookState extends State<LogBook> {
     );
   }
 
+  Widget _buildArchivedCompatibilityCard(CompatibilityResult result, LogBookProvider logBookProvider) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        elevation: 2,
+        child: InkWell(
+          onTap: () {
+            _showCompatibilityDetails(context, result);
+          },
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                // Display selected fish images (limit to first 2 for display)
+                Row(
+                  children: result.selectedFish.keys.take(2).map((fishName) {
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.network(
+                          ApiConfig.getFishImageUrl(fishName),
+                          width: 60,
+                          height: 60,
+                          fit: BoxFit.cover,
+                          cacheWidth: (60 * MediaQuery.of(context).devicePixelRatio).round(),
+                          cacheHeight: (60 * MediaQuery.of(context).devicePixelRatio).round(),
+                          filterQuality: FilterQuality.low,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Container(
+                              width: 60,
+                              height: 60,
+                              color: Colors.grey[200],
+                              child: const Center(child: CircularProgressIndicator()),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            width: 60,
+                            height: 60,
+                            color: Colors.grey[200],
+                            child: const Icon(Icons.image_not_supported_outlined, color: Colors.grey, size: 24),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              result.selectedFish.keys.join(', '),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black87,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.9),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.archive,
+                                  color: Colors.white,
+                                  size: 10,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Archived',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Checked: ${DateFormat('MMM d, y').format(result.dateChecked)}',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: result.compatibilityLevel == 'compatible' ? Colors.green.withOpacity(0.1) : 
+                                       result.compatibilityLevel == 'conditional' ? Colors.orange.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                result.compatibilityLevel.toUpperCase(),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: result.compatibilityLevel == 'compatible' ? Colors.green[700] : 
+                                         result.compatibilityLevel == 'conditional' ? Colors.orange[700] : Colors.red[700],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                          // Restore button
+                          IconButton(
+                            onPressed: () async {
+                              final shouldRestore = await _showRestoreConfirmationDialogCompatibility(result);
+                              if (shouldRestore) {
+                                await logBookProvider.restoreCompatibilityResult(result);
+                                showCustomNotification(context, 'Compatibility result restored');
+                              }
+                            },
+                            icon: const Icon(
+                              Icons.restore,
+                              color: Colors.green,
+                              size: 20,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _showRestoreConfirmationDialogCompatibility(CompatibilityResult result) async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.green.withOpacity(0.1),
+                      Colors.green.withOpacity(0.05),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.restore,
+                  color: Colors.green,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Text(
+                  'Restore Compatibility Result',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF006064),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: const Text(
+            'Are you sure you want to restore this compatibility result?',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.black87,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey[600],
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF00BFB3),
+                    Color(0xFF4DD0E1),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text(
+                  'Restore',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    ) ?? false;
+  }
+
   Future<bool> _showDeleteConfirmationDialogCompatibility(CompatibilityResult result) async {
     return await showDialog<bool>(
       context: context,
@@ -2120,8 +3242,8 @@ class _LogBookState extends State<LogBook> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Colors.red,
+                  Icons.archive_outlined,
+                  color: Colors.orange,
                   size: 28,
                 ),
               ),
@@ -2131,7 +3253,7 @@ class _LogBookState extends State<LogBook> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Remove Compatibility',
+                      'Archive Compatibility',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -2159,7 +3281,7 @@ class _LogBookState extends State<LogBook> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                               const Text(
-                  'Are you sure you want to remove this compatibility result?',
+                  'Are you sure you want to archive this compatibility result?',
                                 style: TextStyle(
                                   fontSize: 16,
                     color: Color(0xFF374151),
@@ -2268,7 +3390,7 @@ class _LogBookState extends State<LogBook> {
                       elevation: 0,
                     ),
                     child: const Text(
-                      'Remove',
+                      'Archive',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -2288,7 +3410,6 @@ class _LogBookState extends State<LogBook> {
     final fish1 = pair['fish1'] ?? '';
     final fish2 = pair['fish2'] ?? '';
     final compatibility = pair['compatibility'] ?? '';
-    final reasons = List<String>.from(pair['reasons'] ?? []);
     final conditions = List<String>.from(pair['conditions'] ?? []);
     
     // Capitalize fish names properly
