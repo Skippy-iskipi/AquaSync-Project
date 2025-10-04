@@ -4,8 +4,6 @@ import {
   PencilIcon, 
   MagnifyingGlassIcon,
   EyeIcon,
-  CheckCircleIcon,
-  XCircleIcon,
   FunnelIcon,
   XMarkIcon,
   DocumentArrowUpIcon,
@@ -15,7 +13,7 @@ import toast from 'react-hot-toast';
 import * as XLSX from 'xlsx';
 
 // BulkUploadModal component definition
-function BulkUploadModal({ isOpen, onClose, onUpload }) {
+function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => {}, existingFish = [] }) {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [previewData, setPreviewData] = useState([]);
@@ -72,6 +70,11 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
   const validateBulkData = (data) => {
     const valid = [];
     const errors = [];
+    // Track duplicates within the upload file
+    const seenInFile = new Set();
+    // Track existing species from current fish data
+    const existingSpecies = existingFish.map(f => `${f.common_name.toLowerCase()}|${f.scientific_name.toLowerCase()}`);
+    
     const requiredFields = [
       'common_name', 'scientific_name', 'water_type', 'temperament', 
       'diet', 'max_size_(cm)', 'minimum_tank_size_(l)', 'ph_range',
@@ -91,6 +94,23 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
       if (!hasAnyData) {
         errors.push(`Row ${rowNumber}: Empty row detected - skipping`);
         return; // Skip this row entirely
+      }
+
+      // Check for duplicates in current file and existing database
+      if (row.common_name && row.scientific_name) {
+        const speciesKey = `${row.common_name.toLowerCase()}|${row.scientific_name.toLowerCase()}`;
+        
+        // Check for duplicates within upload file
+        if (seenInFile.has(speciesKey)) {
+          rowErrors.push(`Row ${rowNumber}: Duplicate entry found in upload file for "${row.common_name} (${row.scientific_name})"`);
+        }
+        
+        // Check for duplicates in existing database
+        if (existingSpecies.includes(speciesKey)) {
+          rowErrors.push(`Row ${rowNumber}: Species "${row.common_name} (${row.scientific_name})" already exists in database`);
+        }
+        
+        seenInFile.add(speciesKey);
       }
       
       // Check required fields for null/empty values
@@ -384,7 +404,7 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
               <button
                 type="button"
                 onClick={onClose}
-                className="btn-secondary"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2"
                 disabled={uploading}
               >
                 Cancel
@@ -392,7 +412,7 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
               <button
                 onClick={handleUpload}
                 disabled={!file || previewData.length === 0 || uploading}
-                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-white bg-aqua-600 rounded-md shadow-sm hover:bg-aqua-700 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {uploading ? 'Uploading...' : `Upload ${previewData.length} Fish Species`}
               </button>
@@ -405,7 +425,7 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
 }
 
 // FishModal component definition
-function FishModal({ isOpen, onClose, fish, mode, onSave }) {
+function FishModal({ isOpen, onClose, fish = {}, mode, onSave }) {
   const [formData, setFormData] = useState(fish);
   const [errors, setErrors] = useState({});
 
@@ -969,13 +989,13 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
                 <button
                   type="button"
                   onClick={onClose}
-                  className="btn-secondary"
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="btn-primary"
+                  className="px-4 py-2 text-sm font-medium text-white bg-aqua-600 rounded-md shadow-sm hover:bg-aqua-700 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2"
                 >
                   {mode === 'add' ? 'Add Fish' : 'Update Fish'}
                 </button>
@@ -992,7 +1012,7 @@ function FishManagement() {
   const [fish, setFish] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedFish, setSelectedFish] = useState(null);
+  const [selectedFish, setSelectedFish] = useState({});
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState('view'); // 'view', 'edit', 'add'
   const [currentPage, setCurrentPage] = useState(1);
@@ -1650,6 +1670,7 @@ function FishManagement() {
           isOpen={showBulkUpload}
           onUpload={handleBulkUpload}
           onClose={() => setShowBulkUpload(false)}
+          existingFish={fish}
         />
       )}
 
