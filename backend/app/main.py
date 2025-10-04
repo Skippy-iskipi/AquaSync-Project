@@ -745,7 +745,7 @@ async def search_fish_endpoint(
     try:
         logger.info(f"BM25 search request: query='{q}', limit={limit}, min_score={min_score}")
         results = await search_fish(q, limit, min_score)
-        logger.info(f"BM25 search returned {len(results)} results")
+        logger.info(f"BM25 search returned {len(results)} results with terms: {bm25_service.get_last_expanded_terms()}")
         return {
             "query": q,
             "results": results,
@@ -753,7 +753,9 @@ async def search_fish_endpoint(
         }
     except Exception as e:
         logger.error(f"Error in fish search: {e}")
-        raise HTTPException(status_code=500, detail="Search failed")
+        logger.error(f"Search state: doc_count={bm25_service.doc_count}, terms={len(bm25_service.inverted_index)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/search/autocomplete")
 async def get_autocomplete_endpoint(

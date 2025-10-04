@@ -68,7 +68,7 @@ class SmartSearchWidgetState extends State<SmartSearchWidget> {
       
       // Debounce search to avoid too many API calls
       _debounceTimer?.cancel();
-      _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      _debounceTimer = Timer(const Duration(milliseconds: 150), () {
         _performSearch(query);
       });
     }
@@ -86,7 +86,7 @@ class SmartSearchWidgetState extends State<SmartSearchWidget> {
       final results = await SmartSearchService.searchFish(
         query: query,
         limit: 100,
-        minSimilarity: 0.01, // Very low threshold to catch more results
+        minSimilarity: 0.001, // Even lower threshold for partial matches
       );
 
       if (mounted) {

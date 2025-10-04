@@ -1887,11 +1887,11 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
     } else if (technicalMessage.contains('needs more horizontal swimming space')) {
       return 'This fish needs more swimming space. A rectangle tank would be better.';
     } else if (technicalMessage.contains('Requires larger tank')) {
-      return 'This fish needs a bigger tank. Consider a rectangle tank.';
+      return 'This fish needs a bigger tank.';
     } else if (technicalMessage.contains('not suitable for')) {
       return 'This fish needs a different tank shape. Try a rectangle tank.';
     } else {
-      return 'This fish may not be suitable for your selected tank. Consider a rectangle tank.';
+      return 'This fish may not be suitable for your selected tank. Consider a bigger tank';
     }
   }
 }

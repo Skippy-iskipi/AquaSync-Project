@@ -1789,14 +1789,16 @@ class _SyncScreenState extends State<SyncScreen> {
     });
 
     try {
-      // Create expanded fish list from selected fish
-      // For single fish, duplicate it to check self-compatibility
-      final expandedFishNames = _selectedFish.keys.toList();
+      // Create expanded fish list considering quantities
+      List<String> expandedFishNames = [];
       
-      // If only one fish type is selected, duplicate it to enable self-compatibility checking
-      if (expandedFishNames.length == 1) {
-        expandedFishNames.add(expandedFishNames.first);
-      }
+      // Add each fish according to its quantity for proper self-compatibility checking
+      _selectedFish.forEach((fishName, quantity) {
+        // Add the fish multiple times based on quantity
+        for (int i = 0; i < quantity; i++) {
+          expandedFishNames.add(fishName);
+        }
+      });
 
       final response = await http.post(
         Uri.parse(ApiConfig.checkGroupEndpoint),
@@ -2736,7 +2738,8 @@ class _SyncScreenState extends State<SyncScreen> {
   // Detailed compatibility breakdown
   Widget _buildCompatibilityBreakdown(String compatibilityLevel, List<String> baseReasons, {Function? setDialogState}) {
     final fishNames = _selectedFish.keys.toList();
-    if (fishNames.length < 2) return const SizedBox.shrink();
+    final pairs = _generateFishPairs(fishNames);
+    if (pairs.isEmpty) return const SizedBox.shrink();
     
     return Container(
       width: MediaQuery.of(context).size.width * 0.9,
@@ -2958,11 +2961,37 @@ class _SyncScreenState extends State<SyncScreen> {
   // Generate all possible fish pairs
   List<List<String>> _generateFishPairs(List<String> fishNames) {
     List<List<String>> pairs = [];
+    Map<String, int> fishCounts = {};
+    
+    // Count occurrences of each fish based on quantity
+    _selectedFish.forEach((fishName, quantity) {
+      fishCounts[fishName] = quantity;
+    });
+
+    // If we only have 2 fish with quantity 1 each, return empty list
+    if (fishNames.length == 2 && 
+        fishCounts[fishNames[0]] == 1 && 
+        fishCounts[fishNames[1]] == 1) {
+      return pairs;
+    }
+
+    // Generate pairs considering quantities
     for (int i = 0; i < fishNames.length; i++) {
+      String fish1 = fishNames[i];
+      int fish1Qty = fishCounts[fish1] ?? 1;
+
+      // If this fish has quantity > 1, create pairs with itself
+      if (fish1Qty > 1) {
+        pairs.add([fish1, fish1]);
+      }
+
+      // Create pairs with other fish
       for (int j = i + 1; j < fishNames.length; j++) {
-        pairs.add([fishNames[i], fishNames[j]]);
+        String fish2 = fishNames[j];
+        pairs.add([fish1, fish2]);
       }
     }
+    
     return pairs;
   }
 

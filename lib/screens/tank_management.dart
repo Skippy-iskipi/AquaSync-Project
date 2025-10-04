@@ -436,35 +436,43 @@ class _TankManagementState extends State<TankManagement> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withOpacity(0.05),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: color.withOpacity(0.3),
+          color: color.withOpacity(0.2),
           width: 1,
         ),
       ),
-          child: Column(
-            children: [
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
           Icon(icon, size: 20, color: color),
-          const SizedBox(height: 4),
-              Text(
+          const SizedBox(height: 6),
+          Text(
             value,
             style: TextStyle(
-              fontSize: MediaQuery.of(context).size.width < 400 ? 14 : 16,
-              fontWeight: FontWeight.bold,
+              fontSize: MediaQuery.of(context).size.width < 400 ? 13 : 14,
+              fontWeight: FontWeight.w600,
               color: color,
             ),
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
           ),
-              Text(
+          const SizedBox(height: 4),
+          Text(
             label,
             style: TextStyle(
               fontSize: MediaQuery.of(context).size.width < 400 ? 10 : 11,
               color: color.withOpacity(0.8),
               fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
+            ),
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 2,
           ),
+        ],
+      ),
     );
   }
 
@@ -510,9 +518,13 @@ class _TankManagementState extends State<TankManagement> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: const Color(0xFF006064).withOpacity(0.2),
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.grey.withOpacity(0.1),
             spreadRadius: 2,
             blurRadius: 8,
             offset: const Offset(0, 2),
@@ -525,7 +537,7 @@ class _TankManagementState extends State<TankManagement> {
           borderRadius: BorderRadius.circular(6),
           onTap: () => _navigateToTankDetails(context, tank),
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -539,17 +551,17 @@ class _TankManagementState extends State<TankManagement> {
                             children: [
                               Text(
                                 tank.name,
-                                style: const TextStyle(
-                                  fontSize: 18,
+                                style: TextStyle(
+                                  fontSize: MediaQuery.of(context).size.width < 400 ? 16 : 20,
                                   fontWeight: FontWeight.bold,
-                                  color: Color(0xFF006064),
+                                  color: const Color(0xFF006064),
                                 ),
                               ),
                               const SizedBox(width: 8),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: Colors.orange.withOpacity(0.9),
+                                  color: const Color(0xFF00BCD4).withOpacity(0.9),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: const Row(
@@ -576,10 +588,11 @@ class _TankManagementState extends State<TankManagement> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            tank.tankShape,
-                            style: const TextStyle(
-                              fontSize: 14,
+                            _getTankShapeLabel(tank.tankShape),
+                            style: TextStyle(
+                              fontSize: MediaQuery.of(context).size.width < 400 ? 12 : 14,
                               color: Colors.grey,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
@@ -588,57 +601,137 @@ class _TankManagementState extends State<TankManagement> {
                     // Restore button
                     IconButton(
                       onPressed: () async {
-                        final shouldRestore = await _showRestoreConfirmationDialog(tank);
-                        if (shouldRestore) {
-                          await Provider.of<TankProvider>(context, listen: false).restoreTank(tank.id!);
-                          showDialog(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text('Tank Restored'),
-                              content: Text('${tank.name} has been restored to your active tanks.'),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(context),
-                                  child: const Text('OK'),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
+                        await Provider.of<TankProvider>(context, listen: false).restoreTank(tank.id!);
                       },
                       icon: const Icon(
                         Icons.restore,
-                        color: Colors.green,
+                        color: Color(0xFF00BCD4),
                         size: 24,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
+                // Volume and Feed info
                 Row(
                   children: [
-                    Expanded(child: _buildStatCard(
-                      icon: Icons.water_drop,
-                      label: 'Volume',
-                      value: '${tank.volume}L',
-                      color: const Color(0xFF00BCD4),
-                    )),
-                    const SizedBox(width: 8),
-                    Expanded(child: _buildStatCard(
-                      icon: FontAwesomeIcons.fish,
-                      label: 'Fish',
-                      value: '${tank.fishSelections.length}',
-                      color: Colors.green,
-                    )),
-                    const SizedBox(width: 8),
-                    Expanded(child: _buildStatCard(
-                      icon: Icons.thermostat,
-                      label: 'Shape',
-                      value: tank.tankShape,
-                      color: Colors.orange,
-                    )),
+                    // Volume
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00BCD4).withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: const Color(0xFF00BCD4).withOpacity(0.2),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.water_drop,
+                              size: 16,
+                              color: const Color(0xFF00BCD4),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${tank.volume.toStringAsFixed(1)}L',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFF00BCD4),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Volume',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: const Color(0xFF00BCD4).withOpacity(0.8),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Feeds
+                    Expanded(
+                      child: _buildFeedStatCard(tank),
+                    ),
                   ],
                 ),
+                // Fish list
+                if (tank.fishSelections.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00BCD4).withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: const Color(0xFF00BCD4).withOpacity(0.2),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Fish Species',
+                          style: TextStyle(
+                            fontSize: MediaQuery.of(context).size.width < 400 ? 11 : 12,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF00BCD4),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: tank.fishSelections.entries.take(3).map((entry) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: const Color(0xFF00BCD4).withOpacity(0.2),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                '${entry.value}x ${entry.key}',
+                                style: TextStyle(
+                                  fontSize: MediaQuery.of(context).size.width < 400 ? 10 : 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: const Color(0xFF00BCD4),
+                                ),
+                              ),
+                            );
+                          }).toList()
+                            ..addAll(tank.fishSelections.length > 3 ? [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00BCD4).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '+${tank.fishSelections.length - 3} more',
+                                  style: TextStyle(
+                                    fontSize: MediaQuery.of(context).size.width < 400 ? 10 : 11,
+                                    fontWeight: FontWeight.w500,
+                                    color: const Color(0xFF00BCD4),
+                                  ),
+                                ),
+                              ),
+                            ] : []),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -740,14 +833,6 @@ class _TankManagementState extends State<TankManagement> {
               Navigator.pop(context);
               try {
                 await context.read<TankProvider>().archiveTank(tank.id!);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('"${tank.name}" archived'),
-                      backgroundColor: Colors.orange.shade700,
-                    ),
-                  );
-                }
               } catch (e) {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -810,78 +895,6 @@ class _TankManagementState extends State<TankManagement> {
     );
   }
 
-  Future<bool> _showRestoreConfirmationDialog(Tank tank) async {
-    return await showDialog<bool>(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          title: Row(
-            children: const [
-              Icon(Icons.restore, color: Colors.green, size: 22),
-              SizedBox(width: 8),
-              Text('Restore Tank'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'This will move "${tank.name}" back to your Active Tanks.',
-                style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.4),
-              ),
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.withOpacity(0.3)),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Icon(Icons.info_outline, color: Colors.green, size: 18),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Restored tanks will appear in your active list immediately.',
-                        style: TextStyle(fontSize: 12, color: Colors.black87),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            OutlinedButton(
-              onPressed: () => Navigator.pop(context, false),
-              style: OutlinedButton.styleFrom(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.pop(context, true),
-              icon: const Icon(Icons.restore, size: 16),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              label: const Text('Restore'),
-            ),
-          ],
-        );
-      },
-    ) ?? false;
-  }
 
 }
 
