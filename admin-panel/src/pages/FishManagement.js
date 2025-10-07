@@ -158,13 +158,16 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
       }
       
       if (row['portion_grams'] !== null && row['portion_grams'] !== undefined && row['portion_grams'] !== '') {
-        const portion = parseFloat(row['portion_grams']);
-        if (isNaN(portion)) {
-          rowErrors.push(`Row ${rowNumber}: portion_grams must be a number (found: "${row['portion_grams']}")`);
-        } else if (portion < 0.0001) {
-          rowErrors.push(`Row ${rowNumber}: portion_grams must be at least 0.0001g (found: ${portion}g)`);
-        } else if (portion > 1000) {
-          rowErrors.push(`Row ${rowNumber}: portion_grams cannot exceed 1000g (found: ${portion}g)`);
+        const portionStr = String(row['portion_grams']).trim();
+        // Using parseFloat to handle scientific notation and ensure float precision
+        const portionNum = parseFloat(portionStr);
+        
+        if (isNaN(portionNum) || !/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(portionStr)) {
+          rowErrors.push(`Row ${rowNumber}: Portion must be a valid number (found: "${row['portion_grams']}")`);
+        } else if (portionNum < 0.0001) {
+          rowErrors.push(`Row ${rowNumber}: Portion must be at least 0.0001g (found: ${portionStr}g)`);
+        } else if (portionNum > 1000) {
+          rowErrors.push(`Row ${rowNumber}: Portion cannot exceed 1000g (found: ${portionStr}g)`);
         }
       }
 
@@ -431,9 +434,13 @@ function FishModal({ isOpen, onClose, fish = {}, mode, onSave }) {
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
+    
+    // Special handling for portion_grams to preserve decimal places
+    let newValue = type === 'checkbox' ? checked : value;
+    
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value
+      [name]: newValue
     }));
     
     // Clear error when user starts typing
@@ -577,12 +584,15 @@ function FishModal({ isOpen, onClose, fish = {}, mode, onSave }) {
     if (!formData.portion_grams) {
       newErrors.portion_grams = 'Portion size is required';
     } else {
-      const portion = parseFloat(formData.portion_grams);
-      if (isNaN(portion)) {
-        newErrors.portion_grams = 'Portion must be a valid number';
-      } else if (portion < 0.0001) {
+      const portionStr = formData.portion_grams.toString().trim();
+      // Using parseFloat to handle scientific notation and ensure float precision
+      const portionNum = parseFloat(portionStr);
+      
+      if (isNaN(portionNum) || !/^[+]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(portionStr)) {
+        newErrors.portion_grams = 'Please enter a valid number';
+      } else if (portionNum < 0.0001) {
         newErrors.portion_grams = 'Portion must be at least 0.0001 grams';
-      } else if (portion > 1000) {
+      } else if (portionNum > 1000) {
         newErrors.portion_grams = 'Portion cannot exceed 1000 grams';
       }
     }
@@ -925,14 +935,13 @@ function FishModal({ isOpen, onClose, fish = {}, mode, onSave }) {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Portion (grams) *</label>
                 <input
-                  type="number"
+                  type="text"
                   name="portion_grams"
                   value={formData.portion_grams || ''}
                   onChange={handleChange}
                   readOnly={isReadOnly}
                   className={`input-field ${errors.portion_grams ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : ''}`}
-                  min="0"
-                  step="0.1"
+                  placeholder="Enter portion in grams"
                   required
                 />
                 {errors.portion_grams && (
