@@ -128,10 +128,10 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
         const size = parseFloat(row['max_size_(cm)']);
         if (isNaN(size)) {
           rowErrors.push(`Row ${rowNumber}: max_size_(cm) must be a number (found: "${row['max_size_(cm)']}")`);
-        } else if (size <= 0) {
-          rowErrors.push(`Row ${rowNumber}: max_size_(cm) must be greater than 0 (found: ${size})`);
-        } else if (size > 200) {
-          rowErrors.push(`Row ${rowNumber}: max_size_(cm) seems too large (found: ${size}cm) - please verify`);
+        } else if (size < 1) {
+          rowErrors.push(`Row ${rowNumber}: max_size_(cm) must be at least 1cm (found: ${size}cm)`);
+        } else if (size > 1000) {
+          rowErrors.push(`Row ${rowNumber}: max_size_(cm) cannot exceed 1000cm (found: ${size}cm)`);
         }
       }
       
@@ -163,8 +163,8 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
           rowErrors.push(`Row ${rowNumber}: portion_grams must be a number (found: "${row['portion_grams']}")`);
         } else if (portion <= 0) {
           rowErrors.push(`Row ${rowNumber}: portion_grams must be greater than 0 (found: ${portion})`);
-        } else if (portion > 100) {
-          rowErrors.push(`Row ${rowNumber}: portion_grams seems too large (found: ${portion}g) - please verify`);
+        } else if (portion > 1000) {
+          rowErrors.push(`Row ${rowNumber}: portion_grams cannot exceed 1000g (found: ${portion}g)`);
         }
       }
 
@@ -487,8 +487,10 @@ function FishModal({ isOpen, onClose, fish = {}, mode, onSave }) {
       newErrors['max_size_(cm)'] = 'Max size is required';
     } else {
       const size = parseFloat(formData['max_size_(cm)']);
-      if (isNaN(size) || size <= 0 || size > 200) {
-        newErrors['max_size_(cm)'] = 'Max size must be between 0.1 and 200 cm';
+      if (isNaN(size) || size < 1) {
+        newErrors['max_size_(cm)'] = 'Max size must be at least 1cm';
+      } else if (size > 1000) {
+        newErrors['max_size_(cm)'] = 'Max size cannot exceed 1000cm';
       }
     }
     
@@ -576,8 +578,10 @@ function FishModal({ isOpen, onClose, fish = {}, mode, onSave }) {
       newErrors.portion_grams = 'Portion size is required';
     } else {
       const portion = parseFloat(formData.portion_grams);
-      if (isNaN(portion) || portion <= 0 || portion > 100) {
-        newErrors.portion_grams = 'Portion must be between 0.1 and 100 grams';
+      if (isNaN(portion) || portion <= 0) {
+        newErrors.portion_grams = 'Portion must be greater than 0 grams';
+      } else if (portion > 1000) {
+        newErrors.portion_grams = 'Portion cannot exceed 1000 grams';
       }
     }
     
