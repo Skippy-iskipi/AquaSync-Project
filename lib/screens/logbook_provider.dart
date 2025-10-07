@@ -136,7 +136,10 @@ class LogBookProvider with ChangeNotifier {
       final List<CompatibilityResult> parsedResults = [];
       for (final json in compatibilityResultsData) {
         try {
-          parsedResults.add(CompatibilityResult.fromJson(json as Map<String, dynamic>));
+          // If the RPC returns an 'archived' flag, skip archived items
+          final Map<String, dynamic> item = json as Map<String, dynamic>;
+          if (item['archived'] == true) continue;
+          parsedResults.add(CompatibilityResult.fromJson(item));
         } catch (e) {
           print('Error parsing compatibility result item: $json. Error: $e');
         }
@@ -183,6 +186,8 @@ class LogBookProvider with ChangeNotifier {
             .from('tanks')
             .select('*')
             .eq('user_id', user.id)
+            // Exclude archived tanks from active list
+            .or('archived.is.null,archived.eq.false')
             .order('created_at', ascending: false);
         print('Raw tanks data: $tanksData');
         _savedTanks = tanksData.map((json) => Tank.fromJson(json)).toList();
@@ -196,6 +201,28 @@ class LogBookProvider with ChangeNotifier {
       print('Error loading data from Supabase: $e');
       _clearData(); // Clear local data on error
     } finally {
+      // Deduplicate: Ensure no archived items exist in active lists
+      final archivedPredictionIds = _archivedPredictions.map((p) => p.id).toSet();
+      _savedPredictions.removeWhere((p) => archivedPredictionIds.contains(p.id));
+
+      final archivedCalculationIds = _archivedCalculations.map((c) => c.id).toSet();
+      _savedCalculations.removeWhere((c) => archivedCalculationIds.contains(c.id));
+
+      final archivedFishCalcIds = _archivedFishCalculations.map((c) => c.id).toSet();
+      _savedFishCalculations.removeWhere((c) => archivedFishCalcIds.contains(c.id));
+
+      final archivedCompatIds = _archivedCompatibilityResults.map((r) => r.id).toSet();
+      _savedCompatibilityResults.removeWhere((r) => archivedCompatIds.contains(r.id));
+
+      final archivedDietIds = _archivedDietCalculations.map((c) => c.id).toSet();
+      _savedDietCalculations.removeWhere((c) => archivedDietIds.contains(c.id));
+
+      final archivedFishVolIds = _archivedFishVolumeCalculations.map((c) => c.id).toSet();
+      _savedFishVolumeCalculations.removeWhere((c) => archivedFishVolIds.contains(c.id));
+
+      final archivedTankIds = _archivedTanks.map((t) => t.id).toSet();
+      _savedTanks.removeWhere((t) => archivedTankIds.contains(t.id));
+
       notifyListeners();
     }
   }
@@ -267,7 +294,12 @@ class LogBookProvider with ChangeNotifier {
       }).select();
 
       if (response.isNotEmpty) {
-        _savedPredictions.add(FishPrediction.fromJson(response.first));
+  final item = response.first;
+        if (item['archived'] != true) {
+          _savedPredictions.add(FishPrediction.fromJson(item));
+        } else {
+          _archivedPredictions.insert(0, FishPrediction.fromJson(item));
+        }
         notifyListeners();
       }
     } catch (e) {
@@ -280,6 +312,9 @@ class LogBookProvider with ChangeNotifier {
     try {
       // Remove from local list first to immediately update UI
       _savedPredictions.removeWhere((p) => p.id == prediction.id);
+      // Add to archived list locally for immediate consistency
+      _archivedPredictions.removeWhere((p) => p.id == prediction.id);
+      _archivedPredictions.insert(0, prediction);
       notifyListeners();
       
       // Then update database
@@ -321,7 +356,12 @@ class LogBookProvider with ChangeNotifier {
       }).select();
 
       if (response.isNotEmpty) {
-        _savedCalculations.add(WaterCalculation.fromJson(response.first));
+  final item = response.first;
+        if (item['archived'] != true) {
+          _savedCalculations.add(WaterCalculation.fromJson(item));
+        } else {
+          _archivedCalculations.insert(0, WaterCalculation.fromJson(item));
+        }
         notifyListeners();
       }
     } catch (e) {
@@ -361,23 +401,63 @@ class LogBookProvider with ChangeNotifier {
       _archivedCalculations.add(updatedCalculation);
       notifyListeners();
       
-      // Then update database
-      await _supabase
-          .from('water_calculations')
-          .update({
-            'archived': true, 
-            'archived_at': DateTime.now().toIso8601String()
-          })
-          .eq('id', calculation.id!);
+      // Then update database using RPC
+      try {
+        print('archiveWaterCalculation - calling RPC for calculation ${calculation.id}');
+
+        // Call the RPC function to archive the calculation
+        final updateResponse = await _supabase
+            .rpc('archive_water_calculation', params: {
+              'calculation_id': calculation.id
+            });
+
+        print('archiveWaterCalculation - update response type: ${updateResponse.runtimeType}');
+        print('archiveWaterCalculation - update response: $updateResponse');
+        if (updateResponse.isEmpty) {
+          // Query the row to see if it exists and check its current state
+          final currentRow = await _supabase
+              .from('water_calculations')
+              .select()
+              .eq('id', calculation.id!)
+              .single();
+          print('archiveWaterCalculation - current row state: $currentRow');
+        }
+
+        if (updateResponse.isEmpty) {
+          // No rows returned -> update may have failed
+          print('archiveWaterCalculation - warning: update returned no rows for id ${calculation.id}');
+          // Check if the row exists again after failed update
+          try {
+            final rowAfterUpdate = await _supabase
+                .from('water_calculations')
+                .select()
+                .eq('id', calculation.id!)
+                .single();
+            print('archiveWaterCalculation - row after failed update: $rowAfterUpdate');
+          } catch (e) {
+            print('archiveWaterCalculation - error checking row after update: $e');
+          }
           
-      print('Successfully archived water calculation: ${calculation.id}');
+          // Revert local optimistic changes
+          _savedCalculations.add(calculation);
+          _archivedCalculations.removeWhere((c) => c.id == calculation.id);
+          notifyListeners();
+        } else {
+          print('Successfully archived water calculation: ${calculation.id}');
+        }
+      } catch (e) {
+        print('archiveWaterCalculation - error updating Supabase: $e');
+        // Revert local changes without throwing to avoid crashing the app
+        _savedCalculations.add(calculation);
+        _archivedCalculations.removeWhere((c) => c.id == calculation.id);
+        notifyListeners();
+      }
     } catch (e) {
-      print('Error archiving water calculation from Supabase: $e');
-      // Revert local changes if database update fails
+      print('Error archiving water calculation: $e');
+      // Revert local changes
       _savedCalculations.add(calculation);
       _archivedCalculations.removeWhere((c) => c.id == calculation.id);
       notifyListeners();
-      rethrow; // Re-throw to allow error handling upstream
     }
   }
 
@@ -400,7 +480,12 @@ class LogBookProvider with ChangeNotifier {
       }).select();
 
       if (response.isNotEmpty) {
-        _savedFishCalculations.add(FishCalculation.fromJson(response.first));
+  final item = response.first;
+        if (item['archived'] != true) {
+          _savedFishCalculations.add(FishCalculation.fromJson(item));
+        } else {
+          _archivedFishCalculations.insert(0, FishCalculation.fromJson(item));
+        }
         notifyListeners();
       }
     } catch (e) {
@@ -412,6 +497,9 @@ class LogBookProvider with ChangeNotifier {
     try {
       // Remove from local list first to immediately update UI
       _savedFishCalculations.removeWhere((c) => c.id == calculation.id);
+      // Add to archived list locally
+      _archivedFishCalculations.removeWhere((c) => c.id == calculation.id);
+      _archivedFishCalculations.insert(0, calculation);
       notifyListeners();
       
       // Then update database
@@ -444,9 +532,13 @@ class LogBookProvider with ChangeNotifier {
       }).select();
 
       if (response.isNotEmpty) {
-        // Create a new result from the database response and add it to the local list
-        final newResult = CompatibilityResult.fromJson(response.first);
-        _savedCompatibilityResults.add(newResult);
+  final item = response.first;
+        final newResult = CompatibilityResult.fromJson(item);
+        if (item['archived'] != true) {
+          _savedCompatibilityResults.add(newResult);
+        } else {
+          _archivedCompatibilityResults.insert(0, newResult);
+        }
         notifyListeners();
       }
     } catch (e) {
@@ -458,6 +550,9 @@ class LogBookProvider with ChangeNotifier {
     try {
       // Remove from local list first to immediately update UI
       _savedCompatibilityResults.removeWhere((r) => r.id == result.id);
+      // Add to archived list locally
+      _archivedCompatibilityResults.removeWhere((r) => r.id == result.id);
+      _archivedCompatibilityResults.insert(0, result);
       notifyListeners();
       
       // Then update database
@@ -608,7 +703,12 @@ class LogBookProvider with ChangeNotifier {
       }).select();
 
       if (response.isNotEmpty) {
-        _savedDietCalculations.insert(0, DietCalculation.fromJson(response.first));
+  final item = response.first;
+        if (item['archived'] != true) {
+          _savedDietCalculations.insert(0, DietCalculation.fromJson(item));
+        } else {
+          _archivedDietCalculations.insert(0, DietCalculation.fromJson(item));
+        }
         print('Diet calculation added to provider. Total count: ${_savedDietCalculations.length}');
         notifyListeners();
       }
@@ -624,6 +724,9 @@ class LogBookProvider with ChangeNotifier {
     try {
       // Remove from local list first to immediately update UI
       _savedDietCalculations.removeWhere((c) => c.id == calculation.id);
+      // Add to archived list locally
+      _archivedDietCalculations.removeWhere((c) => c.id == calculation.id);
+      _archivedDietCalculations.insert(0, calculation);
       notifyListeners();
       
       // Then update database
@@ -687,7 +790,12 @@ class LogBookProvider with ChangeNotifier {
       }).select();
 
       if (response.isNotEmpty) {
-        _savedFishVolumeCalculations.insert(0, FishVolumeCalculation.fromJson(response.first));
+  final item = response.first;
+        if (item['archived'] != true) {
+          _savedFishVolumeCalculations.insert(0, FishVolumeCalculation.fromJson(item));
+        } else {
+          _archivedFishVolumeCalculations.insert(0, FishVolumeCalculation.fromJson(item));
+        }
         print('Fish volume calculation added to provider. Total count: ${_savedFishVolumeCalculations.length}');
         notifyListeners();
       }
@@ -703,6 +811,9 @@ class LogBookProvider with ChangeNotifier {
     try {
       // Remove from local list first to immediately update UI
       _savedFishVolumeCalculations.removeWhere((c) => c.id == calculation.id);
+      // Add to archived list locally
+      _archivedFishVolumeCalculations.removeWhere((c) => c.id == calculation.id);
+      _archivedFishVolumeCalculations.insert(0, calculation);
       notifyListeners();
       
       // Then update database
@@ -829,6 +940,28 @@ class LogBookProvider with ChangeNotifier {
       print('Error loading archived data from Supabase: $e');
       _clearArchivedData();
     } finally {
+      // Deduplicate: remove any archived items that might still exist in active lists
+      final archivedPredictionIds = _archivedPredictions.map((p) => p.id).toSet();
+      _savedPredictions.removeWhere((p) => archivedPredictionIds.contains(p.id));
+
+      final archivedCalculationIds = _archivedCalculations.map((c) => c.id).toSet();
+      _savedCalculations.removeWhere((c) => archivedCalculationIds.contains(c.id));
+
+      final archivedFishCalcIds = _archivedFishCalculations.map((c) => c.id).toSet();
+      _savedFishCalculations.removeWhere((c) => archivedFishCalcIds.contains(c.id));
+
+      final archivedCompatIds = _archivedCompatibilityResults.map((r) => r.id).toSet();
+      _savedCompatibilityResults.removeWhere((r) => archivedCompatIds.contains(r.id));
+
+      final archivedDietIds = _archivedDietCalculations.map((c) => c.id).toSet();
+      _savedDietCalculations.removeWhere((c) => archivedDietIds.contains(c.id));
+
+      final archivedFishVolIds = _archivedFishVolumeCalculations.map((c) => c.id).toSet();
+      _savedFishVolumeCalculations.removeWhere((c) => archivedFishVolIds.contains(c.id));
+
+      final archivedTankIds = _archivedTanks.map((t) => t.id).toSet();
+      _savedTanks.removeWhere((t) => archivedTankIds.contains(t.id));
+
       notifyListeners();
     }
   }

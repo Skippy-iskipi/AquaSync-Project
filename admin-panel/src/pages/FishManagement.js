@@ -4,8 +4,6 @@ import {
   PencilIcon, 
   MagnifyingGlassIcon,
   EyeIcon,
-  CheckCircleIcon,
-  XCircleIcon,
   FunnelIcon,
   XMarkIcon,
   DocumentArrowUpIcon,
@@ -15,7 +13,7 @@ import toast from 'react-hot-toast';
 import * as XLSX from 'xlsx';
 
 // BulkUploadModal component definition
-function BulkUploadModal({ isOpen, onClose, onUpload }) {
+function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => {}, existingFish = [] }) {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [previewData, setPreviewData] = useState([]);
@@ -72,6 +70,11 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
   const validateBulkData = (data) => {
     const valid = [];
     const errors = [];
+    // Track duplicates within the upload file
+    const seenInFile = new Set();
+    // Track existing species from current fish data
+    const existingSpecies = existingFish.map(f => `${f.common_name.toLowerCase()}|${f.scientific_name.toLowerCase()}`);
+    
     const requiredFields = [
       'common_name', 'scientific_name', 'water_type', 'temperament', 
       'diet', 'max_size_(cm)', 'minimum_tank_size_(l)', 'ph_range',
@@ -91,6 +94,23 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
       if (!hasAnyData) {
         errors.push(`Row ${rowNumber}: Empty row detected - skipping`);
         return; // Skip this row entirely
+      }
+
+      // Check for duplicates in current file and existing database
+      if (row.common_name && row.scientific_name) {
+        const speciesKey = `${row.common_name.toLowerCase()}|${row.scientific_name.toLowerCase()}`;
+        
+        // Check for duplicates within upload file
+        if (seenInFile.has(speciesKey)) {
+          rowErrors.push(`Row ${rowNumber}: Duplicate entry found in upload file for "${row.common_name} (${row.scientific_name})"`);
+        }
+        
+        // Check for duplicates in existing database
+        if (existingSpecies.includes(speciesKey)) {
+          rowErrors.push(`Row ${rowNumber}: Species "${row.common_name} (${row.scientific_name})" already exists in database`);
+        }
+        
+        seenInFile.add(speciesKey);
       }
       
       // Check required fields for null/empty values
@@ -384,7 +404,7 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
               <button
                 type="button"
                 onClick={onClose}
-                className="btn-secondary"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2"
                 disabled={uploading}
               >
                 Cancel
@@ -392,7 +412,7 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
               <button
                 onClick={handleUpload}
                 disabled={!file || previewData.length === 0 || uploading}
-                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-white bg-aqua-600 rounded-md shadow-sm hover:bg-aqua-700 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {uploading ? 'Uploading...' : `Upload ${previewData.length} Fish Species`}
               </button>
@@ -405,7 +425,7 @@ function BulkUploadModal({ isOpen, onClose, onUpload }) {
 }
 
 // FishModal component definition
-function FishModal({ isOpen, onClose, fish, mode, onSave }) {
+function FishModal({ isOpen, onClose, fish = {}, mode, onSave }) {
   const [formData, setFormData] = useState(fish);
   const [errors, setErrors] = useState({});
 
@@ -969,13 +989,13 @@ function FishModal({ isOpen, onClose, fish, mode, onSave }) {
                 <button
                   type="button"
                   onClick={onClose}
-                  className="btn-secondary"
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="btn-primary"
+                  className="px-4 py-2 text-sm font-medium text-white bg-aqua-600 rounded-md shadow-sm hover:bg-aqua-700 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2"
                 >
                   {mode === 'add' ? 'Add Fish' : 'Update Fish'}
                 </button>
@@ -992,14 +1012,11 @@ function FishManagement() {
   const [fish, setFish] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedFish, setSelectedFish] = useState(null);
+  const [selectedFish, setSelectedFish] = useState({});
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState('view'); // 'view', 'edit', 'add'
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
-  const [showStatusDialog, setShowStatusDialog] = useState(false);
-  const [fishToToggle, setFishToToggle] = useState(null);
-  const [newStatus, setNewStatus] = useState(null);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   
   // Filter states
@@ -1076,41 +1093,7 @@ function FishManagement() {
     setShowModal(true);
   };
 
-  const handleToggleStatus = (fishItem) => {
-    setFishToToggle(fishItem);
-    setNewStatus(!fishItem.active);
-    setShowStatusDialog(true);
-  };
 
-  const confirmToggleStatus = async () => {
-    if (!fishToToggle) return;
-    
-    try {
-      const token = localStorage.getItem('adminToken');
-      const response = await fetch(`/api/fish/${fishToToggle.id}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ active: newStatus })
-      });
-      
-      if (response.ok) {
-        toast.success(`Fish species ${newStatus ? 'activated' : 'deactivated'} successfully`);
-        fetchFish();
-      } else {
-        toast.error(`Failed to ${newStatus ? 'activate' : 'deactivate'} fish species`);
-      }
-    } catch (error) {
-      toast.error(`Error ${newStatus ? 'activating' : 'deactivating'} fish species`);
-      // Error occurred during operation
-    } finally {
-      setShowStatusDialog(false);
-      setFishToToggle(null);
-      setNewStatus(null);
-    }
-  };
 
   const handleSaveFish = async (fishData) => {
     try {
@@ -1650,48 +1633,11 @@ function FishManagement() {
           isOpen={showBulkUpload}
           onUpload={handleBulkUpload}
           onClose={() => setShowBulkUpload(false)}
+          existingFish={fish}
         />
       )}
 
-      {/* Status Confirmation Dialog */}
-      {showStatusDialog && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <div className="mt-3 text-center">
-              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100">
-                <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 mt-2">
-                {newStatus ? 'Activate Fish Species' : 'Deactivate Fish Species'}
-              </h3>
-              <div className="mt-2 px-7 py-3">
-                <p className="text-sm text-gray-500">
-                  Are you sure you want to {newStatus ? 'activate' : 'deactivate'} <strong>{fishToToggle?.common_name}</strong>?
-                  {!newStatus && ' This fish will no longer be displayed in the app.'}
-                </p>
-              </div>
-              <div className="items-center px-4 py-3">
-                <button
-                  onClick={confirmToggleStatus}
-                  className={`px-4 py-2 text-white text-base font-medium rounded-md w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-300 ${
-                    newStatus ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
-                  }`}
-                >
-                  {newStatus ? 'Activate Fish' : 'Deactivate Fish'}
-                </button>
-                <button
-                  onClick={() => setShowStatusDialog(false)}
-                  className="mt-3 px-4 py-2 bg-gray-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-300"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

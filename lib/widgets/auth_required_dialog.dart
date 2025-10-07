@@ -37,17 +37,17 @@ class _AuthRequiredDialogState extends State<AuthRequiredDialog>
     super.initState();
     
     _scaleController = AnimationController(
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 200), // Reduced from 600
       vsync: this,
     );
     
     _slideController = AnimationController(
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 120), // Reduced from 400
       vsync: this,
     );
     
     _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 2000),
+      duration: const Duration(milliseconds: 800), // Reduced from 2000
       vsync: this,
     );
     
@@ -489,17 +489,15 @@ class _AuthRequiredDialogState extends State<AuthRequiredDialog>
                       context,
                       PageRouteBuilder(
                         pageBuilder: (context, animation, secondaryAnimation) =>
-                            const AuthScreen(showBackButton: true), // Explicitly show back button
+                            const AuthScreen(showBackButton: true),
                         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                          // Combined slide up + fade + scale transition
                           final slideAnimation = Tween<Offset>(
-                            begin: const Offset(0.0, 1.0), // Start from bottom
+                            begin: const Offset(0.0, 1.0),
                             end: Offset.zero,
                           ).animate(CurvedAnimation(
                             parent: animation,
                             curve: const Interval(0.0, 0.8, curve: Curves.easeOutCubic),
                           ));
-                          
                           final fadeAnimation = Tween<double>(
                             begin: 0.0,
                             end: 1.0,
@@ -507,7 +505,6 @@ class _AuthRequiredDialogState extends State<AuthRequiredDialog>
                             parent: animation,
                             curve: const Interval(0.1, 0.9, curve: Curves.easeOut),
                           ));
-                          
                           final scaleAnimation = Tween<double>(
                             begin: 0.95,
                             end: 1.0,
@@ -515,7 +512,6 @@ class _AuthRequiredDialogState extends State<AuthRequiredDialog>
                             parent: animation,
                             curve: const Interval(0.0, 0.6, curve: Curves.easeOutBack),
                           ));
-
                           return SlideTransition(
                             position: slideAnimation,
                             child: FadeTransition(
@@ -527,9 +523,9 @@ class _AuthRequiredDialogState extends State<AuthRequiredDialog>
                             ),
                           );
                         },
-                        transitionDuration: const Duration(milliseconds: 600),
-                        reverseTransitionDuration: const Duration(milliseconds: 400),
-                        opaque: true, // Ensures auth screen covers everything
+                        transitionDuration: const Duration(milliseconds: 180), // Reduced from 600
+                        reverseTransitionDuration: const Duration(milliseconds: 120), // Reduced from 400
+                        opaque: true,
                       ),
                     );
                     

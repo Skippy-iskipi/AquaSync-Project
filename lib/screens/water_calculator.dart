@@ -40,6 +40,9 @@ class WaterCalculator extends StatefulWidget {
 }
 
 class _WaterCalculatorState extends State<WaterCalculator> {
+  // Track real-time compatibility state
+  bool _hasIncompatiblePairs = false;
+  String _compatibilityMessage = '';
   List<FishCard> _fishCards = [];
   final Map<String, int> _fishSelections = {};
   final Map<int, String> _cardToFish = {}; // Track which fish belongs to which card
@@ -305,10 +308,10 @@ Widget buildRecommendationsList({
   }
 
   Future<void> _calculateRequirements() async {
-    if (_fishSelections.isEmpty) {
+    if (!_isCalculateButtonEnabled()) {
       showCustomNotification(
         context,
-        'Please add at least one fish',
+        _getCalculateButtonDisabledReason(),
         isError: true,
       );
       return;
@@ -885,6 +888,8 @@ Widget buildRecommendationsList({
 
 
   Widget _buildWaterRequirements() {
+    final bool isEnabled = _isCalculateButtonEnabled();
+    final String disabledReason = _getCalculateButtonDisabledReason();
     if (_calculationResult == null) return const SizedBox.shrink();
 
     return Container(
@@ -1977,16 +1982,36 @@ Widget buildRecommendationsList({
 
   // Check if calculate button should be enabled
   bool _isCalculateButtonEnabled() {
-    return _fishSelections.isNotEmpty && _fishTankShapeWarnings.isEmpty;
+    // If no fish selected or tank shape warnings exist, disable button
+    if (_fishSelections.isEmpty || _fishTankShapeWarnings.isNotEmpty) {
+      return false;
+    }
+
+    // If only one fish, enable button
+    if (_fishSelections.length == 1) {
+      return true;
+    }
+
+    // Use tracked compatibility state
+    return !_hasIncompatiblePairs;
   }
 
   // Get the reason why calculate button is disabled
   String _getCalculateButtonDisabledReason() {
     if (_fishSelections.isEmpty) {
       return 'Please add at least one fish to calculate requirements';
-    } else if (_fishTankShapeWarnings.isNotEmpty) {
+    } 
+    
+    if (_fishTankShapeWarnings.isNotEmpty) {
       return 'Some fish are not suitable for the selected tank shape. Please change tank shape or remove incompatible fish.';
     }
+
+    if (_hasIncompatiblePairs && _fishSelections.length > 1) {
+      return _compatibilityMessage.isNotEmpty 
+          ? _compatibilityMessage 
+          : 'Some fish are not compatible with each other. Please remove incompatible fish.';
+    }
+    
     return '';
   }
 
@@ -2779,6 +2804,9 @@ Widget buildRecommendationsList({
 
 
   Widget _buildRealTimeCompatibilityCheck() {
+    // Don't call _updateCompatibilityState() here to avoid infinite API calls
+    // The FutureBuilder below will call _getRealTimeCompatibilityResults() only once per build
+    
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
       decoration: BoxDecoration(
@@ -2962,10 +2990,46 @@ Widget buildRecommendationsList({
     );
   }
 
+  // Update real-time compatibility state
+  Future<void> _updateCompatibilityState() async {
+    // Calculate total fish count (including quantities)
+    final totalFishCount = _fishSelections.values.fold<int>(0, (sum, qty) => sum + qty);
+    
+    if (totalFishCount <= 1) {
+      setState(() {
+        _hasIncompatiblePairs = false;
+        _compatibilityMessage = '';
+      });
+      return;
+    }
+
+    try {
+      final results = await _getRealTimeCompatibilityResults();
+      final incompatiblePairs = results['incompatible_pairs'] as List? ?? [];
+      
+      setState(() {
+        _hasIncompatiblePairs = incompatiblePairs.isNotEmpty;
+        _compatibilityMessage = _hasIncompatiblePairs
+            ? 'Some fish are not compatible with each other. Please remove incompatible fish.'
+            : '';
+      });
+    } catch (e) {
+      print('Error updating compatibility state: $e');
+      setState(() {
+        _hasIncompatiblePairs = false;
+        _compatibilityMessage = 'Unable to verify fish compatibility';
+      });
+    }
+  }
+
   Future<Map<String, dynamic>> _getRealTimeCompatibilityResults() async {
     try {
       final fishNames = _fishSelections.keys.toList();
-      if (fishNames.length < 2) {
+      
+      // Calculate total fish count (including quantities)
+      final totalFishCount = _fishSelections.values.fold<int>(0, (sum, qty) => sum + qty);
+      
+      if (totalFishCount < 2) {
         return {'incompatible_pairs': [], 'conditional_pairs': []};
       }
 
@@ -4194,8 +4258,21 @@ Widget buildRecommendationsList({
   }
 
   Widget _buildCompatibilityResults(Map<String, dynamic> results) {
-    final incompatiblePairs = results['incompatible_pairs'] as List<Map<String, dynamic>>? ?? [];
-    final conditionalPairs = results['conditional_pairs'] as List<Map<String, dynamic>>? ?? [];
+    List<Map<String, dynamic>> incompatiblePairs = [];
+    List<Map<String, dynamic>> conditionalPairs = [];
+    
+    if (results['incompatible_pairs'] != null) {
+      incompatiblePairs = (results['incompatible_pairs'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    }
+    
+    if (results['conditional_pairs'] != null) {
+      conditionalPairs = (results['conditional_pairs'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    }
+    
     final hasIncompatible = incompatiblePairs.isNotEmpty;
 
     return Container(
@@ -4402,20 +4479,20 @@ Widget buildRecommendationsList({
                           ..._fishCards.map((card) => _buildFishInput(card)),
                           // Tank shape compatibility warnings
                           if (_fishTankShapeWarnings.isNotEmpty) _buildTankShapeWarningsWidget(),
-                          // Real-time compatibility check
-                          if (_fishSelections.length >= 2) _buildRealTimeCompatibilityCheck(),
+                          // Real-time compatibility check (show if total fish count >= 2)
+                          if (_fishSelections.values.fold<int>(0, (sum, qty) => sum + qty) >= 2) _buildRealTimeCompatibilityCheck(),
                           // Tankmate recommendations for selected fish
                           if (_fishSelections.isNotEmpty) _buildTankmateRecommendationsWidget(),
                         ] else ...[
                           // Show results - check for specific issues first, then show main results
                           if (_calculationResult!['temporary_housing_issues'] != null)
-                          _buildTemporaryHousingWarning(_calculationResult!)
-                        else if (_calculationResult!['tank_shape_issues'] != null)
-                          _buildTankShapeIncompatibilityResults(_calculationResult!)
-                        else if (_calculationResult!['incompatible_pairs'] != null)
-                          _buildCompatibilityResults(_calculationResult!)
-                        else
-                          _buildWaterRequirements(),
+                            _buildTemporaryHousingWarning(_calculationResult!)
+                          else if (_calculationResult!['tank_shape_issues'] != null)
+                            _buildTankShapeIncompatibilityResults(_calculationResult!)
+                          else if (_calculationResult!['incompatible_pairs'] != null)
+                            _buildCompatibilityResults(_calculationResult!)
+                          else
+                            _buildWaterRequirements(),
                         ],
 
                       ],
@@ -4457,9 +4534,13 @@ Widget buildRecommendationsList({
                           child: Tooltip(
                             message: _isCalculateButtonEnabled() ? '' : _getCalculateButtonDisabledReason(),
                             child: ElevatedButton(
-                              onPressed: _isCalculateButtonEnabled() ? _calculateRequirements : null,
+                              onPressed: _isCalculateButtonEnabled() ? () {
+                                if (!_hasIncompatiblePairs) {
+                                  _calculateRequirements();
+                                }
+                              } : null,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: _isCalculateButtonEnabled()
+                                backgroundColor: _isCalculateButtonEnabled() && !_hasIncompatiblePairs
                                     ? const Color(0xFF00BCD4) 
                                     : Colors.grey.shade300,
                                 padding: const EdgeInsets.symmetric(vertical: 12),

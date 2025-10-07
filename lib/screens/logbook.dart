@@ -161,7 +161,7 @@ class _LogBookState extends State<LogBook> {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            _showArchived ? 'Show Archived' : 'Show Active',
+                            _showArchived ? 'Show Active' : 'Show Archived',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w500,

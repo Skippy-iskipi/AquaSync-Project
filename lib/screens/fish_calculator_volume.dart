@@ -52,6 +52,10 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   // Debounce timer for volume changes
   Timer? _volumeChangeTimer;
 
+  // Live group compatibility preview (disable Calculate if incompatible)
+  bool _isGroupIncompatible = false;
+  List<Map<String, dynamic>> _groupIncompatibilityPairs = [];
+
   
 
   @override
@@ -62,6 +66,71 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     
     // Add listener to volume controller for real-time compatibility checks
     _volumeController.addListener(_onVolumeChanged);
+  }
+
+  // Preview group compatibility (non-blocking). Sets _isGroupIncompatible for UI button state
+  Future<void> _updateGroupCompatibilityPreview() async {
+    try {
+      final totalCount = _fishSelections.values.fold<int>(0, (s, v) => s + v);
+      if (totalCount < 2) {
+        setState(() {
+          _isGroupIncompatible = false;
+          _groupIncompatibilityPairs = [];
+        });
+        return;
+      }
+      final expandedFishNames = _fishSelections.entries
+          .expand((e) => List.filled(e.value, e.key))
+          .toList();
+      final resp = await http
+          .post(
+            Uri.parse(ApiConfig.checkGroupEndpoint),
+            headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+            body: jsonEncode({'fish_names': expandedFishNames}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (resp.statusCode != 200) {
+        setState(() {
+          _isGroupIncompatible = false; // don't block on API error
+          _groupIncompatibilityPairs = [];
+        });
+        return;
+      }
+      final data = json.decode(resp.body);
+      bool hasIncompat = false;
+      final List<Map<String, dynamic>> incompatiblePairs = [];
+      final Set<String> seen = {};
+      if (data['results'] is List) {
+        for (final result in (data['results'] as List)) {
+          final compatibility = result['compatibility'];
+          if (compatibility == 'Not Compatible') {
+            final pair = List<String>.from(result['pair'].map((e) => e.toString()));
+            if (pair.length == 2) {
+              final key = ([pair[0].toLowerCase(), pair[1].toLowerCase()]..sort()).join('|');
+              if (!seen.contains(key)) {
+                seen.add(key);
+                incompatiblePairs.add({
+                  'pair': result['pair'],
+                  'reasons': result['reasons'],
+                  'type': 'incompatible',
+                });
+              }
+            }
+            hasIncompat = true;
+          }
+        }
+      }
+      setState(() {
+        _isGroupIncompatible = hasIncompat;
+        _groupIncompatibilityPairs = incompatiblePairs;
+      });
+    } catch (e) {
+      // On any error, do not block calculation
+      setState(() {
+        _isGroupIncompatible = false;
+        _groupIncompatibilityPairs = [];
+      });
+    }
   }
 
   @override
@@ -179,6 +248,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     
     // Also check all fish for real-time updates
     _checkAllFishTankShapeCompatibility();
+    // Update group compatibility preview
+    _updateGroupCompatibilityPreview();
   }
 
 
@@ -194,6 +265,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       _searchQueries.clear();
       _fishTankShapeWarnings.clear();
       _conditionalCompatibilityPairs.clear();
+      _isGroupIncompatible = false;
+      _groupIncompatibilityPairs = [];
     });
   }
 
@@ -210,6 +283,16 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
           title: 'Sign In Required',
           message: 'You need to sign in to save fish calculations to your collection.',
         ),
+      );
+      return;
+    }
+
+    // Check if any fish are unsuitable for the tank volume
+    if (_hasUnsuitableFish()) {
+      showCustomNotification(
+        context,
+        'Cannot save: Tank volume is not suitable for selected fish',
+        isError: true,
       );
       return;
     }
@@ -283,6 +366,16 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   }
 
   Future<void> _calculateRequirements() async {
+    // Check if any fish are selected
+    if (_fishSelections.isEmpty) {
+      showCustomNotification(
+        context,
+        'Please add at least one fish to calculate requirements',
+        isError: true,
+      );
+      return;
+    }
+
     // For bowl tanks, skip volume validation since it's hardcoded to 10L
     if (_selectedTankShape != 'bowl') {
       if (_volumeController.text.isEmpty) {
@@ -320,6 +413,17 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
           _isCalculating = false;
         });
         return;
+      }
+
+      // Compute volume early for consistent error handling and later reuse
+      double volume;
+      if (_selectedTankShape == 'bowl') {
+        volume = 10.0; // Bowl tanks are hardcoded to 10L
+      } else {
+        volume = double.parse(_volumeController.text);
+        if (_selectedUnit == 'gal') {
+          volume = volume * 3.78541; // Convert gallons to liters
+        }
       }
 
       // Check fish-to-fish compatibility for multiple fish
@@ -401,9 +505,20 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
               'incompatible_pairs': incompatiblePairs,
               'conditional_pairs': [], // Clear conditional pairs for incompatible case
               'all_pairs': incompatiblePairs,
+              // Provide safe defaults to avoid UI errors
+              'tank_details': {
+                'volume': '${volume.toStringAsFixed(1)} L',
+                'status': 'Incompatible',
+              },
+              'fish_details': <Map<String, dynamic>>[],
             };
             _isCalculating = false;
           });
+          showCustomNotification(
+            context,
+            'Selected fish are not compatible with each other. Please adjust your selection.',
+            isError: true,
+          );
           return;
         }
         
@@ -414,20 +529,13 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
         }
       }
 
-      double volume;
-      if (_selectedTankShape == 'bowl') {
-        // Bowl tanks are hardcoded to 10L
-        volume = 10.0;
-      } else {
-        volume = double.parse(_volumeController.text);
-        if (_selectedUnit == 'gal') {
-          volume = volume * 3.78541; // Convert gallons to liters
-        }
-      }
+      // volume already computed above
 
       // Use the tank management system's approach for fish quantity recommendations
       print('Using tank management system approach for fish quantity recommendations');
-      final recommendedQuantities = await _calculateRecommendedFishQuantities(volume, _fishSelections);
+      final calcResult = await _calculateRecommendedFishQuantities(volume, _fishSelections);
+      final Map<String, int> recommendedQuantities = (calcResult['quantities'] as Map).map((k, v) => MapEntry(k as String, (v as num).toInt()));
+      final Map<String, String> stockingWarnings = (calcResult['warnings'] as Map?)?.map((k, v) => MapEntry(k as String, v as String)) ?? {};
       
       // Build fish details with recommended quantities
       final fishDetails = <Map<String, dynamic>>[];
@@ -440,6 +548,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
           'name': fishName,
           'current_quantity': currentQuantity,
           'recommended_quantity': recommendedQuantity,
+          if (stockingWarnings.containsKey(fishName)) 'stocking_warning': stockingWarnings[fishName],
           'individual_requirements': {
             'minimum_tank_size': '${(volume * 0.8).toStringAsFixed(1)} L', // 80% of tank volume
             'bioload_factor': _getBioloadFactor(fishName),
@@ -459,6 +568,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
           'fish_details': fishDetails,
           'fish_selections': _fishSelections,
           'recommended_quantities': recommendedQuantities,
+          if (stockingWarnings.containsKey('_global')) 'global_warning': stockingWarnings['_global'],
         };
         // Add conditional compatibility warnings to results if they exist
         if (_conditionalCompatibilityPairs.isNotEmpty) {
@@ -482,18 +592,79 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   }
 
   // Calculate recommended fish quantities using database data
-  Future<Map<String, int>> _calculateRecommendedFishQuantities(double tankVolume, Map<String, int> fishSelections) async {
+  Future<Map<String, dynamic>> _calculateRecommendedFishQuantities(double tankVolume, Map<String, int> fishSelections) async {
     Map<String, int> recommendations = {};
+    Map<String, String> stockingWarnings = {};
+    
+    print('\n🐠 === FISH QUANTITY CALCULATION DEBUG ===');
+    print('Tank Volume: ${tankVolume.toStringAsFixed(1)}L');
+    print('Selected Fish: ${fishSelections.keys.join(", ")}');
     
     // Fetch fish data from database using the same approach as tank management
     final fishData = await _getFishDataFromDatabase(fishSelections.keys.toList());
     
+    // 1) Shared-capacity validation across species before per-species calc
+    //    - If one species alone consumes the entire tank, mixing is not allowed
+    //    - If the sum of minimums for one of each selected species exceeds tank volume, combination is not suitable
+    if (fishSelections.length >= 2) {
+      // Build per-species minimum liters per unit (handle schooling vs non-schooling)
+      final Map<String, double> perUnitMinL = {};
+      double totalMinForOneEach = 0.0;
+      String? fullTankSpecies; // species whose minimum equals/exceeds tank volume
+      for (final name in fishSelections.keys) {
+        final info = fishData[name];
+        if (info == null) continue;
+        final minTankL = (info['minimum_tank_size_l'] ?? 0.0) as double;
+        final behavior = (info['social_behavior'] ?? 'solitary').toString().toLowerCase();
+        final isSchooling = behavior.contains('school') || behavior.contains('shoal') || behavior.contains('colonial');
+        final perUnit = isSchooling && minTankL > 0 ? (minTankL / 6.0) : minTankL; // interpret schooling min as for ~6
+        final perUnitClamped = perUnit > 0 ? perUnit : 0.0;
+        perUnitMinL[name] = perUnitClamped;
+        totalMinForOneEach += perUnitClamped;
+        if (minTankL > 0 && minTankL >= tankVolume - 1e-6) {
+          fullTankSpecies = name;
+        }
+      }
+      // Case A: one species consumes the whole tank → mixing not suitable (set all to 0)
+      if (fullTankSpecies != null) {
+        print('❗ Shared check: "$fullTankSpecies" minimum equals/exceeds tank volume. Disallow mixing.');
+        fishSelections.keys.forEach((name) {
+          recommendations[name] = 0;
+        });
+        stockingWarnings['_global'] = 'Tank volume is fully used by $fullTankSpecies alone (${tankVolume.toStringAsFixed(1)}L). The selected combination is not suitable.';
+        return {
+          'quantities': recommendations,
+          'warnings': stockingWarnings,
+        };
+      }
+      // Case B: minimums for one of each exceed tank → combination not suitable
+      if (totalMinForOneEach > tankVolume) {
+        print('❗ Shared check: Sum of one-each minimums (${totalMinForOneEach.toStringAsFixed(1)}L) exceeds tank (${tankVolume.toStringAsFixed(1)}L).');
+        fishSelections.keys.forEach((name) {
+          recommendations[name] = 0;
+        });
+        stockingWarnings['_global'] = 'Selected combination requires at least ${totalMinForOneEach.toStringAsFixed(1)}L (one of each), but tank is ${tankVolume.toStringAsFixed(1)}L. Not suitable.';
+        return {
+          'quantities': recommendations,
+          'warnings': stockingWarnings,
+        };
+      }
+    }
+    
     for (String fishName in fishSelections.keys) {
+      print('\n--- Calculating for: $fishName ---');
       final fishInfo = fishData[fishName];
       if (fishInfo != null) {
         final maxSizeCm = fishInfo['max_size_cm'] ?? 0.0;
         final minimumTankSizeL = fishInfo['minimum_tank_size_l'] ?? 0.0;
         final bioload = fishInfo['bioload'] ?? 1.0;
+        final socialBehavior = fishInfo['social_behavior'] ?? 'solitary';
+        
+        print('Database Values:');
+        print('  - max_size_cm: $maxSizeCm cm');
+        print('  - minimum_tank_size_l: $minimumTankSizeL L');
+        print('  - bioload: $bioload');
+        print('  - social_behavior: $socialBehavior');
         
         // Calculate recommended quantity using database data
         int recommendedQty = 0;
@@ -501,20 +672,43 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
         // Check if tank meets minimum requirements first
         if (minimumTankSizeL > 0 && tankVolume < minimumTankSizeL) {
           // Tank too small for this species - recommend 0
+          print('❌ Tank too small! ${tankVolume.toStringAsFixed(1)}L < $minimumTankSizeL L');
           recommendedQty = 0;
         } else {
           // Calculate based on fish behavior and tank capacity
-          recommendedQty = _calculateFishQuantity(fishName, tankVolume, minimumTankSizeL, maxSizeCm, bioload);
+          final result = _calculateFishQuantity(fishName, tankVolume, minimumTankSizeL, maxSizeCm, bioload, socialBehavior);
+          final conservative = result['conservative'];
+          final typical = result['typical'];
+          final theoreticalMax = result['theoretical_max'];
+          final warning = result['stocking_warning'];
+          
+          // Use typical as the recommended quantity
+          recommendedQty = typical;
+          if (warning != null && warning is String && warning.isNotEmpty) {
+            stockingWarnings[fishName] = warning;
+          }
+          
+          print('✅ Stocking Levels:');
+          print('   Conservative (adult-safe): $conservative fish');
+          print('   Typical (hobbyist): $typical fish ← RECOMMENDED');
+          print('   Theoretical Max (top filtration): $theoreticalMax fish');
         }
         
         // Ensure maximum of 20 for better stocking
         final finalQty = recommendedQty.clamp(0, 20);
+        print('Final recommended quantity: $finalQty');
         recommendations[fishName] = finalQty;
       } else {
+        print('⚠️ No database info found, defaulting to 1');
         recommendations[fishName] = 1;
       }
     }
-    return recommendations;
+    
+    print('\n🐠 === END CALCULATION DEBUG ===\n');
+    return {
+      'quantities': recommendations,
+      'warnings': stockingWarnings,
+    };
   }
 
   // Fetch fish data from database using the same approach as tank management
@@ -525,7 +719,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       // Query fish_species table for the required data
       final response = await Supabase.instance.client
           .from('fish_species')
-          .select('common_name, "max_size_(cm)", "minimum_tank_size_(l)", bioload')
+          .select('common_name, "max_size_(cm)", "minimum_tank_size_(l)", bioload, social_behavior')
           .inFilter('common_name', fishNames);
       
       for (final fish in response) {
@@ -533,12 +727,14 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
         final maxSizeCm = fish['max_size_(cm)'];
         final minimumTankSizeL = fish['minimum_tank_size_(l)'];
         final bioload = fish['bioload'];
+        final socialBehavior = fish['social_behavior'];
         
         if (commonName != null) {
           fishData[commonName] = {
             'max_size_cm': maxSizeCm != null ? double.tryParse(maxSizeCm.toString()) ?? 0.0 : 0.0,
             'minimum_tank_size_l': minimumTankSizeL != null ? double.tryParse(minimumTankSizeL.toString()) ?? 0.0 : 0.0,
             'bioload': bioload != null ? double.tryParse(bioload.toString()) ?? 1.0 : 1.0,
+            'social_behavior': socialBehavior?.toString() ?? 'solitary',
           };
         }
       }
@@ -562,6 +758,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
               'max_size_cm': 10.0,
               'minimum_tank_size_l': 20.0,
               'bioload': 1.0,
+              'social_behavior': 'solitary',
             };
           }
         }
@@ -744,54 +941,282 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   }
 
   // Calculate fish quantity based on behavior and tank capacity
-  int _calculateFishQuantity(String fishName, double tankVolume, double minimumTankSizeL, double maxSizeCm, double bioload) {
+  Map<String, dynamic> _calculateFishQuantity(String fishName, double tankVolume, double minimumTankSizeL, double maxSizeCm, double bioload, String socialBehavior) {
     final fishNameLower = fishName.toLowerCase();
+    final socialBehaviorLower = socialBehavior.toLowerCase();
     
-    // Special handling for bettas
-    if (fishNameLower.contains('betta') || fishNameLower.contains('fighting fish')) {
-      // For bettas: 1 male OR 4-5 females (sorority)
-      // Since we can't determine gender, recommend 1 (male) for safety
-      // In a real app, you'd ask the user to specify gender
-      return 1;
+    print('Calculation Method:');
+    print('  → Social Behavior: $socialBehavior');
+
+    // Determine fish category from social_behavior database field
+    final isSchoolingFish = socialBehaviorLower.contains('school') ||
+                           socialBehaviorLower.contains('shoal') ||
+                           socialBehaviorLower.contains('colonial');
+
+    final isSolitaryFish = socialBehaviorLower.contains('solitary') ||
+                          socialBehaviorLower.contains('territorial') ||
+                          socialBehaviorLower.contains('predatory');
+
+    final isPairFish = socialBehaviorLower.contains('pair');
+
+    // Community fish are the default (sociable, peaceful, semi-social, small groups, community, etc.)
+    final isCommunityFish = !isSchoolingFish && !isSolitaryFish && !isPairFish;
+
+    // Log the detected category
+    if (isSchoolingFish) {
+      print('  → Category: Schooling Fish');
+    } else if (isSolitaryFish) {
+      print('  → Category: Solitary Fish');
+    } else if (isPairFish) {
+      print('  → Category: Pair Fish');
+    } else if (isCommunityFish) {
+      print('  → Category: Community Fish');
+    } else {
+      print('  → Category: Unknown/Community (default)');
     }
     
-    // Special handling for other territorial fish
-    if (fishNameLower.contains('gourami') || 
-        fishNameLower.contains('cichlid') ||
-        fishNameLower.contains('angelfish') ||
-        fishNameLower.contains('discus')) {
-      // Most territorial fish should be kept alone or in pairs
-      return 1;
+    // Special handling for solitary/territorial fish
+    if (isSolitaryFish) {
+      print('  → Solitary/Territorial species: Recommend 1');
+      return {'conservative': 1, 'typical': 1, 'theoretical_max': 1};
+    }
+    
+    // Special handling for pair fish
+    if (isPairFish && !isSchoolingFish) {
+      print('  → Pair species: Recommend 2');
+      return {'conservative': 2, 'typical': 2, 'theoretical_max': 2};
     }
     
     // For other fish, calculate based on tank capacity
     if (minimumTankSizeL > 0) {
-      // Use minimum tank size as a guide for maximum fish per tank
-      // For example: if minimum is 20L, then 100L tank can hold 100/20 = 5 fish
-      int maxFish = (tankVolume / minimumTankSizeL).floor();
+      // Interpret minimum_tank_size_l
+      // - For schooling fish: it's typically the baseline volume for a proper group (~6)
+      // - For non-schooling fish: use as-is (per fish baseline)
+      double divisorLiters;
+      if (isSchoolingFish) {
+        // Derive per-fish liters from baseline group size of 6
+        divisorLiters = (minimumTankSizeL / 6.0).clamp(1.0, double.infinity);
+        print('  → Schooling species: treating min tank ${minimumTankSizeL.toStringAsFixed(1)}L as for 6 fish → per-fish ≈ ${divisorLiters.toStringAsFixed(2)}L');
+      } else {
+        divisorLiters = minimumTankSizeL;
+      }
+
+      // Base capacity from divisor
+      double maxFish = tankVolume / divisorLiters;
+      print('  → Base calculation: ${tankVolume.toStringAsFixed(1)}L / ${divisorLiters.toStringAsFixed(2)}L = ${maxFish.toStringAsFixed(2)} fish');
       
-      // Apply bioload factor
-      if (bioload > 1.0) {
-        maxFish = (maxFish / bioload).floor();
+      // Apply bioload factor using species-specific calculation
+      if (bioload != 1.0) {
+        final originalMaxFish = maxFish;
+        // Use bioload directly for more accurate biological calculation
+        // Baseline bioload = 1.0 represents "average" fish waste production
+        final bioloadMultiplier = bioload / 1.0; // Use 1.0 as baseline
+        maxFish = maxFish / bioloadMultiplier;
+
+        print('  → Bioload adjustment (${bioload}x): ${originalMaxFish.toStringAsFixed(2)} / ${bioloadMultiplier.toStringAsFixed(2)} = ${maxFish.toStringAsFixed(2)} fish');
+        print('  → Species bioload: ${bioload}x (baseline = 1.0x average fish)');
+      } else {
+        print('  → Bioload: 1.0x (average waste production)');
       }
       
-      // Ensure at least 1 fish
-      return maxFish.clamp(1, 10);
+      // Calculate three stocking levels
+      int conservative = 1, typical = 1, theoreticalMax = 1;
+      
+      if (isSchoolingFish) {
+        // Schooling fish: allow partial schools with warnings
+        if (maxFish >= 5.0) {
+          print('  → Schooling fish: Tank can support proper school (${maxFish.toStringAsFixed(2)} capacity)');
+          
+          // Conservative: strict bioload, minimum school
+          conservative = 6; // Minimum school size
+          
+          // Typical: standard calculation with 20% bonus
+          typical = (maxFish * 1.2).floor();
+          if (typical < 6) typical = 6;
+          
+          // Theoretical max: aggressive stocking with strong filtration
+          theoreticalMax = (maxFish * 1.5).floor();
+          if (theoreticalMax < 6) theoreticalMax = 6;
+          
+          print('  → Schooling levels: Conservative=$conservative, Typical=$typical, Max=$theoreticalMax');
+        } else if (maxFish >= 1.0) {
+          // Allow partial school or juvenile stocking with warnings
+          print('  → Schooling fish: Partial school/juvenile stocking (${maxFish.toStringAsFixed(2)} capacity)');
+          conservative = maxFish.floor().clamp(1, 20);
+          typical = maxFish.round().clamp(1, 20);
+          theoreticalMax = maxFish.ceil().clamp(1, 20);
+          print('  → ⚠️ WARNING: Below ideal school size (6+), fish may experience stress');
+        } else {
+          // Tank too small even for juveniles
+          print('  → Schooling fish: Tank too small even for juveniles (${maxFish.toStringAsFixed(2)} capacity)');
+          return {'conservative': 0, 'typical': 0, 'theoretical_max': 0, 'warning': 'insufficient_space'};
+        }
+      } else if (isCommunityFish) {
+        // Community fish: different rounding strategies
+        print('  → Community fish: Calculating stocking levels for ${maxFish.toStringAsFixed(2)} capacity');
+        
+        // Conservative: floor (adult-safe, accounting for full growth)
+        conservative = maxFish.floor();
+        if (conservative < 1) conservative = 1;
+        
+        // Typical: round (hobbyist standard)
+        typical = maxFish.round();
+        if (typical < 1) typical = 1;
+        
+        // Theoretical max: ceiling + 20% with strong filtration
+        theoreticalMax = (maxFish * 1.2).ceil();
+        if (theoreticalMax < 1) theoreticalMax = 1;
+        
+        print('  → Community levels: Conservative=$conservative, Typical=$typical, Max=$theoreticalMax');
+      }
+      
+      // Ensure maximum of 20 for practical stocking
+      conservative = conservative.clamp(1, 20);
+      typical = typical.clamp(1, 20);
+      theoreticalMax = theoreticalMax.clamp(1, 20);
+      
+      // Track if stocking is below ideal for warnings
+      String? stockingWarning;
+      
+      // Check for suboptimal stocking levels
+      if (isSolitaryFish) {
+        // Solitary species → min = 1
+        conservative = conservative.clamp(1, 20);
+        typical = typical.clamp(1, 20);
+        theoreticalMax = theoreticalMax.clamp(1, 20);
+        print('  → Solitary species: Enforced min=1 for all levels');
+      } else if (isCommunityFish) {
+        // Community/Sociable species → min = 2
+        if (conservative < 2 || typical < 2 || theoreticalMax < 2) {
+          stockingWarning = 'Community fish prefer groups of 2 or more for social interaction';
+        }
+        conservative = conservative.clamp(2, 20);
+        typical = typical.clamp(2, 20);
+        theoreticalMax = theoreticalMax.clamp(2, 20);
+        print('  → Community species: Enforced min=2 for all levels');
+      } else if (isSchoolingFish) {
+        // Shoaling species → warn if below 6, but allow partial schools
+        if (theoreticalMax < 6) {
+          stockingWarning = 'Schooling fish require groups of 6+ for natural behavior. Current capacity allows partial school or juveniles only - consider upgrading tank size';
+          print('  → ⚠️ Partial school warning: Below ideal size of 6 fish');
+        } else {
+          // Enforce minimum of 6 for proper schools
+          conservative = conservative.clamp(6, 20);
+          typical = typical.clamp(6, 20);
+          theoreticalMax = theoreticalMax.clamp(6, 20);
+          print('  → Shoaling species: Enforced min=6 for all levels');
+        }
+      }
+      
+      return {
+        'conservative': conservative,
+        'typical': typical,
+        'theoretical_max': theoreticalMax,
+        if (stockingWarning != null) 'stocking_warning': stockingWarning,
+      };
     } else if (maxSizeCm > 0) {
       // Fallback to size-based calculation
       final volumePerFish = _calculateVolumeFromSize(maxSizeCm);
-      int calculatedQty = (tankVolume / volumePerFish).floor();
+      print('  → Size-based calculation: Volume per fish = ${volumePerFish.toStringAsFixed(1)}L');
       
-      // Apply bioload factor
-      if (bioload > 1.0) {
-        calculatedQty = (calculatedQty / bioload).floor();
+      double calculatedQty = tankVolume / volumePerFish;
+      print('  → Base: ${tankVolume.toStringAsFixed(1)}L / ${volumePerFish.toStringAsFixed(1)}L = ${calculatedQty.toStringAsFixed(2)} fish');
+      
+      // Apply bioload factor using species-specific calculation
+      if (bioload != 1.0) {
+        final originalQty = calculatedQty;
+        // Use bioload directly for more accurate biological calculation
+        final bioloadMultiplier = bioload / 1.0; // Use 1.0 as baseline
+        calculatedQty = calculatedQty / bioloadMultiplier;
+
+        print('  → Bioload adjustment (${bioload}x): ${originalQty.toStringAsFixed(2)} / ${bioloadMultiplier.toStringAsFixed(2)} = ${calculatedQty.toStringAsFixed(2)} fish');
+        print('  → Species bioload: ${bioload}x (baseline = 1.0x average fish)');
+      } else {
+        print('  → Bioload: 1.0x (average waste production)');
       }
       
-      return calculatedQty.clamp(1, 10);
+      // Calculate three stocking levels
+      int conservative = 1, typical = 1, theoreticalMax = 1;
+      
+      if (isSchoolingFish) {
+        if (calculatedQty >= 5.0) {
+          print('  → Schooling fish: Tank can support proper school (${calculatedQty.toStringAsFixed(2)} capacity)');
+          conservative = 6;
+          typical = (calculatedQty * 1.2).floor();
+          if (typical < 6) typical = 6;
+          theoreticalMax = (calculatedQty * 1.5).floor();
+          if (theoreticalMax < 6) theoreticalMax = 6;
+          print('  → Schooling levels: Conservative=$conservative, Typical=$typical, Max=$theoreticalMax');
+        } else if (calculatedQty >= 1.0) {
+          // Allow partial school or juvenile stocking with warnings
+          print('  → Schooling fish: Partial school/juvenile stocking (${calculatedQty.toStringAsFixed(2)} capacity)');
+          conservative = calculatedQty.floor().clamp(1, 20);
+          typical = calculatedQty.round().clamp(1, 20);
+          theoreticalMax = calculatedQty.ceil().clamp(1, 20);
+          print('  → ⚠️ WARNING: Below ideal school size (6+), fish may experience stress');
+        } else {
+          print('  → Tank too small for schooling species (${calculatedQty.toStringAsFixed(2)} capacity)');
+          return {'conservative': 0, 'typical': 0, 'theoretical_max': 0, 'warning': 'insufficient_space'};
+        }
+      } else if (isCommunityFish) {
+        print('  → Community fish: Calculating stocking levels for ${calculatedQty.toStringAsFixed(2)} capacity');
+        conservative = calculatedQty.floor();
+        if (conservative < 1) conservative = 1;
+        typical = calculatedQty.round();
+        if (typical < 1) typical = 1;
+        theoreticalMax = (calculatedQty * 1.2).ceil();
+        if (theoreticalMax < 1) theoreticalMax = 1;
+        print('  → Community levels: Conservative=$conservative, Typical=$typical, Max=$theoreticalMax');
+      }
+      
+      conservative = conservative.clamp(1, 20);
+      typical = typical.clamp(1, 20);
+      theoreticalMax = theoreticalMax.clamp(1, 20);
+      
+      // Track if stocking is below ideal for warnings
+      String? stockingWarning;
+      
+      // Enforce social behavior minimums for fallback calculation
+      if (isSolitaryFish) {
+        // Solitary species → min = 1
+        conservative = conservative.clamp(1, 20);
+        typical = typical.clamp(1, 20);
+        theoreticalMax = theoreticalMax.clamp(1, 20);
+        print('  → Solitary species: Enforced min=1 for all levels');
+      } else if (isCommunityFish) {
+        // Community/Sociable species → min = 2
+        if (conservative < 2 || typical < 2 || theoreticalMax < 2) {
+          stockingWarning = 'Community fish prefer groups of 2 or more for social interaction';
+        }
+        conservative = conservative.clamp(2, 20);
+        typical = typical.clamp(2, 20);
+        theoreticalMax = theoreticalMax.clamp(2, 20);
+        print('  → Community species: Enforced min=2 for all levels');
+      } else if (isSchoolingFish) {
+        // Shoaling species → warn if below 6, but allow partial schools
+        if (theoreticalMax < 6) {
+          stockingWarning = 'Schooling fish require groups of 6+ for natural behavior. Current capacity allows partial school or juveniles only - consider upgrading tank size';
+          print('  → ⚠️ Partial school warning: Below ideal size of 6 fish');
+        } else {
+          // Enforce minimum of 6 for proper schools
+          conservative = conservative.clamp(6, 20);
+          typical = typical.clamp(6, 20);
+          theoreticalMax = theoreticalMax.clamp(6, 20);
+          print('  → Shoaling species: Enforced min=6 for all levels');
+        }
+      }
+      
+      return {
+        'conservative': conservative,
+        'typical': typical,
+        'theoretical_max': theoreticalMax,
+        if (stockingWarning != null) 'stocking_warning': stockingWarning,
+      };
     }
     
     // Default fallback
-    return 1;
+    print('  → Default fallback: 1 fish');
+    return {'conservative': 1, 'typical': 1, 'theoretical_max': 1};
   }
 
 
@@ -901,6 +1326,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                               });
                               // Check remaining fish for real-time updates
                               _checkAllFishTankShapeCompatibility();
+                              // Update group compatibility preview (re-enable Calculate when <2 fish)
+                              _updateGroupCompatibilityPreview();
                             },
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
@@ -1187,6 +1614,17 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   Widget _buildResultDisplay() {
     if (_calculationData == null) return const SizedBox.shrink();
 
+    // Check if any fish are unsuitable for the tank volume
+    if (_hasUnsuitableFish()) {
+      // Show only the unsuitable volume warning
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.all(16),
+        child: _buildUnsuitableVolumeWarning(),
+      );
+    }
+
+    // All fish are suitable, show normal results
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.all(16),
@@ -1367,55 +1805,58 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                       ],
                                     ),
                                     const SizedBox(height: 6),
-                                    Row(
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        if (fish['recommended_quantity'] > 0) ...[
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                          decoration: BoxDecoration(
-                                            gradient: const LinearGradient(
-                                              colors: [Color(0xFF00BCD4), Color(0xFF006064)],
-                                              begin: Alignment.topLeft,
-                                              end: Alignment.bottomRight,
+                                        Row(
+                                          children: [
+                                            if (fish['recommended_quantity'] > 0) ...[
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                              decoration: BoxDecoration(
+                                                gradient: const LinearGradient(
+                                                  colors: [Color(0xFF00BCD4), Color(0xFF006064)],
+                                                  begin: Alignment.topLeft,
+                                                  end: Alignment.bottomRight,
+                                                ),
+                                                borderRadius: BorderRadius.circular(6),
+                                                boxShadow: [
+                                                  BoxShadow(
+                                                    color: Colors.black.withOpacity(0.1),
+                                                    blurRadius: 4,
+                                                    offset: const Offset(0, 2),
+                                                  ),
+                                                ],
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Icon(
+                                                    Icons.recommend,
+                                                    color: Colors.white,
+                                                    size: 14,
+                                                  ),
+                                                  const SizedBox(width: 5),
+                                                  Text(
+                                                    '${fish['recommended_quantity']}',
+                                                    style: const TextStyle(
+                                                      fontSize: 14,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
                                             ),
-                                            borderRadius: BorderRadius.circular(6),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black.withOpacity(0.1),
-                                                blurRadius: 4,
-                                                offset: const Offset(0, 2),
-                                              ),
-                                            ],
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              const Icon(
-                                                Icons.recommend,
-                                                color: Colors.white,
-                                                size: 14,
-                                              ),
-                                              const SizedBox(width: 5),
-                                              Text(
-                                                '${fish['recommended_quantity']}',
-                                                style: const TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.white,
+                                            const SizedBox(width: 8),
+                                            const Text(
+                                              'recommended',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Color(0xFF006064),
                                                 ),
                                               ),
-                                            ],
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        const Text(
-                                          'recommended',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Color(0xFF006064),
-                                            ),
-                                          ),
-                                        ] else ...[
+                                            ] else ...[
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                             decoration: BoxDecoration(
@@ -1452,6 +1893,9 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                             ),
                                           ),
                                         ],
+                                          ],
+                                        ),
+                                        // Stocking warnings are kept for logs/calculation but not shown in UI.
                                       ],
                                     ),
                                   ],
@@ -2775,6 +3219,524 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     }
   }
 
+  // Check if any fish are unsuitable for the current tank volume
+  bool _hasUnsuitableFish() {
+    if (_calculationData == null || _calculationData!['fish_details'] == null) return false;
+    
+    for (var fish in _calculationData!['fish_details']) {
+      if (fish['recommended_quantity'] == 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Get unsuitable fish with their requirements
+  Future<List<Map<String, dynamic>>> _getUnsuitableFishDetails() async {
+    if (_calculationData == null || _calculationData!['fish_details'] == null) return [];
+    
+    List<Map<String, dynamic>> unsuitableFish = [];
+    
+    // Get current tank volume
+    final volumeStr = _calculationData!['tank_details']['volume'] as String;
+    final currentVolume = double.parse(volumeStr.replaceAll(' L', ''));
+    
+    // Get unsuitable fish names
+    List<String> unsuitableFishNames = [];
+    for (var fish in _calculationData!['fish_details']) {
+      if (fish['recommended_quantity'] == 0) {
+        unsuitableFishNames.add(fish['name'] as String);
+      }
+    }
+    
+    if (unsuitableFishNames.isEmpty) return [];
+    
+    // Fetch fresh data from database using the same method as calculation
+    print('🔍 Fetching unsuitable fish data from database for: ${unsuitableFishNames.join(", ")}');
+    final fishDataFromDb = await _getFishDataFromDatabase(unsuitableFishNames);
+    
+    for (String fishName in unsuitableFishNames) {
+      final fishInfo = fishDataFromDb[fishName];
+      
+      if (fishInfo != null) {
+        final minimumTankSizeL = fishInfo['minimum_tank_size_l'] ?? 0.0;
+        final maxSizeCm = fishInfo['max_size_cm'] ?? 0.0;
+        
+        print('📊 $fishName - min_tank: ${minimumTankSizeL}L, max_size: ${maxSizeCm}cm, current_tank: ${currentVolume}L');
+        
+        // Calculate volume needed for at least 1 fish
+        final volumeNeededForOne = minimumTankSizeL > 0 ? minimumTankSizeL : _calculateVolumeFromSize(maxSizeCm);
+        
+        // Get temperament from _fishData (API) since it's not in the database query
+        final temperament = _fishData?[fishName]?['temperament'] ?? 'peaceful';
+        
+        unsuitableFish.add({
+          'name': fishName,
+          'current_volume': currentVolume,
+          'minimum_required': volumeNeededForOne,
+          'max_size_cm': maxSizeCm,
+          'temperament': temperament,
+          'volume_deficit': volumeNeededForOne - currentVolume,
+        });
+        
+        print('✅ Added unsuitable fish: $fishName (needs ${volumeNeededForOne}L, has ${currentVolume}L)');
+      }
+    }
+    
+    return unsuitableFish;
+  }
+
+  // Get smart recommendations based on unsuitable fish data
+  Future<List<String>> _getSmartRecommendations() async {
+    final unsuitableFish = await _getUnsuitableFishDetails();
+    if (unsuitableFish.isEmpty) return [];
+    
+    List<String> recommendations = [];
+    // Include global warning headline if present
+    final globalWarning = _calculationData?['global_warning']?.toString();
+    if (globalWarning != null && globalWarning.isNotEmpty) {
+      recommendations.add(globalWarning);
+    }
+    
+    // Get the actual user input volume instead of from calculation data
+    final userInputVolume = double.tryParse(_volumeController.text) ?? 0.0;
+    final currentVolume = userInputVolume > 0 ? userInputVolume : unsuitableFish[0]['current_volume'];
+    
+    print('🔍 Recommendation Debug:');
+    print('  User input volume: $userInputVolume');
+    print('  Using volume for recommendations: $currentVolume');
+    
+    
+    // Shared-capacity analysis: for multi-species show math/option; for single-species show direct requirement
+    try {
+      final analysis = await _analyzeCombinationCapacity(currentVolume, _fishSelections.keys.toList());
+      final sumMin = (analysis['sum_min_one_each'] as double?) ?? 0.0;
+      final fullTankSpecies = analysis['full_tank_species'] as String?;
+      final speciesCount = _fishSelections.length;
+      if (speciesCount >= 2) {
+        if (fullTankSpecies != null) {
+          recommendations.add('Single-species option: Keep only $fullTankSpecies and remove other species.');
+        } else if (sumMin > 0) {
+          recommendations.add('Combination math: One-each requires ~${sumMin.toStringAsFixed(1)}L; tank is ${currentVolume.toStringAsFixed(1)}L.');
+        }
+      } else if (speciesCount == 1) {
+        // Single-species: show direct requirement vs tank
+        final f = unsuitableFish.first;
+        final need = (f['minimum_required'] as num?)?.toDouble() ?? 0.0;
+        final name = f['name']?.toString() ?? 'Selected fish';
+        if (need > 0) {
+          recommendations.add('$name requires at least ${need.toStringAsFixed(1)}L; tank is ${currentVolume.toStringAsFixed(1)}L.');
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    
+    return recommendations;
+  }
+
+  // Analyze combination capacity: returns sum of one-each minimum liters and any species that alone consumes the whole tank
+  Future<Map<String, dynamic>> _analyzeCombinationCapacity(double tankVolume, List<String> fishNames) async {
+    final data = await _getFishDataFromDatabase(fishNames);
+    double totalMinForOneEach = 0.0;
+    String? fullTankSpecies;
+    for (final name in fishNames) {
+      final info = data[name];
+      if (info == null) continue;
+      final minTankL = (info['minimum_tank_size_l'] ?? 0.0) as double;
+      final behavior = (info['social_behavior'] ?? 'solitary').toString().toLowerCase();
+      final isSchooling = behavior.contains('school') || behavior.contains('shoal') || behavior.contains('colonial');
+      final perUnit = isSchooling && minTankL > 0 ? (minTankL / 6.0) : minTankL;
+      final perUnitClamped = perUnit > 0 ? perUnit : 0.0;
+      totalMinForOneEach += perUnitClamped;
+      if (minTankL > 0 && minTankL >= tankVolume - 1e-6) {
+        fullTankSpecies = name;
+      }
+    }
+    return {
+      'sum_min_one_each': totalMinForOneEach,
+      'full_tank_species': fullTankSpecies,
+    };
+  }
+
+  // Build unsuitable volume warning widget
+  Widget _buildUnsuitableVolumeWarning() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _getUnsuitableFishDetails(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        
+        final unsuitableFish = snapshot.data!;
+        
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: const Color(0xFFFECDD6), width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFF04438).withOpacity(0.08),
+                spreadRadius: 2,
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3F4),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(4),
+                    topRight: Radius.circular(4),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEE4E8),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Icon(
+                        Icons.warning_rounded,
+                        color: Color(0xFFD92D20),
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Tank Volume Not Suitable',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF912018),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${unsuitableFish.length} fish species cannot be kept in this tank',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFB42318),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Content
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Issue explanation
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFAEB),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFFEDF89)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.info_outline,
+                            color: Color(0xFFDC6803),
+                            size: 16,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _calculationData?['global_warning']?.toString() ?? 'The selected fish require more space than your current tank provides. Keeping them in insufficient space can lead to stress, stunted growth, and health issues.',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF93370D),
+                                    height: 1.4,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                if (_calculationData != null && _calculationData!['tank_details'] != null)
+                                  Builder(
+                                    builder: (context) {
+                                      try {
+                                        final tankVolStr = _calculationData!['tank_details']['volume'] as String?;
+                                        final tankVol = tankVolStr != null ? double.parse(tankVolStr.replaceAll(' L', '')) : null;
+                                        // When available, show quick math summary using current selections
+                                        if (tankVol != null && _fishSelections.isNotEmpty) {
+                                          return FutureBuilder<Map<String, dynamic>>(
+                                            future: _analyzeCombinationCapacity(tankVol, _fishSelections.keys.toList()),
+                                            builder: (context, snap) {
+                                              if (snap.hasData) {
+                                                final d = snap.data!;
+                                                final sumMin = (d['sum_min_one_each'] as double?) ?? 0.0;
+                                                final fullTankSpecies = d['full_tank_species'] as String?;
+                                                String line;
+                                                if (fullTankSpecies != null) {
+                                                  line = 'Reason: $fullTankSpecies requires ≥ ${tankVol.toStringAsFixed(1)}L by itself.';
+                                                } else {
+                                                  line = 'Math: One-each minimum = ${sumMin.toStringAsFixed(1)}L > Tank = ${tankVol.toStringAsFixed(1)}L';
+                                                }
+                                                return Text(
+                                                  line,
+                                                  style: const TextStyle(fontSize: 12, color: Color(0xFFB54708)),
+                                                );
+                                              }
+                                              return const SizedBox.shrink();
+                                            },
+                                          );
+                                        }
+                                      } catch (_) {}
+                                      return const SizedBox.shrink();
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Unsuitable fish details
+                    Text(
+                      'Unsuitable Fish:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...unsuitableFish.map((fish) => Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                FontAwesomeIcons.fish,
+                                size: 14,
+                                color: Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  fish['name'],
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey.shade800,
+                                  ),
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: () {
+                                  showDialog(
+                                    context: context,
+                                    builder: (context) => FishInfoDialog(fishName: fish['name']),
+                                  );
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE0F2F1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Icon(
+                                    Icons.remove_red_eye,
+                                    size: 14,
+                                    color: Color(0xFF00796B),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          _buildFishDetailRow(
+                            'Current Tank:',
+                            '${fish['current_volume'].toStringAsFixed(1)} L',
+                            const Color(0xFFD92D20),
+                          ),
+                          _buildFishDetailRow(
+                            'Minimum Required:',
+                            '${fish['minimum_required'].toStringAsFixed(1)} L',
+                            const Color(0xFFDC6803),
+                          ),
+                          _buildFishDetailRow(
+                            'Max Size:',
+                            '${fish['max_size_cm'].toStringAsFixed(1)} cm',
+                            Colors.grey.shade700,
+                          ),
+                          _buildFishDetailRow(
+                            'Temperament:',
+                            fish['temperament'],
+                            Colors.grey.shade700,
+                          ),
+                        ],
+                      ),
+                    )).toList(),
+                    const SizedBox(height: 16),
+                    // Recommendations
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF8FF),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFB2DDFF)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.lightbulb_outline,
+                                color: Color(0xFF0086C9),
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Recommendations:',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF026AA2),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          FutureBuilder<List<String>>(
+                            future: _getSmartRecommendations(),
+                            builder: (context, snapshot) {
+                              if (!snapshot.hasData) {
+                                return const SizedBox.shrink();
+                              }
+                              
+                              return Column(
+                                children: snapshot.data!.map((rec) => Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  margin: const EdgeInsets.only(top: 6),
+                                  width: 6,
+                                  height: 6,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFF0086C9),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    rec,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF026AA2),
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )).toList(),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Try Again Button
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _clearFishInputs();
+                            _volumeController.clear();
+                            _calculationData = null;
+                          });
+                        },
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('Try Again with Different Fish'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFD92D20),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Helper widget for fish detail rows
+  Widget _buildFishDetailRow(String label, String value, Color valueColor) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 22, bottom: 4),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: valueColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildConditionalCompatibilityWarning() {
     final conditionalPairs = _calculationData!['conditional_compatibility_warnings'] as List<Map<String, dynamic>>? ?? [];
     
@@ -3779,7 +4741,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                         child: SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
-                            onPressed: _calculateRequirements,
+                            onPressed: _isGroupIncompatible ? null : _calculateRequirements,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF00BCD4),
                               padding: const EdgeInsets.symmetric(vertical: 16),
@@ -3798,10 +4760,27 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                           ),
                         ),
                       )
+                    else if (_calculationData == null && _isGroupIncompatible)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.warning_amber_rounded, color: Color(0xFFD92D20), size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Selected fish are not compatible. Remove the incompatible combinations to continue.',
+                                style: const TextStyle(fontSize: 12, color: Color(0xFFD92D20)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
                     else if ((_calculationData!['compatibility_issues'] == null || 
                            (_calculationData!['compatibility_issues'] as List).isEmpty) && 
                            !_calculationData!.containsKey('tank_shape_issues') &&
-                           !_calculationData!.containsKey('incompatible_pairs'))
+                           !_calculationData!.containsKey('incompatible_pairs') &&
+                           !_hasUnsuitableFish())
                       Padding(
                         padding: const EdgeInsets.all(16.0),
                         child: Row(
@@ -3952,8 +4931,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   }
 
   Widget _buildCompatibilityResults(Map<String, dynamic> results) {
-    final incompatiblePairs = results['incompatible_pairs'] as List<Map<String, dynamic>>? ?? [];
-    final conditionalPairs = results['conditional_pairs'] as List<Map<String, dynamic>>? ?? [];
+    final incompatiblePairs = (results['incompatible_pairs'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final conditionalPairs = (results['conditional_pairs'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     final hasIncompatible = incompatiblePairs.isNotEmpty;
 
     return Container(

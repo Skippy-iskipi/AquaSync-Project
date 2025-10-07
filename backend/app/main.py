@@ -306,12 +306,12 @@ async def load_models_background():
             logger.info("Preparing YOLO weights and classifier checkpoint...")
             cache_dir = Path(os.getenv("MODEL_CACHE_DIR", "app/model_cache"))
             cache_dir.mkdir(parents=True, exist_ok=True)
-            yolo_cache_path = cache_dir / "yolov8n.pt"
+            yolo_cache_path = cache_dir / "yolov8m.pt"
 
             if not yolo_cache_path.exists() or yolo_cache_path.stat().st_size == 0:
-                logger.info("YOLO cache miss. Downloading yolov8n.pt to cache...")
+                logger.info("YOLO cache miss. Downloading yolov8m.pt to cache...")
                 yolo_bytes = await asyncio.get_event_loop().run_in_executor(
-                    executor, download_file_with_retry, storage, "yolov8n.pt"
+                    executor, download_file_with_retry, storage, "yolov8m.pt"
                 )
                 with open(yolo_cache_path, "wb") as f:
                     f.write(yolo_bytes)

@@ -120,7 +120,7 @@ class _HomePageState extends State<HomePage> {
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          child: _UserProfileSheet(user: user),
+          child: _UserProfileSheet(),
         ),
     );
   }
@@ -786,21 +786,34 @@ class _ModernRecentActivityCard extends StatelessWidget {
 
 // Add this new widget below HomePageState
 class _UserProfileSheet extends StatefulWidget {
-  final dynamic user;
-  const _UserProfileSheet({required this.user});
+  const _UserProfileSheet();
 
   @override
   State<_UserProfileSheet> createState() => _UserProfileSheetState();
 }
 
 class _UserProfileSheetState extends State<_UserProfileSheet> {
+  @override
+  void initState() {
+    super.initState();
+    // Listen for auth state changes and rebuild when signed in
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedIn && mounted) {
+        setState(() {});
+      }
+      if (data.event == AuthChangeEvent.signedOut && mounted) {
+        setState(() {});
+      }
+    });
+  }
   Future<Map<String, dynamic>> _fetchProfile() async {
-    if (widget.user == null) return {};
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return {};
     try {
       final data = await Supabase.instance.client
           .from('profiles')
           .select('first_name, last_name, email')
-          .eq('id', widget.user.id)
+          .eq('id', user.id)
           .maybeSingle();
       return data ?? {};
     } catch (e) {
@@ -842,6 +855,7 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
 
   Widget _buildProfileHeader() {
     final theme = Theme.of(context);
+    final user = Supabase.instance.client.auth.currentUser;
     return FutureBuilder<Map<String, dynamic>>(
       future: _fetchProfile(),
       builder: (context, snapshot) {
@@ -849,7 +863,7 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
           return const Center(child: CircularProgressIndicator());
         }
         final profile = snapshot.data ?? {};
-        final String email = (profile['email'] ?? widget.user?.email ?? '').toString();
+        final String email = (profile['email'] ?? user?.email ?? '').toString();
 
         return Column(
           children: [
@@ -880,9 +894,8 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
               ),
             ),
             const SizedBox(height: 12),
-            
             // User info
-            if (widget.user != null) ...[
+            if (user != null) ...[
               Text(
                 email.isNotEmpty ? email : 'No Email',
                 style: theme.textTheme.titleMedium?.copyWith(
@@ -906,16 +919,14 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                 ),
               ),
             ],
-            
             const SizedBox(height: 16),
-            
             // Auth button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () {
                   Navigator.of(context).pop();
-                  if (widget.user != null) {
+                  if (user != null) {
                     Navigator.of(context).pushAndRemoveUntil(
                       MaterialPageRoute(
                         builder: (context) => const AuthScreen(showBackButton: false),
@@ -942,11 +953,11 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                   ),
                 ),
                 icon: Icon(
-                  widget.user != null ? Icons.logout : Icons.login,
+                  user != null ? Icons.logout : Icons.login,
                   size: 20,
                 ),
                 label: Text(
-                  widget.user != null ? 'Sign Out' : 'Sign In / Sign Up',
+                  user != null ? 'Sign Out' : 'Sign In / Sign Up',
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -1062,19 +1073,33 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
     );
   }
 
-  void _navigateToAddTank(BuildContext context) {
-    // Check if user is authenticated before allowing tank creation
+  void _navigateToAddTank(BuildContext context) async {
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!authService.isAuthenticated) {
-      _showAuthRequiredDialog(context, 'Create Tank', 'You need to be logged in to create and save tanks.');
+      // Show auth required dialog
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (context) => AuthRequiredDialog(
+          title: 'Authentication Required',
+          message: 'Please sign in to create a new tank.',
+        ),
+      );
+      // Listen for authentication state change
+      if (result == true || authService.isAuthenticated) {
+        // User is now authenticated, navigate to AddEditTank
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AddEditTank()),
+          );
+        }
+      }
       return;
     }
-    
+    // Already authenticated, go directly
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const AddEditTank(),
-      ),
+      MaterialPageRoute(builder: (context) => const AddEditTank()),
     );
   }
 
