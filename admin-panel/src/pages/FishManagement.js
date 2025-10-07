@@ -161,8 +161,8 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
         const portion = parseFloat(row['portion_grams']);
         if (isNaN(portion)) {
           rowErrors.push(`Row ${rowNumber}: portion_grams must be a number (found: "${row['portion_grams']}")`);
-        } else if (portion <= 0) {
-          rowErrors.push(`Row ${rowNumber}: portion_grams must be greater than 0 (found: ${portion})`);
+        } else if (portion < 0.0001) {
+          rowErrors.push(`Row ${rowNumber}: portion_grams must be at least 0.0001g (found: ${portion}g)`);
         } else if (portion > 1000) {
           rowErrors.push(`Row ${rowNumber}: portion_grams cannot exceed 1000g (found: ${portion}g)`);
         }
@@ -578,8 +578,10 @@ function FishModal({ isOpen, onClose, fish = {}, mode, onSave }) {
       newErrors.portion_grams = 'Portion size is required';
     } else {
       const portion = parseFloat(formData.portion_grams);
-      if (isNaN(portion) || portion <= 0) {
-        newErrors.portion_grams = 'Portion must be greater than 0 grams';
+      if (isNaN(portion)) {
+        newErrors.portion_grams = 'Portion must be a valid number';
+      } else if (portion < 0.0001) {
+        newErrors.portion_grams = 'Portion must be at least 0.0001 grams';
       } else if (portion > 1000) {
         newErrors.portion_grams = 'Portion cannot exceed 1000 grams';
       }
