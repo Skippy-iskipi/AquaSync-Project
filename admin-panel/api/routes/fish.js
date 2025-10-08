@@ -167,16 +167,38 @@ router.post('/', [
       feeding_notes: req.body.feeding_notes,
       description: req.body.description,
       overfeeding_risks: req.body.overfeeding_risks,
-      temperature_range: req.body.temperature_range
     };
 
     console.log('Inserting fish data:', fishData);
     
     const { data, error } = await supabase
-      .from('fish_species')
-      .insert([fishData])
-      .select()
-      .single();
+          .from('fish_species')
+          .insert([fishDataWithoutTimestamp], {
+            columns: [
+              'common_name',
+              'scientific_name',
+              'max_size_(cm)',
+              'temperament',
+              'water_type',
+              'ph_range',
+              'social_behavior',
+              'tank_level',
+              'minimum_tank_size_(l)',
+              'diet',
+              'lifespan',
+              'care_level',
+              'preferred_food',
+              'feeding_frequency',
+              'bioload',
+              'portion_grams',
+              'feeding_notes',
+              'description',
+              'overfeeding_risks',
+              'temperature_range'
+            ]
+          })
+          .select('*')
+          .single();
 
     if (error) {
       console.error('Supabase insertion error:', error);
@@ -260,8 +282,7 @@ router.put('/:id', [
       .from('fish_species')
       .update(updateData)
       .eq('id', id)
-      .select()
-      .single();
+      .select();
 
     if (error) throw error;
 
@@ -517,42 +538,46 @@ router.post('/bulk', async (req, res) => {
 
     for (const fishData of validFish) {
       try {
-        const { data, error } = await supabase
+        // Prepare the fish data object with only the fields we want to insert
+        // Prepare the fish data object with only the fields we want to insert
+        const fishToInsert = {
+          common_name: fishData.common_name,
+          scientific_name: fishData.scientific_name,
+          'max_size_(cm)': parseFloat(fishData['max_size_(cm)'] || 0),
+          temperament: fishData.temperament,
+          water_type: fishData.water_type,
+          ph_range: fishData.ph_range,
+          social_behavior: fishData.social_behavior,
+          tank_level: fishData.tank_level,
+          'minimum_tank_size_(l)': parseFloat(fishData['minimum_tank_size_(l)'] || 0),
+          diet: fishData.diet,
+          lifespan: fishData.lifespan,
+          care_level: fishData.care_level,
+          preferred_food: fishData.preferred_food,
+          feeding_frequency: fishData.feeding_frequency,
+          bioload: fishData.bioload,
+          portion_grams: parseFloat(fishData.portion_grams || 0),
+          feeding_notes: fishData.feeding_notes,
+          description: fishData.description,
+          overfeeding_risks: fishData.overfeeding_risks,
+          temperature_range: fishData.temperature_range
+        };
+
+        // Perform the database insert
+        const { data: insertedData, error: insertError } = await supabase
           .from('fish_species')
-          .insert([{
-            common_name: fishData.common_name,
-            scientific_name: fishData.scientific_name,
-            'max_size_(cm)': parseFloat(fishData['max_size_(cm)']),
-            temperament: fishData.temperament,
-            water_type: fishData.water_type,
-            ph_range: fishData.ph_range,
-            social_behavior: fishData.social_behavior,
-            tank_level: fishData.tank_level,
-            'minimum_tank_size_(l)': parseInt(fishData['minimum_tank_size_(l)']),
-            diet: fishData.diet,
-            lifespan: fishData.lifespan,
-            care_level: fishData.care_level,
-            preferred_food: fishData.preferred_food,
-            feeding_frequency: fishData.feeding_frequency,
-            bioload: parseFloat(fishData.bioload),
-            portion_grams: parseFloat(fishData.portion_grams),
-            feeding_notes: fishData.feeding_notes,
-            description: fishData.description,
-            overfeeding_risks: fishData.overfeeding_risks,
-            temperature_range: fishData.temperature_range,
-            active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }])
+          .insert(fishToInsert)
           .select()
           .single();
 
-        if (error) throw error;
-        
+        if (insertError) {
+          throw insertError;
+        }
+
         results.push({ 
           common_name: fishData.common_name, 
           success: true, 
-          data 
+          data: insertedData 
         });
         successCount++;
       } catch (error) {

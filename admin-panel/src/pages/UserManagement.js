@@ -435,14 +435,6 @@ function UserManagement() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleEditUser(user)}
-                        className="text-indigo-600 hover:text-indigo-900"
-                        title="Edit User"
-                      >
-                        <PencilIcon className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => handleToggleUserStatus(user.id, user.active)}
                         className={`${
                           user.active === true || user.active === 'true'
@@ -495,15 +487,6 @@ function UserManagement() {
               >
                 <EyeIcon className="h-4 w-4 mr-1" />
                 View
-              </button>
-              <button
-                type="button"
-                onClick={() => handleEditUser(user)}
-                className="mobile-action-btn mobile-action-btn-secondary"
-                title="Edit User"
-              >
-                <PencilIcon className="h-4 w-4 mr-1" />
-                Edit
               </button>
               <button
                 type="button"

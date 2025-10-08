@@ -19,6 +19,7 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
   const [previewData, setPreviewData] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
   const [errors, setErrors] = useState([]);
+  const [hasDuplicates, setHasDuplicates] = useState(false);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -72,6 +73,7 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
     const errors = [];
     // Track duplicates within the upload file
     const seenInFile = new Set();
+    const duplicatesInFile = new Set();
     // Track existing species from current fish data
     const existingSpecies = existingFish.map(f => `${f.common_name.toLowerCase()}|${f.scientific_name.toLowerCase()}`);
     
@@ -102,7 +104,9 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
         
         // Check for duplicates within upload file
         if (seenInFile.has(speciesKey)) {
-          rowErrors.push(`Row ${rowNumber}: Duplicate entry found in upload file for "${row.common_name} (${row.scientific_name})"`);
+          const errorMsg = `Row ${rowNumber}: Duplicate entry found in upload file for "${row.common_name} (${row.scientific_name})"`;
+          rowErrors.push(errorMsg);
+          duplicatesInFile.add(speciesKey);
         }
         
         // Check for duplicates in existing database
@@ -223,6 +227,9 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
       }
     });
 
+    // Update the hasDuplicates state
+    setHasDuplicates(duplicatesInFile.size > 0);
+    
     return { valid, errors };
   };
 
@@ -331,11 +338,11 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
             </div>
 
             {/* Errors */}
-            {errors.length > 0 && (
+            {(errors.length > 0 || hasDuplicates) && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-sm font-medium text-red-900">
-                    Validation Errors ({errors.length} found)
+                    Validation Errors ({errors.length + (hasDuplicates ? 1 : 0)} found)
                   </h4>
                   <span className="text-xs text-red-600 bg-red-100 px-2 py-1 rounded">
                     Fix these errors to proceed
@@ -349,6 +356,11 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
                   <strong>Tip:</strong> Download the template to see the correct format.
                 </div>
                 
+                {hasDuplicates && (
+                  <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded text-amber-800 text-sm">
+                    <strong>Duplicate Entries Found:</strong> Please remove all duplicate entries before uploading. Each fish species should appear only once in your file.
+                  </div>
+                )}
                 <ul className="text-sm text-red-700 space-y-1 max-h-32 overflow-y-auto">
                   {errors.map((error, index) => (
                     <li key={index} className="flex items-start">
@@ -414,8 +426,9 @@ function BulkUploadModal({ isOpen = false, onClose = () => {}, onUpload = () => 
               </button>
               <button
                 onClick={handleUpload}
-                disabled={!file || previewData.length === 0 || uploading}
+                disabled={!file || previewData.length === 0 || uploading || hasDuplicates}
                 className="px-4 py-2 text-sm font-medium text-white bg-aqua-600 rounded-md shadow-sm hover:bg-aqua-700 focus:outline-none focus:ring-2 focus:ring-aqua-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={hasDuplicates ? 'Please resolve all duplicate entries before uploading' : ''}
               >
                 {uploading ? 'Uploading...' : `Upload ${previewData.length} Fish Species`}
               </button>
@@ -1146,27 +1159,62 @@ function FishManagement() {
 
   const handleBulkUpload = async (fishDataArray) => {
     try {
-      const token = localStorage.getItem('adminToken');
+      if (!fishDataArray || fishDataArray.length === 0) {
+        toast.error('No valid fish data to upload');
+        return;
+      }
+
+      console.log('Preparing to upload fish data:', fishDataArray);
+      
+      // Remove authentication token since the API endpoint doesn't require it (temporary)
       const response = await fetch('/api/fish/bulk', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ fish: fishDataArray }),
       });
 
+      const responseData = await response.json().catch(() => ({}));
+      
+      console.log('Upload response:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: responseData
+      });
+
       if (response.ok) {
-        const result = await response.json();
-        toast.success(`Successfully uploaded ${result.successCount} fish species. ${result.errorCount > 0 ? `${result.errorCount} failed.` : ''}`);
+        const result = responseData;
+        const successMessage = `Successfully uploaded ${result.successCount || 0} fish species.`;
+        const errorMessage = result.errorCount > 0 ? ` ${result.errorCount} failed.` : '';
+        
+        if (result.errorCount > 0) {
+          toast.error(successMessage + errorMessage);
+          console.error('Upload errors:', result.results.filter(r => !r.success));
+        } else {
+          toast.success(successMessage);
+        }
         fetchFish();
       } else {
-        const errorData = await response.json();
-        toast.error(`Bulk upload failed: ${errorData.message || 'Unknown error'}`);
+        const errorMessage = responseData.message || response.statusText || 'Unknown error';
+        console.error('Bulk upload failed:', {
+          status: response.status,
+          error: errorMessage,
+          errors: responseData.errors,
+          data: responseData
+        });
+        
+        // Show detailed validation errors if available
+        if (responseData.errors && Array.isArray(responseData.errors)) {
+          const errorSummary = responseData.errors.slice(0, 5).join('\n');
+          toast.error(`Validation failed:\n${errorSummary}${responseData.errors.length > 5 ? '\n...' : ''}`);
+        } else {
+          toast.error(`Bulk upload failed: ${errorMessage}`);
+        }
       }
     } catch (error) {
-      toast.error('Error during bulk upload');
-      // Error occurred during operation
+      console.error('Error during bulk upload:', error);
+      toast.error(`Error during bulk upload: ${error.message || 'Please check console for details'}`);
     }
   };
 
@@ -1226,13 +1274,6 @@ function FishManagement() {
 
     // Filter by diet
     if (filters.diet && f.diet !== filters.diet) return false;
-
-    // Filter by status
-    if (filters.status) {
-      const isActive = f.active === true || f.active === 'true';
-      if (filters.status === 'active' && !isActive) return false;
-      if (filters.status === 'inactive' && isActive) return false;
-    }
 
     // Filter by size range
     if (filters.size_range) {
@@ -1419,21 +1460,7 @@ function FishManagement() {
                 </select>
               </div>
 
-              {/* Status Filter */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                <select
-                  value={filters.status}
-                  onChange={(e) => handleFilterChange('status', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-aqua-500 focus:border-aqua-500"
-                >
-                  <option value="">All Status</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </div>
-
-              {/* Size Range Filter */}
+{/* Size Range Filter */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Fish Size</label>
                 <select
@@ -1477,7 +1504,6 @@ function FishManagement() {
                 <th className="table-mobile-header">Scientific Name</th>
                 <th className="table-mobile-header">Temperament</th>
                 <th className="table-mobile-header">Water Type</th>
-                <th className="table-mobile-header">Status</th>
                 <th className="table-mobile-header">Actions</th>
               </tr>
             </thead>
@@ -1504,15 +1530,6 @@ function FishManagement() {
                         : 'status-badge-teal'
                     }`}>
                       {fishItem.water_type}
-                    </span>
-                  </td>
-                  <td className="table-mobile-cell">
-                    <span className={`status-badge ${
-                      fishItem.active 
-                        ? 'status-badge-green'
-                        : 'status-badge-red'
-                    }`}>
-                      {fishItem.active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
                   <td className="table-mobile-cell">
@@ -1549,13 +1566,6 @@ function FishManagement() {
                 <h3 className="mobile-card-title">{fishItem.common_name}</h3>
                 <p className="mobile-card-subtitle italic">{fishItem.scientific_name}</p>
               </div>
-              <span className={`status-badge ${
-                fishItem.active 
-                  ? 'status-badge-green'
-                  : 'status-badge-red'
-              }`}>
-                {fishItem.active ? 'Active' : 'Inactive'}
-              </span>
             </div>
             
             <div className="mobile-card-content">
