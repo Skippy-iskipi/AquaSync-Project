@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
   PlusIcon, 
-  PencilIcon, 
   MagnifyingGlassIcon,
   EyeIcon,
   XCircleIcon,
@@ -194,11 +193,6 @@ function UserManagement() {
     setShowModal(true);
   };
 
-  const handleEditUser = (userData) => {
-    setSelectedUser(userData);
-    setModalMode('edit');
-    setShowModal(true);
-  };
 
 
   const handleSaveUser = async (userData) => {
