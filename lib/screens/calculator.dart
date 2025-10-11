@@ -3,7 +3,6 @@ import '../screens/water_calculator.dart';
 import '../screens/fish_calculator_volume.dart';
 import '../screens/fish_calculator_dimensions.dart';
 import '../screens/diet_calculator.dart';
-import '../widgets/beginner_guide_dialog.dart';
 
 class Calculator extends StatefulWidget {
   const Calculator({super.key});
@@ -120,7 +119,13 @@ class _CalculatorState extends State<Calculator> with SingleTickerProviderStateM
                       color: const Color(0xFF00BFB3),
                       onTap: () {
                         setState(() {
-                          _currentFishCalculator = const FishCalculatorVolume();
+                          _currentFishCalculator = FishCalculatorVolume(
+                            onBack: () {
+                              setState(() {
+                                _currentFishCalculator = null;
+                              });
+                            },
+                          );
                         });
                       },
                     ),
@@ -142,7 +147,13 @@ class _CalculatorState extends State<Calculator> with SingleTickerProviderStateM
                       color: const Color(0xFF00BFB3),
                       onTap: () {
                         setState(() {
-                          _currentFishCalculator = const FishCalculatorDimensions();
+                          _currentFishCalculator = FishCalculatorDimensions(
+                            onBack: () {
+                              setState(() {
+                                _currentFishCalculator = null;
+                              });
+                            },
+                          );
                         });
                       },
                     ),
@@ -229,124 +240,8 @@ class _CalculatorState extends State<Calculator> with SingleTickerProviderStateM
       return _buildFishCalculatorOptions();
     }
 
-    return Column(
-      children: [
-        // Modern back button row
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border(
-              bottom: BorderSide(
-                color: const Color(0xFFE0E0E0),
-                width: 1,
-              ),
-            ),
-          ),
-          child: Row(
-            children: [
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () {
-                    setState(() {
-                      _currentFishCalculator = null;
-                    });
-                  },
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF00BFB3).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: const Color(0xFF00BFB3).withOpacity(0.2),
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        Icon(
-                          Icons.arrow_back_ios,
-                          color: Color(0xFF00BFB3),
-                          size: 16,
-                        ),
-                        SizedBox(width: 4),
-                        Text(
-                          'Back to Methods',
-                          style: TextStyle(
-                            color: Color(0xFF00BFB3),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const Spacer(),
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () {
-                    // Determine which calculator is currently active
-                    String calculatorType = 'dimensions'; // default
-                    if (_currentFishCalculator != null) {
-                      if (_currentFishCalculator is FishCalculatorVolume) {
-                        calculatorType = 'volume';
-                      } else if (_currentFishCalculator is FishCalculatorDimensions) {
-                        calculatorType = 'dimensions';
-                      }
-                    }
-                    
-                    showDialog(
-                      context: context,
-                      builder: (context) => BeginnerGuideDialog(calculatorType: calculatorType),
-                    );
-                  },
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF00BFB3).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: const Color(0xFF00BFB3).withOpacity(0.2),
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        Icon(
-                          Icons.help_outline,
-                          color: Color(0xFF00BFB3),
-                          size: 16,
-                        ),
-                        SizedBox(width: 4),
-                        Text(
-                          'Help',
-                          style: TextStyle(
-                            color: Color(0xFF00BFB3),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: _currentFishCalculator!,
-        ),
-      ],
-    );
+    // Just show the calculator directly - back buttons are now integrated into each calculator
+    return _currentFishCalculator!;
   }
 
   @override

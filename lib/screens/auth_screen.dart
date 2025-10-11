@@ -23,10 +23,12 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   final _authService = AuthService();
   late bool _isLogin;
   bool _isLoading = false;
   String? _errorMessage;
+  bool _isPasswordVisible = false;
   
   late AnimationController _slideController;
   late AnimationController _fadeController;
@@ -74,6 +76,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     _slideController.dispose();
     _fadeController.dispose();
     super.dispose();
@@ -342,12 +345,23 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                               // Password field
                               TextFormField(
                                 controller: _passwordController,
-                                obscureText: true,
+                                obscureText: !_isPasswordVisible,
                                 decoration: InputDecoration(
                                   labelText: 'Password',
                                   prefixIcon: Icon(
                                     Icons.lock_outline,
                                     color: isDark ? Colors.white.withOpacity(0.7) : null,
+                                  ),
+                                  suffixIcon: IconButton(
+                                    icon: Icon(
+                                      _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                                      color: isDark ? Colors.white.withOpacity(0.7) : Colors.grey,
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _isPasswordVisible = !_isPasswordVisible;
+                                      });
+                                    },
                                   ),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
@@ -385,6 +399,63 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                 },
                               ),
                               
+                              if (!_isLogin)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 16.0),
+                                  child: TextFormField(
+                                    controller: _confirmPasswordController,
+                                    obscureText: !_isPasswordVisible,
+                                    decoration: InputDecoration(
+                                      labelText: 'Confirm Password',
+                                      prefixIcon: Icon(
+                                        Icons.lock_outline,
+                                        color: isDark ? Colors.white.withOpacity(0.7) : null,
+                                      ),
+                                      suffixIcon: IconButton(
+                                        icon: Icon(
+                                          _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
+                                          color: isDark ? Colors.white.withOpacity(0.7) : Colors.grey,
+                                        ),
+                                        onPressed: () {
+                                          setState(() {
+                                            _isPasswordVisible = !_isPasswordVisible;
+                                          });
+                                        },
+                                      ),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: isDark
+                                              ? Colors.white.withOpacity(0.3)
+                                              : Colors.grey.withOpacity(0.5),
+                                        ),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: const BorderSide(
+                                          color: Color(0xFF00BFB3),
+                                          width: 2,
+                                        ),
+                                      ),
+                                      labelStyle: TextStyle(
+                                        color: isDark ? Colors.white.withOpacity(0.7) : null,
+                                      ),
+                                    ),
+                                    style: TextStyle(
+                                      color: isDark ? Colors.white : null,
+                                    ),
+                                    validator: (value) {
+                                      if (value != _passwordController.text) {
+                                        return 'Passwords do not match';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+
                               // Forgot Password link (only show in login mode)
                               if (_isLogin)
                                 Column(

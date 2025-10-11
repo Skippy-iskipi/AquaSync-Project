@@ -19,6 +19,9 @@ import '../config/api_config.dart';
 
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../widgets/calculation_result_widget.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
+import '../services/favorites_service.dart';
 
 
 
@@ -35,7 +38,7 @@ class LogBook extends StatefulWidget {
   _LogBookState createState() => _LogBookState();
 }
 
-class _LogBookState extends State<LogBook> {
+class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
   String _selectedSection = 'Captured';
   bool _showArchived = false; // Track if showing archived items
   
@@ -45,6 +48,10 @@ class _LogBookState extends State<LogBook> {
     'Compatibility',
   ];
 
+  final FavoritesService _favoritesService = FavoritesService();
+  Set<String> _favoriteFish = {};
+  late StreamSubscription _favoritesSubscription;
+  TabController? _tabController;
 
   @override
   void initState() {
@@ -53,11 +60,30 @@ class _LogBookState extends State<LogBook> {
     if (widget.initialTabIndex < _sections.length) {
       _selectedSection = _sections[widget.initialTabIndex];
     }
+    _tabController = TabController(length: 2, vsync: this);
+    _loadInitialFavorites();
+    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+      if (mounted) {
+        setState(() {
+          _favoriteFish = favorites;
+        });
+      }
+    });
   }
 
+  Future<void> _loadInitialFavorites() async {
+    await _favoritesService.loadFavorites();
+    if (mounted) {
+      setState(() {
+        _favoriteFish = _favoritesService.getFavorites();
+      });
+    }
+  }
 
   @override
   void dispose() {
+    _tabController?.dispose();
+    _favoritesSubscription.cancel();
     super.dispose();
   }
 
@@ -218,17 +244,16 @@ class _LogBookState extends State<LogBook> {
       'description': prediction.description,
     };
 
+    // Navigate to the fish details screen
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (BuildContext context) {
-          return FishDetailsScreen(
-            commonName: prediction.commonName,
-            scientificName: prediction.scientificName,
-            capturedImagePath: prediction.imagePath,
-            fishData: fishData,
-            useCapturedImage: true,
-          );
-        },
+        builder: (context) => FishDetailsScreen(
+          commonName: prediction.commonName,
+          scientificName: prediction.scientificName,
+          capturedImagePath: prediction.imagePath,
+          fishData: fishData,
+          useCapturedImage: true,
+        ),
       ),
     );
   }
@@ -930,25 +955,15 @@ class _LogBookState extends State<LogBook> {
                             topRight: Radius.circular(6),
                           ),
                             child: prediction.imagePath.isNotEmpty
-                                ? kIsWeb
-                                    ? Image.network(
-                                        prediction.imagePath,
-                                        fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                        errorBuilder: (context, error, stackTrace) {
-                                        return _buildSimpleImagePlaceholder();
-                                        },
-                                      )
-                                    : Image.file(
-                                        File(prediction.imagePath),
-                                        fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                        errorBuilder: (context, error, stackTrace) {
-                                        return _buildSimpleImagePlaceholder();
-                                      },
-                                    )
+                                ? Image.network(
+                                    prediction.imagePath,
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return _buildSimpleImagePlaceholder();
+                                    },
+                                  )
                               : _buildSimpleImagePlaceholder(),
                         ),
                         // Delete button overlay
@@ -1016,7 +1031,7 @@ class _LogBookState extends State<LogBook> {
                                   fontWeight: FontWeight.bold,
                             color: Colors.black87,
                                 ),
-                          maxLines: 2,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                               ),
                         const SizedBox(height: 2),
@@ -1028,7 +1043,20 @@ class _LogBookState extends State<LogBook> {
                                   fontStyle: FontStyle.italic,
                                   color: Colors.grey[600],
                                 ),
-                          maxLines: 2,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                              ),
+                        const SizedBox(height: 4),
+                        // Created date and time
+                              Text(
+                                prediction.createdAt != null 
+                                    ? DateFormat('MMM d, y · h:mm a').format(prediction.createdAt!)
+                                    : 'Unknown date',
+                                style: TextStyle(
+                            fontSize: 10,
+                                  color: Colors.grey[500],
+                                ),
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                               ),
                             ],
@@ -1076,25 +1104,15 @@ class _LogBookState extends State<LogBook> {
                             topRight: Radius.circular(6),
                           ),
                           child: prediction.imagePath.isNotEmpty
-                              ? kIsWeb
-                                  ? Image.network(
-                                      prediction.imagePath,
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                      errorBuilder: (context, error, stackTrace) {
-                                        return _buildSimpleImagePlaceholder();
-                                      },
-                                    )
-                                  : Image.file(
-                                      File(prediction.imagePath),
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                      errorBuilder: (context, error, stackTrace) {
-                                        return _buildSimpleImagePlaceholder();
-                                      },
-                                    )
+                              ? Image.network(
+                                  prediction.imagePath,
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return _buildSimpleImagePlaceholder();
+                                  },
+                                )
                             : _buildSimpleImagePlaceholder(),
                         ),
                         // Restore button overlay
@@ -1193,7 +1211,7 @@ class _LogBookState extends State<LogBook> {
                             fontWeight: FontWeight.bold,
                             color: Colors.black87,
                           ),
-                          maxLines: 2,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 2),
@@ -1205,7 +1223,20 @@ class _LogBookState extends State<LogBook> {
                             fontStyle: FontStyle.italic,
                             color: Colors.grey[600],
                           ),
-                          maxLines: 2,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        // Created date and time
+                        Text(
+                          prediction.createdAt != null 
+                              ? DateFormat('MMM d, y · h:mm a').format(prediction.createdAt!)
+                              : 'Unknown date',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey[500],
+                          ),
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
@@ -1630,6 +1661,8 @@ class _LogBookState extends State<LogBook> {
   }
 
   Future<bool> _showRestoreConfirmationDialogFishPrediction(FishPrediction prediction) async {
+    String content = 'Are you sure you want to restore this fish to your collection?';
+    IconData icon = FontAwesomeIcons.fish;
     return await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -1674,7 +1707,7 @@ class _LogBookState extends State<LogBook> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'This will restore the fish to your active collection',
+                      content,
                       style: TextStyle(
                         fontSize: 14,
                         color: Colors.grey[600],
@@ -1692,9 +1725,9 @@ class _LogBookState extends State<LogBook> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Are you sure you want to restore this fish to your collection?',
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 16,
                     color: Color(0xFF374151),
                     height: 1.5,
@@ -1720,9 +1753,9 @@ class _LogBookState extends State<LogBook> {
                           borderRadius: BorderRadius.circular(6),
                           color: const Color(0xFF00BFB3).withOpacity(0.1),
                         ),
-                        child: const Icon(
-                          FontAwesomeIcons.fish,
-                          color: Color(0xFF00BFB3),
+                        child: Icon(
+                          icon,
+                          color: const Color(0xFF00BFB3),
                           size: 20,
                         ),
                       ),
@@ -2089,7 +2122,7 @@ class _LogBookState extends State<LogBook> {
                                 ),
                               ],
                               Text(
-                                DateFormat('MMM d, y').format(
+                                DateFormat('MMM d, y · h:mm a').format(
                                   calculation is WaterCalculation
                                       ? calculation.dateCalculated
                                       : calculation is FishCalculation
@@ -2718,7 +2751,7 @@ class _LogBookState extends State<LogBook> {
                   ? calculation.dateCalculated
                   : (calculation as DietCalculation).dateCalculated;
                   
-      return DateFormat('MMM d, y').format(date ?? DateTime.now());
+      return DateFormat('MMM d, y · h:mm a').format(date ?? DateTime.now());
     } catch (e) {
       print('Error formatting date: $e');
       return 'Date unknown';
@@ -2922,6 +2955,14 @@ class _LogBookState extends State<LogBook> {
                             ),
                           ),
                           const SizedBox(height: 4),
+                          Text(
+                            DateFormat('MMM d, y · h:mm a').format(result.dateChecked),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                          const SizedBox(height: 6),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
@@ -2936,6 +2977,7 @@ class _LogBookState extends State<LogBook> {
                                    color: result.compatibilityLevel == 'compatible' ? Colors.green[700] : 
                                           result.compatibilityLevel == 'conditional' ? Colors.orange[700] : Colors.red[700],
                                 fontWeight: FontWeight.w500,
+                                fontSize: 12,
                               ),
                             ),
                           ),
@@ -3057,7 +3099,7 @@ class _LogBookState extends State<LogBook> {
                         children: [
                           Expanded(
                             child: Text(
-                              'Checked: ${DateFormat('MMM d, y').format(result.dateChecked)}',
+                              'Checked: ${DateFormat('MMM d, y · h:mm a').format(result.dateChecked)}',
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey,

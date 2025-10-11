@@ -21,6 +21,7 @@ class FishSelectionWidget extends StatefulWidget {
   final String? nextButtonText;
   final bool hideButtonsWhenKeyboardVisible;
   final VoidCallback? onCheckCompatibility; // Add compatibility callback
+  final double maxDraggableHeight; // Maximum height as percentage of screen height
 
   const FishSelectionWidget({
     super.key,
@@ -37,6 +38,7 @@ class FishSelectionWidget extends StatefulWidget {
     this.nextButtonText,
     this.hideButtonsWhenKeyboardVisible = false,
     this.onCheckCompatibility,
+    this.maxDraggableHeight = 0.45, // Default to 45% of screen height
   });
 
   @override
@@ -946,7 +948,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
                     _containerHeight = 0.08; // Collapse to header only
                     _isExpanded = false;
                   } else {
-                    _containerHeight = 0.2; // Expand to show content (reduced from 0.25)
+                    _containerHeight = widget.maxDraggableHeight * 0.5; // Expand to half of max height
                     _isExpanded = true;
                   }
                 });
@@ -963,7 +965,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
                   final newHeight = _containerHeight - (deltaY / screenHeight);
                   
                   setState(() {
-                    _containerHeight = newHeight.clamp(0.08, 0.50); // Min 8% (header only), Max 95% of screen height
+                    _containerHeight = newHeight.clamp(0.05, widget.maxDraggableHeight); // Min 5% (header only), Max as specified
                     _isExpanded = _containerHeight > 0.12; // Consider expanded if more than header
                   });
                 }

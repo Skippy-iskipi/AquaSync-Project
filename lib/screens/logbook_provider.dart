@@ -10,6 +10,7 @@ import '../models/tank.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/api_config.dart';
+import 'dart:io';
 
 class LogBookProvider with ChangeNotifier {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -271,12 +272,29 @@ class LogBookProvider with ChangeNotifier {
     if (user == null) return;
 
     try {
+      String imageUrl = '';
+      if (prediction.imagePath != null && prediction.imagePath!.isNotEmpty) {
+        final imageFile = File(prediction.imagePath!);
+        if (await imageFile.exists()) {
+          final imageExt = prediction.imagePath!.split('.').last;
+          final imagePathInStorage = '${user.id}/${DateTime.now().millisecondsSinceEpoch}.$imageExt';
+          
+          await _supabase.storage.from('fish_images').upload(
+                imagePathInStorage,
+                imageFile,
+                fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
+              );
+          
+          imageUrl = _supabase.storage.from('fish_images').getPublicUrl(imagePathInStorage);
+        }
+      }
+
       final response = await _supabase.from('fish_predictions').insert({
         'user_id': user.id,
         'common_name': prediction.commonName,
         'scientific_name': prediction.scientificName,
         'probability': prediction.probability,
-        'image_path': prediction.imagePath,
+        'image_path': imageUrl, // Save the public URL
         'description': prediction.description,
         'water_type': prediction.waterType,
         'max_size': prediction.maxSize,

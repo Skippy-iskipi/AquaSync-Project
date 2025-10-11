@@ -65,6 +65,9 @@ class _WaterCalculatorState extends State<WaterCalculator> {
   Map<String, bool> _showDropdown = {};
   Map<String, String> _searchQueries = {};
 
+  // Suggestions state
+  bool _isSuggestionsExpanded = false;
+
   // Import the ExpandableReason widget
 
   @override
@@ -87,6 +90,267 @@ class _WaterCalculatorState extends State<WaterCalculator> {
     setState(() {
       _fishCards.add(FishCard(id: _fishCards.length));
     });
+  }
+
+  // Get unique fish names from saved predictions for suggestions
+  List<String> _getSuggestedFishNames() {
+    try {
+      final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+      final savedPredictions = logBookProvider.savedPredictions;
+      
+      // Get unique fish names from saved predictions
+      final uniqueFishNames = <String>{};
+      for (final prediction in savedPredictions) {
+        if (prediction.commonName.isNotEmpty) {
+          uniqueFishNames.add(prediction.commonName);
+        }
+      }
+      
+      return uniqueFishNames.toList()..sort();
+    } catch (e) {
+      print('Error getting suggested fish names: $e');
+      return [];
+    }
+  }
+
+  // Build suggestion section widget
+  Widget _buildSuggestionSection() {
+    return Consumer<LogBookProvider>(
+      builder: (context, logBookProvider, child) {
+        final suggestedFish = _getSuggestedFishNames();
+        
+        // Always show the row with help button, even if no suggestions
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Suggestion card (if there are suggestions)
+                if (suggestedFish.isNotEmpty)
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.grey[200]!),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.02),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          // Collapsible header
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _isSuggestionsExpanded = !_isSuggestionsExpanded;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF00BCD4).withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Icon(
+                                      Icons.history,
+                                      color: Color(0xFF00BCD4),
+                                      size: 16,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text(
+                                          'Saved Fish Suggestions',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: Color(0xFF006064),
+                                          ),
+                                        ),
+                                        Text(
+                                          '${suggestedFish.length} fish from your collection',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  AnimatedRotation(
+                                    turns: _isSuggestionsExpanded ? 0.5 : 0.0,
+                                    duration: const Duration(milliseconds: 200),
+                                    child: Icon(
+                                      Icons.keyboard_arrow_down,
+                                      color: Colors.grey[600],
+                                      size: 20,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+              
+              // Collapsible content
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                          height: _isSuggestionsExpanded ? null : 0,
+                          child: _isSuggestionsExpanded
+                              ? Container(
+                                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      // Fish chips - aligned to left
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Wrap(
+                                          alignment: WrapAlignment.start,
+                                          spacing: 10,
+                                          runSpacing: 10,
+                                          children: suggestedFish.take(8).map((fishName) {
+                                            return GestureDetector(
+                                              onTap: () {
+                                                // Add fish to first empty card or create new card
+                                                bool added = false;
+                                                for (var card in _fishCards) {
+                                                  if (card.controller.text.isEmpty) {
+                                                    setState(() {
+                                                      card.controller.text = fishName;
+                                                      _addFish(fishName, card.id);
+                                                    });
+                                                    added = true;
+                                                    break;
+                                                  }
+                                                }
+                                                
+                                                // If no empty card, add new one
+                                                if (!added) {
+                                                  _addNewTextField();
+                                                  final newCard = _fishCards.last;
+                                                  setState(() {
+                                                    newCard.controller.text = fishName;
+                                                    _addFish(fishName, newCard.id);
+                                                  });
+                                                }
+                                              },
+                                              child: Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey[50],
+                                                  borderRadius: BorderRadius.circular(6),
+                                                  border: Border.all(
+                                                    color: Colors.grey[300]!,
+                                                    width: 1.5,
+                                                  ),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    Text(
+                                                      fishName,
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight: FontWeight.w500,
+                                                        color: Colors.black87,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    const Icon(
+                                                      Icons.add_circle_outline,
+                                                      size: 14,
+                                                      color: Color(0xFF00BCD4),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            );
+                                          }).toList(),
+                                        ),
+                                      ),
+                                      
+                                      // Show more indicator if needed
+                                      if (suggestedFish.length > 8) ...[
+                                        const SizedBox(height: 12),
+                                        Center(
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[100],
+                                              borderRadius: BorderRadius.circular(15),
+                                            ),
+                                            child: Text(
+                                              '+${suggestedFish.length - 8} more available',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey[600],
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                )
+                              : null,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              
+              // Help button
+              const SizedBox(width: 12),
+              GestureDetector(
+                onTap: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => const BeginnerGuideDialog(calculatorType: 'water'),
+                  );
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00BFB3).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: const Color(0xFF00BFB3).withOpacity(0.2),
+                      width: 1,
+                    ),
+                  ),
+                  child: const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Icon(
+                        Icons.help_outline,
+                        color: Color(0xFF00BFB3),
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
 Widget buildRecommendationsList({
@@ -4392,65 +4656,6 @@ Widget buildRecommendationsList({
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        title: Row(
-          children: [
-            const Text(
-              'Water Calculator',
-              style: TextStyle(
-                color: Color(0xFF00BFB3),
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
-            ),
-            const Spacer(),
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () {
-                  showDialog(
-                    context: context,
-                    builder: (context) => const BeginnerGuideDialog(calculatorType: 'water'),
-                  );
-                },
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF00BFB3).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: const Color(0xFF00BFB3).withOpacity(0.2),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(
-                        Icons.help_outline,
-                        color: Color(0xFF00BFB3),
-                        size: 16,
-                      ),
-                      SizedBox(width: 4),
-                      Text(
-                        'Help',
-                        style: TextStyle(
-                          color: Color(0xFF00BFB3),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
       body: Container(
         color: Colors.white,
         child: _buildContent(),
@@ -4475,6 +4680,7 @@ Widget buildRecommendationsList({
                     child: Column(
                       children: [
                         if (_calculationResult == null) ...[
+                          _buildSuggestionSection(),
                           _buildTankShapeSelector(),
                           ..._fishCards.map((card) => _buildFishInput(card)),
                           // Tank shape compatibility warnings

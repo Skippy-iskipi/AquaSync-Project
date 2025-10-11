@@ -222,9 +222,9 @@ def check_physical_compatibility(fish1: EnhancedFishData, fish2: EnhancedFishDat
         
         # Very large size difference
         if size_ratio >= 5.0:
-            incompatible.append(f"One fish is {size_ratio:.1f} times larger than the other - the larger fish will likely eat or seriously injure the smaller one")
+            incompatible.append(f"One fish is significantly larger than the other - the larger fish will likely eat or seriously injure the smaller one")
         elif size_ratio >= 3.0:
-            conditions.append(f"There's a significant size difference ({size_ratio:.1f}:1) between these fish")
+            conditions.append(f"There's a significant size difference between these fish")
             conditions.append("Watch for any bullying behavior and provide plenty of hiding spots for the smaller fish")
     
     # Tank size requirements

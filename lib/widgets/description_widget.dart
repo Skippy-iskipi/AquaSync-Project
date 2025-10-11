@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 class DescriptionWidget extends StatefulWidget {
   final String description;
-  final int maxLines;
+  final int? maxLines;
+  final int? maxWords;
 
   const DescriptionWidget({
     Key? key,
     required this.description,
-    this.maxLines = 3,
+    this.maxLines,
+    this.maxWords,
   }) : super(key: key);
 
   @override
@@ -19,6 +21,16 @@ class _DescriptionWidgetState extends State<DescriptionWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final words = widget.description.split(' ');
+    final isLongText = (widget.maxWords != null && words.length > widget.maxWords!) ||
+        (widget.maxLines != null && calculateLines(widget.description) > widget.maxLines!);
+
+    final displayedText = _expanded || !isLongText
+        ? widget.description
+        : widget.maxWords != null
+            ? '${words.take(widget.maxWords!).join(' ')}...'
+            : widget.description;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -33,25 +45,29 @@ class _DescriptionWidgetState extends State<DescriptionWidget> {
         const SizedBox(height: 10),
         GestureDetector(
           onTap: () {
-            setState(() {
-              _expanded = !_expanded;
-            });
+            if (isLongText) {
+              setState(() {
+                _expanded = !_expanded;
+              });
+            }
           },
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                widget.description,
+                displayedText,
                 style: const TextStyle(
                   fontSize: 16,
                   color: Colors.black87,
                   height: 1.4,
                 ),
-                maxLines: _expanded ? null : widget.maxLines,
-                overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+                maxLines: _expanded || widget.maxWords != null ? null : widget.maxLines,
+                overflow: _expanded || widget.maxWords != null
+                    ? TextOverflow.visible
+                    : TextOverflow.ellipsis,
                 textAlign: TextAlign.justify,
               ),
-              if (widget.description.length > 150 || calculateLines(widget.description) > widget.maxLines) 
+              if (isLongText)
                 Padding(
                   padding: const EdgeInsets.only(top: 6.0),
                   child: Text(

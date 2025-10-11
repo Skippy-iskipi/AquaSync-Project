@@ -365,6 +365,12 @@ async def populate_sample_data():
         print(f"❌ Error uploading to database: {e}")
 
 if __name__ == "__main__":
+    import sys
+    import io
+    # Set UTF-8 encoding for Windows console
+    if sys.platform == 'win32':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
     print("🔧 Compatibility Data Population Script")
     print("=" * 50)
     asyncio.run(populate_sample_data())

@@ -4,6 +4,8 @@ import 'dart:io';
 import '../config/api_config.dart';
 import '../widgets/fish_images_grid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/favorites_service.dart';
+import 'dart:async';
 
 class FishDetailsScreen extends StatefulWidget {
   final String commonName;
@@ -29,11 +31,37 @@ class _FishDetailsScreenState extends State<FishDetailsScreen> {
   Map<String, dynamic>? _fishDetails;
   bool _isLoading = true;
   String? _error;
+  final FavoritesService _favoritesService = FavoritesService();
+  bool _isFavorite = false;
+  late StreamSubscription _favoritesSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadFishDetails();
+    _loadInitialFavorites();
+    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+      if (mounted) {
+        setState(() {
+          _isFavorite = favorites.contains(widget.commonName);
+        });
+      }
+    });
+  }
+
+  Future<void> _loadInitialFavorites() async {
+    await _favoritesService.loadFavorites();
+    if (mounted) {
+      setState(() {
+        _isFavorite = _favoritesService.getFavorites().contains(widget.commonName);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _favoritesSubscription.cancel();
+    super.dispose();
   }
 
   Future<void> _loadFishDetails() async {
@@ -390,6 +418,18 @@ class _FishDetailsScreenState extends State<FishDetailsScreen> {
             ),
           ),
           centerTitle: true,
+          actions: [
+            IconButton(
+              icon: Icon(
+                _isFavorite ? Icons.favorite : Icons.favorite_border,
+                color: _isFavorite ? Colors.red : const Color(0xFF006064),
+              ),
+              onPressed: () {
+                _favoritesService.toggleFavorite(widget.commonName);
+              },
+              tooltip: _isFavorite ? 'Remove from favorites' : 'Add to favorites',
+            ),
+          ],
         ),
         body: const Center(
           child: CircularProgressIndicator(
@@ -418,6 +458,18 @@ class _FishDetailsScreenState extends State<FishDetailsScreen> {
             ),
           ),
           centerTitle: true,
+          actions: [
+            IconButton(
+              icon: Icon(
+                _isFavorite ? Icons.favorite : Icons.favorite_border,
+                color: _isFavorite ? Colors.red : const Color(0xFF006064),
+              ),
+              onPressed: () {
+                _favoritesService.toggleFavorite(widget.commonName);
+              },
+              tooltip: _isFavorite ? 'Remove from favorites' : 'Add to favorites',
+            ),
+          ],
         ),
         body: Center(
           child: Column(
@@ -479,6 +531,18 @@ class _FishDetailsScreenState extends State<FishDetailsScreen> {
           ),
         ),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: Icon(
+              _isFavorite ? Icons.favorite : Icons.favorite_border,
+              color: _isFavorite ? Colors.red : const Color(0xFF006064),
+            ),
+            onPressed: () {
+              _favoritesService.toggleFavorite(widget.commonName);
+            },
+            tooltip: _isFavorite ? 'Remove from favorites' : 'Add to favorites',
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         child: Column(
@@ -641,13 +705,17 @@ class _FishDetailsScreenState extends State<FishDetailsScreen> {
 
   Widget _buildHeroImage() {
     if (widget.useCapturedImage && widget.capturedImagePath != null && widget.capturedImagePath!.isNotEmpty) {
-      // Use captured image
+      // Use captured image - now stored as URL from Supabase Storage
+      // Check if it's a URL or a local file path
+      final isUrl = widget.capturedImagePath!.startsWith('http://') || 
+                    widget.capturedImagePath!.startsWith('https://');
+      
       return ClipRRect(
         borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(30),
           topRight: Radius.circular(30),
         ),
-        child: kIsWeb
+        child: isUrl
             ? Image.network(
                 widget.capturedImagePath!,
                 width: double.infinity,
@@ -655,13 +723,21 @@ class _FishDetailsScreenState extends State<FishDetailsScreen> {
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) => _buildImagePlaceholder(),
               )
-            : Image.file(
-                File(widget.capturedImagePath!),
-                width: double.infinity,
-                height: 200,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => _buildImagePlaceholder(),
-              ),
+            : (kIsWeb
+                ? Image.network(
+                    widget.capturedImagePath!,
+                    width: double.infinity,
+                    height: 200,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => _buildImagePlaceholder(),
+                  )
+                : Image.file(
+                    File(widget.capturedImagePath!),
+                    width: double.infinity,
+                    height: 200,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => _buildImagePlaceholder(),
+                  )),
       );
     } else {
       // Use fish list image

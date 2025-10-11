@@ -107,7 +107,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showUserInfo(BuildContext context) {
-    final user = Supabase.instance.client.auth.currentUser;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -793,31 +792,58 @@ class _UserProfileSheet extends StatefulWidget {
 }
 
 class _UserProfileSheetState extends State<_UserProfileSheet> {
+  bool _isExpanded = false; // Track if sign out button is visible
+  Map<String, dynamic>? _cachedProfile; // Cache profile data
+  bool _isLoadingProfile = true;
+  
   @override
   void initState() {
     super.initState();
+    _loadProfile(); // Load profile once
+    
     // Listen for auth state changes and rebuild when signed in
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (data.event == AuthChangeEvent.signedIn && mounted) {
-        setState(() {});
+        _loadProfile(); // Reload profile when signed in
       }
       if (data.event == AuthChangeEvent.signedOut && mounted) {
-        setState(() {});
+        setState(() {
+          _cachedProfile = null;
+        });
       }
     });
   }
-  Future<Map<String, dynamic>> _fetchProfile() async {
+  
+  Future<void> _loadProfile() async {
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return {};
+    if (user == null) {
+      setState(() {
+        _cachedProfile = {};
+        _isLoadingProfile = false;
+      });
+      return;
+    }
+    
     try {
       final data = await Supabase.instance.client
           .from('profiles')
           .select('first_name, last_name, email')
           .eq('id', user.id)
           .maybeSingle();
-      return data ?? {};
+      
+      if (mounted) {
+        setState(() {
+          _cachedProfile = data ?? {};
+          _isLoadingProfile = false;
+        });
+      }
     } catch (e) {
-      return {};
+      if (mounted) {
+        setState(() {
+          _cachedProfile = {};
+          _isLoadingProfile = false;
+        });
+      }
     }
   }
 
@@ -854,121 +880,185 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
   }
 
   Widget _buildProfileHeader() {
-    final theme = Theme.of(context);
     final user = Supabase.instance.client.auth.currentUser;
-    return FutureBuilder<Map<String, dynamic>>(
-      future: _fetchProfile(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final profile = snapshot.data ?? {};
-        final String email = (profile['email'] ?? user?.email ?? '').toString();
-
-        return Column(
-          children: [
-            // Profile avatar and info
-            Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF00BFB3), Color(0xFF4DD0E1)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 3),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00BFB3).withOpacity(0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: const Icon(
-                Icons.person,
-                size: 40,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 12),
-            // User info
-            if (user != null) ...[
-              Text(
-                email.isNotEmpty ? email : 'No Email',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: Colors.grey[800],
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ] else ...[
-              Text(
-                'Guest User',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: Colors.grey[800],
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Sign in to access premium features',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            // Auth button
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  if (user != null) {
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(
-                        builder: (context) => const AuthScreen(showBackButton: false),
-                      ),
-                      (route) => false,
-                    );
-                    Supabase.instance.client.auth.signOut();
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const AuthScreen(showBackButton: true),
-                      ),
-                    );
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00BFB3),
-                  foregroundColor: Colors.white,
-                  elevation: 2,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                icon: Icon(
-                  user != null ? Icons.logout : Icons.login,
-                  size: 20,
-                ),
-                label: Text(
-                  user != null ? 'Sign Out' : 'Sign In / Sign Up',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+    
+    // Static avatar - always show, never rebuild
+    final avatar = Container(
+      width: 70,
+      height: 70,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF00BFB3), Color(0xFF4DD0E1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF00BFB3).withOpacity(0.2),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: const Icon(
+        Icons.person,
+        size: 26,
+        color: Colors.white,
+      ),
     );
+    
+    return Column(
+      children: [
+        // Static avatar at top (doesn't rebuild)
+        avatar,
+        const SizedBox(height: 12),
+        
+        // Email section using cached data
+        if (_isLoadingProfile)
+          const SizedBox(
+            height: 20,
+            child: Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00BFB3)),
+                ),
+              ),
+            ),
+          )
+        else
+          _buildEmailAndSignOutSection(user),
+      ],
+    );
+  }
+  
+  Widget _buildEmailAndSignOutSection(User? user) {
+    final profile = _cachedProfile ?? {};
+    final String email = (profile['email'] ?? user?.email ?? '').toString();
+
+    // Email with collapsible sign out text
+    if (user != null) {
+      return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
+                child: Column(
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _isExpanded = !_isExpanded;
+                        });
+                      },
+                      child: Row(
+                        children: [
+                          const Icon(Icons.email_outlined, color: Color(0xFF00BFB3), size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              email.isNotEmpty ? email : 'No Email',
+                              style: TextStyle(
+                                color: Colors.grey[800],
+                                fontWeight: FontWeight.w500,
+                                fontSize: 13,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(
+                            _isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                            color: Colors.grey[600],
+                            size: 20,
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Sign out text - shows below dropdown arrow when expanded (with smooth animation)
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut,
+                      child: _isExpanded
+                          ? Column(
+                              children: [
+                                const SizedBox(height: 8),
+                                const Divider(height: 1),
+                                const SizedBox(height: 8),
+                                GestureDetector(
+                                  onTap: () {
+                                    Navigator.of(context).pop();
+                                    Navigator.of(context).pushAndRemoveUntil(
+                                      MaterialPageRoute(
+                                        builder: (context) => const AuthScreen(showBackButton: false),
+                                      ),
+                                      (route) => false,
+                                    );
+                                    Supabase.instance.client.auth.signOut();
+                                  },
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(Icons.logout, color: Color(0xFF00BFB3), size: 16),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Sign Out',
+                                        style: TextStyle(
+                                          color: Colors.grey[800],
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
+              );
+    } else {
+      // Guest user - show sign in button
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: () {
+            Navigator.of(context).pop();
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AuthScreen(showBackButton: true),
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF00BFB3),
+            foregroundColor: Colors.white,
+            elevation: 2,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          icon: const Icon(Icons.login, size: 20),
+          label: const Text(
+            'Sign In / Sign Up',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   Widget _buildTanksSection() {
@@ -1103,25 +1193,6 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
     );
   }
 
-  void _showAuthRequiredDialog(BuildContext context, String title, String message) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AuthRequiredDialog(
-        title: title,
-        message: message,
-        actionButtonText: 'Sign In to Continue',
-        onActionPressed: () {
-          // Navigate to auth screen
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => const AuthScreen(showBackButton: true),
-            ),
-          );
-        },
-      ),
-    );
-  }
 }
 
 // Tips & Guides Section Widget

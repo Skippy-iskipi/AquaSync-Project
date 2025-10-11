@@ -351,14 +351,14 @@ def check_conditional_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]
             
             # Critical size difference (5:1 or more)
             if size_ratio >= 5.0:
-                incompatible_reasons.append(f"One fish is {size_ratio:.1f} times larger than the other - the larger fish will likely eat or seriously injure the smaller one")
+                incompatible_reasons.append(f"One fish is larger than the other - the larger fish will likely eat or seriously injure the smaller one")
             # Conditional size difference
             elif size_ratio >= 3.0 and (temp1_score >= 1 or temp2_score >= 1):
-                conditional_reasons.append(f"There's a significant size difference ({size_ratio:.1f}:1) and one fish is semi-aggressive, which increases the risk")
+                conditional_reasons.append(f"There's a significant size difference and one fish is semi-aggressive, which increases the risk")
                 conditions.append("Use a very large tank (200+ liters) with lots of hiding places for the smaller fish")
                 conditions.append("Watch carefully during feeding time when aggression is most likely to occur")
             elif size_ratio >= 4.0 and (temp1_score == 0 and temp2_score == 0):
-                conditional_reasons.append(f"Even though both fish are peaceful, there's a big size difference ({size_ratio:.1f}:1) that could be dangerous")
+                conditional_reasons.append(f"Even though both fish are peaceful, there's a big size difference that could be dangerous")
                 conditions.append("Make sure the smaller fish can't accidentally be eaten by the larger one")
                 conditions.append("Create plenty of hiding spots where the smaller fish can escape if needed")
     except Exception:

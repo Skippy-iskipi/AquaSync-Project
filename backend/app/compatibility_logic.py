@@ -152,7 +152,7 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
             # More restrictive for aggressive fish, more lenient for peaceful fish
             max_ratio = 4.0 if (temp1_score == 0 and temp2_score == 0) else 3.0 if (temp1_score <= 1 and temp2_score <= 1) else 2.0
             if size_ratio >= max_ratio:
-                incompatible_reasons.append(f"One fish is {size_ratio:.1f} times larger than the other - the larger fish will likely bully or eat the smaller one")
+                incompatible_reasons.append(f"One fish is larger than the other - the larger fish will likely bully or eat the smaller one")
     except Exception:
         logger.warning("Could not parse size for compatibility check.")
 
@@ -225,14 +225,14 @@ def check_pairwise_compatibility(fish1: Dict[str, Any], fish2: Dict[str, Any]) -
             # More strict thresholds: 3:1 for semi-aggressive, 2:1 for aggressive/predatory
             if ratio and (is_pred1 or is_pred2):
                 if ratio >= 2.0:
-                    incompatible_reasons.append(f"One fish is a predator that's {ratio:.1f} times larger than the other - the smaller fish will likely be eaten")
+                    incompatible_reasons.append(f"One fish is a predator that's times larger than the other - the smaller fish will likely be eaten")
             elif temp1_score >= 2 or temp2_score >= 2:  # Aggressive only
                 if ratio >= 2.0:
-                    incompatible_reasons.append(f"The aggressive fish is {ratio:.1f} times larger than the other - this creates a dangerous bullying situation")
+                    incompatible_reasons.append(f"The aggressive fish is times larger than the other - this creates a dangerous bullying situation")
             # For semi-aggressive (score 1), only flag if ratio is very high
             elif temp1_score >= 1 or temp2_score >= 1:
                 if ratio >= 3.5:
-                    conditional_reasons.append(f"There's a large size difference ({ratio:.1f}:1) with semi-aggressive fish, which could cause stress")
+                    conditional_reasons.append(f"There's a large size difference with semi-aggressive fish, which could cause stress")
                     conditions.append("Use a very large tank with lots of hiding places for the smaller fish")
                     conditions.append("Watch carefully during feeding time when aggression is most likely")
     except Exception:

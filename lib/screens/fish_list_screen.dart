@@ -10,6 +10,7 @@ import '../widgets/fish_details_screen.dart';
 import '../models/fish_species.dart';
 import 'package:lottie/lottie.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../services/favorites_service.dart';
 
 class FishListScreen extends StatefulWidget {
   final String title;
@@ -169,6 +170,9 @@ class _FishListScreenState extends State<FishListScreen> {
   String _currentSearchQuery = '';
   static const String _fishListCacheKey = 'fish_list_cache_v3'; // Updated version for temperature fix
   static const String _fishListCacheTimeKey = 'fish_list_cache_time_v3';
+  final FavoritesService _favoritesService = FavoritesService();
+  Set<String> _favoriteFish = {};
+  late StreamSubscription _favoritesSubscription;
 
   // In-memory cache for list thumbnail image URLs
   static final Map<String, String> _thumbUrlCache = <String, String>{};
@@ -188,9 +192,25 @@ class _FishListScreenState extends State<FishListScreen> {
   @override
   void initState() {
     super.initState();
-    _loadFishDetailsCache().then((_) {
-      _loadFishListWithCache();
+    _initializeScreen();
+  }
+
+  Future<void> _initializeScreen() async {
+    await _favoritesService.loadFavorites();
+    if (mounted) {
+      setState(() {
+        _favoriteFish = _favoritesService.getFavorites();
+      });
+    }
+    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+      if (mounted) {
+        setState(() {
+          _favoriteFish = favorites;
+        });
+      }
     });
+    await _loadFishDetailsCache();
+    await _loadFishListWithCache();
   }
 
   Future<void> _loadFishDetailsCache() async {
@@ -241,6 +261,7 @@ class _FishListScreenState extends State<FishListScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _favoritesSubscription.cancel();
     // Optionally save cache on dispose (for safety)
     _saveFishDetailsCache();
     super.dispose();
@@ -932,30 +953,33 @@ Widget buildFishListImage(String? fishName) {
     // Smart search already provides relevant results
     if (_isUsingSmartSearch) {
       print('DEBUG SEARCH: Using smart search results directly (${list.length} fish)');
-      return list;
+    } else {
+      // Apply manual filters only when not using smart search
+      print('DEBUG SEARCH: Applying manual filters to ${list.length} fish');
+      
+      // Water type
+      if (waterTypeFilters.containsValue(true)) {
+        list = list.where((fish) => waterTypeFilters[fish.waterType] == true).toList();
+      }
+      // Temperament
+      if (temperamentFilters.containsValue(true)) {
+        list = list.where((fish) => temperamentFilters[fish.temperament] == true).toList();
+      }
+      // Social Behavior
+      if (socialBehaviorFilters.containsValue(true)) {
+        list = list.where((fish) => socialBehaviorFilters[fish.socialBehavior] == true).toList();
+      }
+      // Diet
+      if (dietFilters.containsValue(true)) {
+        list = list.where((fish) => dietFilters[fish.diet] == true).toList();
+      }
     }
     
-    // Apply manual filters only when not using smart search
-    print('DEBUG SEARCH: Applying manual filters to ${list.length} fish');
+    final favorites = list.where((fish) => _favoriteFish.contains(fish.commonName)).toList();
+    final nonFavorites = list.where((fish) => !_favoriteFish.contains(fish.commonName)).toList();
+    list = [...favorites, ...nonFavorites];
     
-    // Water type
-    if (waterTypeFilters.containsValue(true)) {
-      list = list.where((fish) => waterTypeFilters[fish.waterType] == true).toList();
-    }
-    // Temperament
-    if (temperamentFilters.containsValue(true)) {
-      list = list.where((fish) => temperamentFilters[fish.temperament] == true).toList();
-    }
-    // Social Behavior
-    if (socialBehaviorFilters.containsValue(true)) {
-      list = list.where((fish) => socialBehaviorFilters[fish.socialBehavior] == true).toList();
-    }
-    // Diet
-    if (dietFilters.containsValue(true)) {
-      list = list.where((fish) => dietFilters[fish.diet] == true).toList();
-    }
-    
-    print('DEBUG SEARCH: After manual filtering: ${list.length} fish');
+    print('DEBUG SEARCH: After manual filtering and sorting: ${list.length} fish');
     return list;
   }
 
@@ -1216,6 +1240,8 @@ Widget buildFishListImage(String? fishName) {
                                 fish: fish,
                                 onTap: () => _showFishDetails(fish),
                                 buildFishListImage: buildFishListImage,
+                                isFavorite: _favoriteFish.contains(fish.commonName),
+                                onFavoriteTap: () => _favoritesService.toggleFavorite(fish.commonName),
                               );
                             },
                           ),
@@ -1231,7 +1257,16 @@ class _DetailedFishCard extends StatefulWidget {
   final FishSpecies fish;
   final VoidCallback onTap;
   final Widget Function(String?) buildFishListImage;
-  const _DetailedFishCard({required this.fish, required this.onTap, required this.buildFishListImage});
+  final bool isFavorite;
+  final VoidCallback onFavoriteTap;
+
+  const _DetailedFishCard({
+    required this.fish,
+    required this.onTap,
+    required this.buildFishListImage,
+    required this.isFavorite,
+    required this.onFavoriteTap,
+  });
 
   @override
   State<_DetailedFishCard> createState() => _DetailedFishCardState();
@@ -1342,6 +1377,13 @@ class _DetailedFishCardState extends State<_DetailedFishCard> {
                         ),
                       ],
                     ),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      widget.isFavorite ? Icons.favorite : Icons.favorite_border,
+                      color: widget.isFavorite ? Colors.redAccent : Colors.grey,
+                    ),
+                    onPressed: widget.onFavoriteTap,
                   ),
                 ],
               ),

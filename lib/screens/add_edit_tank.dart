@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:math';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../models/tank.dart';
+import '../models/diet_calculation.dart';
 import '../providers/tank_provider.dart';
 import '../config/api_config.dart';
 import '../widgets/fish_selection_widget.dart';
@@ -12,6 +14,7 @@ import '../widgets/fish_info_dialog.dart';
 import '../widgets/auth_required_dialog.dart';
 import '../services/auth_service.dart';
 import 'auth_screen.dart';
+import 'logbook_provider.dart';
 
 class AddEditTank extends StatefulWidget {
   final Tank? tank;
@@ -50,6 +53,13 @@ class _AddEditTankState extends State<AddEditTank> {
   Map<String, int> _fishSelections = {};
   final Map<String, TextEditingController> _fishQuantityControllers = {};
   List<Map<String, dynamic>> _availableFish = [];
+  
+  // Template selection state
+  bool _showTemplateSelector = false;
+  bool _isLoadingTemplate = false; // Flag to prevent volume recalculation during template load
+  double? _templateTargetVolume; // Target volume when loading from template
+  Set<String> _selectedTemplateIds = {}; // Track which templates have been loaded
+  Map<String, int> _fishFromDietCalculator = {}; // Track fish added from diet calculator
   
 
   // Feed inventory
@@ -196,14 +206,939 @@ class _AddEditTankState extends State<AddEditTank> {
     }
   }
 
+  // Calculate suggested dimensions from volume and shape
+  Map<String, double> _calculateDimensionsFromVolume(double volumeInLiters, String shape) {
+    // Standard aquarium ratios
+    switch (shape.toLowerCase()) {
+      case 'rectangle':
+        // Common ratio: L:W:H = 2:1:1
+        // Volume = L × W × H (in cm³), then convert to liters
+        // V (liters) = L × W × H / 1000
+        // Using ratio L = 2x, W = x, H = x
+        // V = 2x × x × x / 1000 = 2x³ / 1000
+        // x³ = V × 500
+        // x = ∛(V × 500)
+        final x = pow(volumeInLiters * 500, 1/3).toDouble();
+        return {
+          'length': (2 * x).roundToDouble(),
+          'width': x.roundToDouble(),
+          'height': x.roundToDouble(),
+        };
+      case 'cylinder':
+        // Cylinder: V = π × r² × h
+        // Using ratio h = 2r (height is twice the radius)
+        // V (liters) = π × r² × 2r / 1000 = 2πr³ / 1000
+        // r³ = V × 500 / π
+        // r = ∛(V × 500 / π)
+        final r = pow(volumeInLiters * 500 / 3.14159, 1/3).toDouble();
+        final diameter = (2 * r).roundToDouble();
+        final height = (4 * r).roundToDouble(); // h = 2r, but diameter = 2r, so h = 2 × diameter/2 = diameter
+        return {
+          'length': diameter, // Diameter
+          'width': 0, // Not used for cylinder
+          'height': height,
+        };
+      case 'bowl':
+        return {
+          'length': 0,
+          'width': 0,
+          'height': 0,
+        };
+      default:
+        return {
+          'length': 0,
+          'width': 0,
+          'height': 0,
+        };
+    }
+  }
+
+  // Load template from saved calculator result
+  void _loadTemplateFromCalculation(String source, String tankShape, String tankVolumeStr, Map<String, int> fishSelections, String templateId) {
+    // Check if already selected - if so, deselect it
+    if (_selectedTemplateIds.contains(templateId)) {
+      setState(() {
+        _selectedTemplateIds.remove(templateId);
+        // Clear all data when deselecting tank calculator
+        _fishSelections.clear();
+        _fishQuantityControllers.forEach((key, controller) => controller.dispose());
+        _fishQuantityControllers.clear();
+        _availableFeeds.clear();
+        _feedQuantityControllers.forEach((key, controller) => controller.dispose());
+        _feedQuantityControllers.clear();
+        _fishFromDietCalculator.clear();
+      });
+      return;
+    }
+    
+    // Parse volume
+    final volumeMatch = RegExp(r'(\d+\.?\d*)').firstMatch(tankVolumeStr);
+    if (volumeMatch == null) return;
+    
+    final volume = double.tryParse(volumeMatch.group(1) ?? '0') ?? 0;
+    if (volume <= 0) return;
+    
+    // Calculate suggested dimensions that will produce the exact volume
+    final dimensions = _calculateDimensionsFromVolume(volume, tankShape);
+    
+    setState(() {
+      // Clear ALL selections when switching tank calculators
+      _selectedTemplateIds.clear();
+      
+      // Mark this template as selected
+      _selectedTemplateIds.add(templateId);
+      
+      // Set template loading flag and target volume
+      _isLoadingTemplate = true;
+      _templateTargetVolume = volume;
+      
+      _selectedShape = tankShape.toLowerCase();
+      _selectedUnit = 'CM';
+      
+      if (tankShape.toLowerCase() != 'bowl') {
+        _lengthController.text = dimensions['length']!.toStringAsFixed(2);
+        _widthController.text = dimensions['width']!.toStringAsFixed(2);
+        _heightController.text = dimensions['height']!.toStringAsFixed(2);
+      }
+      
+      // REPLACE all data - clear everything first
+      _fishSelections.clear();
+      _fishQuantityControllers.forEach((key, controller) => controller.dispose());
+      _fishQuantityControllers.clear();
+      _availableFeeds.clear();
+      _feedQuantityControllers.forEach((key, controller) => controller.dispose());
+      _feedQuantityControllers.clear();
+      _fishFromDietCalculator.clear(); // Clear diet tracking
+      
+      // Add fish from this template
+      for (final entry in fishSelections.entries) {
+        _fishSelections[entry.key] = entry.value;
+        _fishQuantityControllers[entry.key] = TextEditingController(text: entry.value.toString());
+      }
+    });
+    
+    // Calculate volume and run compatibility checks after state is set
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _calculateVolume(); // This will use the template target volume
+      _checkCompatibility();
+      _checkAllFishTankShapeCompatibility();
+      
+      // Clear template loading flag after a short delay to allow user to see the volume
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          setState(() {
+            _isLoadingTemplate = false;
+            _templateTargetVolume = null;
+          });
+        }
+      });
+    });
+  }
+
+  // Load template from diet calculator (fish + feeds)
+  void _loadTemplateFromDietCalculation(DietCalculation calc) {
+    final templateId = 'diet_${calc.id}';
+    
+    // Check if already selected - if so, deselect it
+    if (_selectedTemplateIds.contains(templateId)) {
+      setState(() {
+        // Clear all diet calculator selections
+        _selectedTemplateIds.removeWhere((id) => id.startsWith('diet_'));
+        
+        // Restore fish quantities by subtracting the diet calculator's contribution
+        for (final entry in _fishFromDietCalculator.entries) {
+          final fishName = entry.key;
+          final dietQty = entry.value;
+          final currentQty = _fishSelections[fishName] ?? 0;
+          final newQty = currentQty - dietQty;
+          
+          if (newQty <= 0) {
+            // Remove fish completely if quantity becomes 0 or negative
+            _fishSelections.remove(fishName);
+            _fishQuantityControllers[fishName]?.dispose();
+            _fishQuantityControllers.remove(fishName);
+          } else {
+            _fishSelections[fishName] = newQty;
+            if (_fishQuantityControllers.containsKey(fishName)) {
+              _fishQuantityControllers[fishName]!.text = newQty.toString();
+            }
+          }
+        }
+        _fishFromDietCalculator.clear();
+        
+        // Feeds are NOT auto-added from diet calculator, so no need to clear them
+      });
+      
+      // Recalculate after deselection
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkCompatibility();
+        _checkAllFishTankShapeCompatibility();
+        _calculateFeedDurations();
+        _analyzeFeedCompatibility(); // Update incompatible feeds list
+      });
+      return;
+    }
+    
+    setState(() {
+      // First, remove fish from previous diet calculator template if any
+      if (_fishFromDietCalculator.isNotEmpty) {
+        for (final entry in _fishFromDietCalculator.entries) {
+          final fishName = entry.key;
+          final dietQty = entry.value;
+          final currentQty = _fishSelections[fishName] ?? 0;
+          final newQty = currentQty - dietQty;
+          
+          if (newQty <= 0) {
+            _fishSelections.remove(fishName);
+            _fishQuantityControllers[fishName]?.dispose();
+            _fishQuantityControllers.remove(fishName);
+          } else {
+            _fishSelections[fishName] = newQty;
+            if (_fishQuantityControllers.containsKey(fishName)) {
+              _fishQuantityControllers[fishName]!.text = newQty.toString();
+            }
+          }
+        }
+      }
+      
+      // Clear any other diet calculator selections (only one diet template allowed)
+      _selectedTemplateIds.removeWhere((id) => id.startsWith('diet_'));
+      
+      // Clear previous diet fish tracking
+      _fishFromDietCalculator.clear();
+      
+      // Mark this template as selected
+      _selectedTemplateIds.add(templateId);
+      
+      // Track fish from NEW diet calculator for proper deselection later
+      _fishFromDietCalculator = Map<String, int>.from(calc.fishSelections);
+      
+      // MERGE fish selections with existing (from tank calculator if any)
+      for (final entry in calc.fishSelections.entries) {
+        final currentQty = _fishSelections[entry.key] ?? 0;
+        final newQty = currentQty + entry.value;
+        _fishSelections[entry.key] = newQty;
+        
+        if (_fishQuantityControllers.containsKey(entry.key)) {
+          _fishQuantityControllers[entry.key]!.text = newQty.toString();
+        } else {
+          _fishQuantityControllers[entry.key] = TextEditingController(text: newQty.toString());
+        }
+      }
+      
+      // Don't automatically add feeds to inventory - they will appear in recommendations section
+      // Users can manually add them if needed
+    });
+    
+    // Run compatibility checks and update feed recommendations
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkCompatibility();
+      _checkAllFishTankShapeCompatibility();
+      _calculateFeedDurations();
+      _analyzeFeedCompatibility(); // Update feed recommendations based on new fish selection
+    });
+  }
+
+  // Build template selector widget
+  Widget _buildTemplateSelector() {
+    final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+    final waterCalculations = logBookProvider.savedCalculations;
+    final fishVolumeCalculations = logBookProvider.savedFishVolumeCalculations;
+    final fishCalculations = logBookProvider.savedFishCalculations;
+    final dietCalculations = logBookProvider.savedDietCalculations;
+    
+    final totalTemplates = waterCalculations.length + 
+                          fishVolumeCalculations.length + fishCalculations.length + 
+                          dietCalculations.length;
+    
+    if (totalTemplates == 0) {
+      return const SizedBox.shrink();
+    }
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Collapsible header
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _showTemplateSelector = !_showTemplateSelector;
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00BCD4).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(
+                      Icons.copy,
+                      color: Color(0xFF00BCD4),
+                      size: 16,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Load Template',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF006064),
+                          ),
+                        ),
+                        Text(
+                          '$totalTemplates template${totalTemplates == 1 ? '' : 's'} from calculators',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: _showTemplateSelector ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      Icons.keyboard_arrow_down,
+                      color: Colors.grey[600],
+                      size: 20,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
+          // Collapsible content
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+            height: _showTemplateSelector ? null : 0,
+            child: _showTemplateSelector
+                ? Container(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _selectedTemplateIds.isEmpty
+                                    ? 'Select templates to load:'
+                                    : '${_selectedTemplateIds.length} template${_selectedTemplateIds.length == 1 ? '' : 's'} selected',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black87,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              if (_selectedTemplateIds.isNotEmpty)
+                                TextButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _selectedTemplateIds.clear();
+                                      // Clear all loaded data
+                                      _fishSelections.clear();
+                                      _fishQuantityControllers.forEach((key, controller) => controller.dispose());
+                                      _fishQuantityControllers.clear();
+                                      _availableFeeds.clear();
+                                      _feedQuantityControllers.forEach((key, controller) => controller.dispose());
+                                      _feedQuantityControllers.clear();
+                                      _fishFromDietCalculator.clear();
+                                    });
+                                  },
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: const Text(
+                                    'Clear All',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Color(0xFF00BCD4),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          
+                          // Water Calculator Results
+                          if (waterCalculations.isNotEmpty) ...[
+                            Text(
+                              'Water Calculator (${waterCalculations.length})',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            ...waterCalculations.take(5).map((calc) {
+                              final templateId = 'water_${calc.id}';
+                              final isSelected = _selectedTemplateIds.contains(templateId);
+                              final fishNames = calc.fishSelections.keys.take(2).join(', ');
+                              final remainingCount = calc.fishSelections.length > 2 ? calc.fishSelections.length - 2 : 0;
+                              final fishDisplay = calc.fishSelections.isEmpty 
+                                  ? 'No fish' 
+                                  : remainingCount > 0 
+                                      ? '$fishNames +$remainingCount'
+                                      : fishNames;
+                              
+                              return GestureDetector(
+                                onTap: () => _loadTemplateFromCalculation(
+                                  'Water Calculator',
+                                  calc.tankShape ?? 'rectangle',
+                                  calc.minimumTankVolume,
+                                  calc.fishSelections,
+                                  templateId,
+                                ),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? const Color(0xFF00BCD4).withOpacity(0.15)
+                                        : Colors.grey[50],
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? const Color(0xFF00BCD4)
+                                          : Colors.grey[300]!,
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              '${calc.tankShape?.toUpperCase() ?? 'RECT'} • ${calc.minimumTankVolume}',
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFF006064),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              fishDisplay,
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.grey[600],
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              calc.dateCalculated.toString().split(' ')[0],
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                color: Colors.grey[500],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Icon(
+                                        isSelected ? Icons.check_circle : Icons.arrow_forward_ios,
+                                        size: isSelected ? 20 : 12,
+                                        color: const Color(0xFF00BCD4),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                            const SizedBox(height: 12),
+                          ],
+                          
+                          // Fish Volume Calculator Results
+                          if (fishVolumeCalculations.isNotEmpty) ...[
+                            Text(
+                              'Fish Calculator - Volume (${fishVolumeCalculations.length})',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            ...fishVolumeCalculations.take(5).map((calc) {
+                              final templateId = 'fishvolume_${calc.id}';
+                              final isSelected = _selectedTemplateIds.contains(templateId);
+                              final fishNames = calc.fishSelections.keys.take(2).join(', ');
+                              final remainingCount = calc.fishSelections.length > 2 ? calc.fishSelections.length - 2 : 0;
+                              final fishDisplay = calc.fishSelections.isEmpty 
+                                  ? 'No fish' 
+                                  : remainingCount > 0 
+                                      ? '$fishNames +$remainingCount'
+                                      : fishNames;
+                              
+                              return GestureDetector(
+                                onTap: () => _loadTemplateFromCalculation(
+                                  'Fish Calculator (Volume)',
+                                  calc.tankShape,
+                                  calc.tankVolume,
+                                  calc.fishSelections,
+                                  templateId,
+                                ),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? const Color(0xFF00BCD4).withOpacity(0.15)
+                                        : Colors.grey[50],
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? const Color(0xFF00BCD4)
+                                          : Colors.grey[300]!,
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              '${calc.tankShape.toUpperCase()} • ${calc.tankVolume}',
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFF006064),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              fishDisplay,
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.grey[600],
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              calc.dateCalculated.toString().split(' ')[0],
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                color: Colors.grey[500],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Icon(
+                                        isSelected ? Icons.check_circle : Icons.arrow_forward_ios,
+                                        size: isSelected ? 20 : 12,
+                                        color: const Color(0xFF00BCD4),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                            const SizedBox(height: 12),
+                          ],
+                          
+                          // Fish Dimensions Calculator Results
+                          if (fishCalculations.isNotEmpty) ...[
+                            Text(
+                              'Fish Calculator - Dimensions (${fishCalculations.length})',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            ...fishCalculations.take(5).map((calc) {
+                              final templateId = 'fishdim_${calc.id}';
+                              final isSelected = _selectedTemplateIds.contains(templateId);
+                              final fishNames = calc.fishSelections.keys.take(2).join(', ');
+                              final remainingCount = calc.fishSelections.length > 2 ? calc.fishSelections.length - 2 : 0;
+                              final fishDisplay = calc.fishSelections.isEmpty 
+                                  ? 'No fish' 
+                                  : remainingCount > 0 
+                                      ? '$fishNames +$remainingCount'
+                                      : fishNames;
+                              
+                              return GestureDetector(
+                                onTap: () => _loadTemplateFromCalculation(
+                                  'Fish Calculator (Dimensions)',
+                                  'rectangle', // Default to rectangle if not specified
+                                  calc.tankVolume,
+                                  calc.fishSelections,
+                                  templateId,
+                                ),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? const Color(0xFF00BCD4).withOpacity(0.15)
+                                        : Colors.grey[50],
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? const Color(0xFF00BCD4)
+                                          : Colors.grey[300]!,
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'RECT • ${calc.tankVolume}',
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFF006064),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              fishDisplay,
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.grey[600],
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              calc.dateCalculated.toString().split(' ')[0],
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                color: Colors.grey[500],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Icon(
+                                        isSelected ? Icons.check_circle : Icons.arrow_forward_ios,
+                                        size: isSelected ? 20 : 12,
+                                        color: const Color(0xFF00BCD4),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ],
+                          
+                          // Diet Calculator Results
+                          if (dietCalculations.isNotEmpty) ...[
+                            Text(
+                              'Diet Calculator (${dietCalculations.length})',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            ...dietCalculations.take(5).map((calc) {
+                              final templateId = 'diet_${calc.id}';
+                              final isSelected = _selectedTemplateIds.contains(templateId);
+                              final fishNames = calc.fishSelections.keys.take(2).join(', ');
+                              final remainingCount = calc.fishSelections.length > 2 ? calc.fishSelections.length - 2 : 0;
+                              final fishDisplay = calc.fishSelections.isEmpty 
+                                  ? 'No fish' 
+                                  : remainingCount > 0 
+                                      ? '$fishNames +${remainingCount} more'
+                                      : fishNames;
+                              
+                              return GestureDetector(
+                                onTap: () => _loadTemplateFromDietCalculation(calc),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? const Color(0xFF00BCD4).withOpacity(0.15)
+                                        : Colors.grey[50],
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? const Color(0xFF00BCD4)
+                                          : Colors.grey[300]!,
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              fishDisplay,
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFF006064),
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            if (calc.recommendedFoodTypes != null && calc.recommendedFoodTypes!.isNotEmpty)
+                                              Text(
+                                                'Feeds: ${calc.recommendedFoodTypes!.take(2).join(', ')}${calc.recommendedFoodTypes!.length > 2 ? '...' : ''}',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.grey[600],
+                                                  fontStyle: FontStyle.italic,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              calc.dateCalculated.toString().split(' ')[0],
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                color: Colors.grey[500],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Icon(
+                                        isSelected ? Icons.check_circle : Icons.arrow_forward_ios,
+                                        size: isSelected ? 20 : 12,
+                                        color: const Color(0xFF00BCD4),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ],
+                        ],
+                      ),
+                    ),
+                  )
+                : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Build fish suggestion section for fish selection step
+  Widget _buildFishSuggestionSection() {
+    return Consumer<LogBookProvider>(
+      builder: (context, logBookProvider, child) {
+        // Get unique fish names from saved predictions
+        final uniqueFishNames = <String>{};
+        final savedPredictions = logBookProvider.savedPredictions;
+        
+        if (savedPredictions.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        
+        for (final prediction in savedPredictions) {
+          if (prediction.commonName.isNotEmpty) {
+            uniqueFishNames.add(prediction.commonName);
+          }
+        }
+        final suggestedFish = uniqueFishNames.toList()..sort();
+        
+        if (suggestedFish.isEmpty) {
+          return const SizedBox.shrink();
+        }
+    
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.grey[200]!),
+          ),
+          child: ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00BCD4).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(
+                    Icons.history,
+                    color: Color(0xFF00BCD4),
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Saved Fish Suggestions',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF006064),
+                        ),
+                      ),
+                      Text(
+                        '${suggestedFish.length} fish from your collection',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  alignment: WrapAlignment.start,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: suggestedFish.take(8).map((fishName) {
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          // Add fish to selections
+                          _fishSelections[fishName] = (_fishSelections[fishName] ?? 0) + 1;
+                        });
+                        // Trigger compatibility checks
+                        _checkCompatibility();
+                        _checkAllFishTankShapeCompatibility();
+                        // Update feed recommendations in real-time
+                        _analyzeFeedCompatibility();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: Colors.grey[300]!,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              fishName,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Icon(
+                              Icons.add_circle_outline,
+                              size: 14,
+                              color: Color(0xFF00BCD4),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              if (suggestedFish.length > 8) ...[
+                const SizedBox(height: 12),
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: Text(
+                      '+${suggestedFish.length - 8} more available',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   void _calculateVolume() {
     try {
+      // If loading from template, use the target volume instead of calculating
+      if (_isLoadingTemplate && _templateTargetVolume != null) {
+        _calculatedVolume = _templateTargetVolume!;
+        setState(() {}); // Trigger UI update
+        return;
+      }
+      
       if (_selectedShape == 'bowl') {
         _calculatedVolume = 10.0; // Fixed 10L for bowl
         setState(() {}); // Trigger UI update
-      return;
-    }
+        return;
+      }
 
       final length = double.tryParse(_lengthController.text) ?? 0.0;
       final width = double.tryParse(_widthController.text) ?? 0.0;
@@ -271,6 +1206,8 @@ class _AddEditTankState extends State<AddEditTank> {
         _feedQuantityControllers[_selectedFeed] = TextEditingController(text: '0');
         _selectedFeed = '';
       });
+      // Update incompatible feeds analysis in real-time
+      _analyzeFeedCompatibility();
     }
   }
 
@@ -280,6 +1217,8 @@ class _AddEditTankState extends State<AddEditTank> {
       _feedQuantityControllers[feedName]?.dispose();
       _feedQuantityControllers.remove(feedName);
     });
+    // Update incompatible feeds analysis in real-time
+    _analyzeFeedCompatibility();
   }
 
   void _updateFeedQuantity(String feedName, String quantity) {
@@ -1099,25 +2038,42 @@ class _AddEditTankState extends State<AddEditTank> {
       title = widget.tank != null ? 'Edit Tank' : 'Create New Tank';
     }
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
+    return WillPopScope(
+      onWillPop: () async {
+        // If not on first step, go to previous step instead of closing
+        if (_currentStep > 0 && !widget.lockedMode) {
+          _previousStep();
+          return false; // Prevent default back action
+        }
+        return true; // Allow closing the screen
+      },
+      child: Scaffold(
         backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(
-            color: Colors.black87,
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Color(0xFF006064)),
+            onPressed: () {
+              // If not on first step, go to previous step
+              if (_currentStep > 0 && !widget.lockedMode) {
+                _previousStep();
+              } else {
+                // Otherwise, close the screen
+                Navigator.pop(context);
+              }
+            },
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(
+              color: Colors.black87,
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+            ),
           ),
         ),
-      ),
-      body: Form(
+        body: Form(
         key: _formKey,
         child: Column(
           children: [
@@ -1131,13 +2087,14 @@ class _AddEditTankState extends State<AddEditTank> {
               ),
             ),
             
-            // Navigation buttons
+            // Navigation buttons (hide on fish selection step to avoid overflow)
             if (widget.lockedMode)
               _buildLockedModeButtons()
-            else if (_currentStep != 1)
+            else if (_currentStep != 1) // Hide on fish selection step - use AppBar back button instead
               _buildNavigationButtons(),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1172,44 +2129,23 @@ class _AddEditTankState extends State<AddEditTank> {
           ),
         ],
       ),
-      child: Row(
-          children: [
-          if (_currentStep > 0)
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _previousStep,
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Back'),
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF00BCD4),
-                  side: const BorderSide(color: Color(0xFF00BCD4)),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                ),
-              ),
-            ),
-          if (_currentStep > 0) const SizedBox(width: 16),
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: _currentStep == _stepTitles.length - 1 
-                  ? _saveTank 
-                  : _canProceedToNext() ? _nextStep : null,
-              icon: Icon(_currentStep == _stepTitles.length - 1 ? Icons.save : Icons.arrow_forward),
-              label: Text(_currentStep == _stepTitles.length - 1 ? 'Save Tank' : 'Next'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00BCD4),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: _currentStep == _stepTitles.length - 1 
+              ? _saveTank 
+              : _canProceedToNext() ? _nextStep : null,
+          icon: Icon(_currentStep == _stepTitles.length - 1 ? Icons.save : Icons.arrow_forward),
+          label: Text(_currentStep == _stepTitles.length - 1 ? 'Save Tank' : 'Next'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF00BCD4),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1326,6 +2262,9 @@ class _AddEditTankState extends State<AddEditTank> {
       title: 'Tank Setup',
       icon: Icons.water_drop,
       children: [
+        // Template selector (only show when creating new tank)
+        if (widget.tank == null) _buildTemplateSelector(),
+        
         // Tank Name
         TextFormField(
           controller: _nameController,
@@ -1334,6 +2273,7 @@ class _AddEditTankState extends State<AddEditTank> {
             border: OutlineInputBorder(),
             prefixIcon: Icon(Icons.label),
           ),
+          onChanged: (_) => setState(() {}), // Update UI to enable/disable Next button
           validator: (value) {
             if (value == null || value.trim().isEmpty) {
               return 'Please enter a tank name';
@@ -1818,31 +2758,41 @@ class _AddEditTankState extends State<AddEditTank> {
   }
 
    Widget _buildFishSelectionStep() {
-    return FishSelectionWidget(
-      selectedFish: _fishSelections,
-      onFishSelectionChanged: (newSelections) {
-        setState(() {
-          _fishSelections = newSelections;
-        });
-        // Check compatibility after fish selection changes
-        _checkCompatibility();
-        // Check tank shape compatibility for all fish
-        _checkAllFishTankShapeCompatibility();
-        // Recalculate feed durations when fish selection changes
-        _calculateFeedDurations();
-      },
-      availableFish: _availableFish,
-      onBack: widget.lockedMode ? null : (_currentStep > 0 ? _previousStep : null),
-      onNext: widget.lockedMode ? null : (_canProceedToNext() ? _nextStep : null),
-      canProceed: _canProceedToNext(),
-      isLastStep: _currentStep == _stepTitles.length - 1,
-      compatibilityResults: _compatibilityResults,
-      tankShapeWarnings: _fishTankShapeWarnings,
-      onTankShapeWarningsChanged: (warnings) {
-        setState(() {
-          _fishTankShapeWarnings = warnings;
-        });
-      },
+    return Column(
+      children: [
+        _buildFishSuggestionSection(),
+        Expanded(
+          child: FishSelectionWidget(
+            selectedFish: _fishSelections,
+            onFishSelectionChanged: (newSelections) {
+              setState(() {
+                _fishSelections = newSelections;
+              });
+              // Check compatibility after fish selection changes
+              _checkCompatibility();
+              // Check tank shape compatibility for all fish
+              _checkAllFishTankShapeCompatibility();
+              // Recalculate feed durations when fish selection changes
+              _calculateFeedDurations();
+              // Update feed recommendations in real-time
+              _analyzeFeedCompatibility();
+            },
+            availableFish: _availableFish,
+            onBack: null, // Use AppBar back button instead
+            onNext: _canProceedToNext() ? _nextStep : null, // Show Next button inside widget
+            canProceed: _canProceedToNext(),
+            isLastStep: _currentStep == _stepTitles.length - 1,
+            compatibilityResults: _compatibilityResults,
+            tankShapeWarnings: _fishTankShapeWarnings,
+            onTankShapeWarningsChanged: (warnings) {
+              setState(() {
+                _fishTankShapeWarnings = warnings;
+              });
+            },
+            maxDraggableHeight: 0.60, // 60% of screen height for tank management
+          ),
+        ),
+      ],
     );
   }
 
@@ -2371,12 +3321,30 @@ class _AddEditTankState extends State<AddEditTank> {
                   
                   // No recommendations message
                   if (recommendedFeeds.isEmpty && !hasIncompatibleFeeds) ...[
-                    Text(
-                      'All your current feeds are compatible with your fish selection.',
-                      style: const TextStyle(
-                        color: Colors.black87,
-                        fontSize: 14,
-                        fontStyle: FontStyle.italic,
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.check_circle_outline, color: Colors.grey[600], size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _availableFeeds.isEmpty
+                                  ? 'No compatible feed recommendations.'
+                                  : 'All your current feeds are compatible with your fish selection.',
+                              style: TextStyle(
+                                color: Colors.grey[700],
+                                fontSize: 13,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

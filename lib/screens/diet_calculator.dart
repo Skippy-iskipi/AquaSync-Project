@@ -38,6 +38,9 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
   bool _showFeedingTips = false;
   bool _showFoodTypes = false;
   late TabController _tabController;
+  
+  // Suggestions state
+  bool _isSuggestionsExpanded = false;
 
   @override
   void initState() {
@@ -173,6 +176,249 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
     } finally {
       setState(() => _isLoading = false);
     }
+  }
+
+  // Get unique fish names from saved predictions for suggestions
+  List<String> _getSuggestedFishNames() {
+    try {
+      final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+      final savedPredictions = logBookProvider.savedPredictions;
+      
+      // Get unique fish names from saved predictions
+      final uniqueFishNames = <String>{};
+      for (final prediction in savedPredictions) {
+        if (prediction.commonName.isNotEmpty) {
+          uniqueFishNames.add(prediction.commonName);
+        }
+      }
+      
+      return uniqueFishNames.toList()..sort();
+    } catch (e) {
+      print('Error getting suggested fish names: $e');
+      return [];
+    }
+  }
+
+  // Build suggestion section widget
+  Widget _buildSuggestionSection() {
+    return Consumer<LogBookProvider>(
+      builder: (context, logBookProvider, child) {
+        final suggestedFish = _getSuggestedFishNames();
+        
+        // Always show the row with help button
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Suggestion card (if there are suggestions)
+                if (suggestedFish.isNotEmpty)
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.grey[200]!),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.02),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          // Collapsible header
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _isSuggestionsExpanded = !_isSuggestionsExpanded;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF00BCD4).withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Icon(
+                                      Icons.history,
+                                      color: Color(0xFF00BCD4),
+                                      size: 16,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text(
+                                          'Saved Fish Suggestions',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: Color(0xFF006064),
+                                          ),
+                                        ),
+                                        Text(
+                                          '${suggestedFish.length} fish from your collection',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  AnimatedRotation(
+                                    turns: _isSuggestionsExpanded ? 0.5 : 0.0,
+                                    duration: const Duration(milliseconds: 200),
+                                    child: Icon(
+                                      Icons.keyboard_arrow_down,
+                                      color: Colors.grey[600],
+                                      size: 20,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+              
+              // Collapsible content
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                          height: _isSuggestionsExpanded ? null : 0,
+                          child: _isSuggestionsExpanded
+                              ? Container(
+                                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      // Fish chips - aligned to left
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Wrap(
+                                          alignment: WrapAlignment.start,
+                                          spacing: 10,
+                                          runSpacing: 10,
+                                          children: suggestedFish.take(8).map((fishName) {
+                                            return GestureDetector(
+                                              onTap: () {
+                                                setState(() {
+                                                  // Add fish to selections
+                                                  _fishSelections[fishName] = (_fishSelections[fishName] ?? 0) + 1;
+                                                });
+                                              },
+                                              child: Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey[50],
+                                                  borderRadius: BorderRadius.circular(6),
+                                                  border: Border.all(
+                                                    color: Colors.grey[300]!,
+                                                    width: 1.5,
+                                                  ),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    Text(
+                                                      fishName,
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight: FontWeight.w500,
+                                                        color: Colors.black87,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    const Icon(
+                                                      Icons.add_circle_outline,
+                                                      size: 14,
+                                                      color: Color(0xFF00BCD4),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            );
+                                          }).toList(),
+                                        ),
+                                      ),
+                                      
+                                      // Show more indicator if needed
+                                      if (suggestedFish.length > 8) ...[
+                                        const SizedBox(height: 12),
+                                        Center(
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[100],
+                                              borderRadius: BorderRadius.circular(15),
+                                            ),
+                                            child: Text(
+                                              '+${suggestedFish.length - 8} more available',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey[600],
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                )
+                              : null,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              
+              // Help button
+              const SizedBox(width: 12),
+              GestureDetector(
+                onTap: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => const BeginnerGuideDialog(calculatorType: 'diet'),
+                  );
+                },
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00BFB3).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: const Color(0xFF00BFB3).withOpacity(0.2),
+                      width: 1,
+                    ),
+                  ),
+                  child: const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Icon(
+                        Icons.help_outline,
+                        color: Color(0xFF00BFB3),
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _calculateDiet() async {
@@ -1353,63 +1599,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
   Widget _buildMainTab() {
     return Column(
       children: [
-        const SizedBox(height: 16),
-        // Help button row
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-              const Text(
-                'Diet Calculator',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF006064),
-                ),
-              ),
-              GestureDetector(
-                onTap: () {
-                  showDialog(
-                    context: context,
-                    builder: (context) => const BeginnerGuideDialog(calculatorType: 'diet'),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF00ACC1).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: const Color(0xFF00ACC1).withOpacity(0.3),
-                      width: 1,
-                    ),
-                  ),
-          child: Row(
-                    mainAxisSize: MainAxisSize.min,
-            children: [
-                      const Icon(
-                        Icons.help_outline,
-                        color: Color(0xFF00ACC1),
-                        size: 18,
-                      ),
-                      const SizedBox(width: 4),
-                      const Text(
-                        'Help',
-                        style: TextStyle(
-                          color: Color(0xFF00ACC1),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
+        _buildSuggestionSection(),
         Expanded(
           child: FutureBuilder<Map<String, dynamic>>(
             future: _fishSelections.length >= 2 ? _getRealTimeCompatibilityResults() : Future.value({}),
@@ -1433,6 +1623,7 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
                 onNext: _calculateDiet,
                 compatibilityResults: compatibilityResults,
                 tankShapeWarnings: const {},
+                maxDraggableHeight: 0.45, // 50% of screen height for diet calculator
               );
             },
           ),

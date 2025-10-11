@@ -2797,123 +2797,119 @@ class _SyncScreenState extends State<SyncScreen> {
                     color: _getCompatibilityColor(pairCompatibility).withOpacity(0.3),
                   ),
                 ),
-                child: Row(
-                  children: [
-                    // Fish 1
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 30,
-                            height: 30,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(6),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 1),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final availableWidth = constraints.maxWidth;
+                    final imageSize = (availableWidth * 0.15).clamp(40.0, 60.0);
+                    
+                    return Row(
+                      children: [
+                        // Fish 1
+                        Container(
+                          width: imageSize,
+                          height: imageSize,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: _buildFishResultImage(fish1),
+                          ),
+                        ),
+                        
+                        // Compatibility indicator with fish names above
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Fish names above compatibility badge
+                                Text(
+                                  '$fish1 + $fish2',
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 4),
+                                // Compatibility badge
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: _getCompatibilityColor(pairCompatibility).withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        _getCompatibilityIcon(pairCompatibility),
+                                        color: _getCompatibilityColor(pairCompatibility),
+                                        size: 14,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Flexible(
+                                        child: Text(
+                                          _getCompatibilityText(pairCompatibility),
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: _getCompatibilityColor(pairCompatibility),
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: _buildFishResultImage(fish1),
-                            ),
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              fish1,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black,
+                        ),
+                        
+                        // Fish 2
+                        Container(
+                          width: imageSize,
+                          height: imageSize,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1),
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            ],
                           ),
-                        ],
-                      ),
-                    ),
-                    
-                    // Compatibility indicator
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _getCompatibilityColor(pairCompatibility).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _getCompatibilityIcon(pairCompatibility),
-                            color: _getCompatibilityColor(pairCompatibility),
-                            size: 14,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: _buildFishResultImage(fish2),
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _getCompatibilityText(pairCompatibility),
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: _getCompatibilityColor(pairCompatibility),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    
-                    // Fish 2
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              fish2,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black,
-                              ),
-                              textAlign: TextAlign.right,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            width: 30,
-                            height: 30,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(6),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 1),
-                                ),
-                              ],
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: _buildFishResultImage(fish2),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    
-                    // Click indicator
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.arrow_forward_ios,
-                      size: 12,
-                      color: Colors.black.withOpacity(0.4),
-                    ),
-                  ],
+                        ),
+                        
+                        // Click indicator
+                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.arrow_forward_ios,
+                          size: 12,
+                          color: Colors.black.withOpacity(0.4),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             );
@@ -3439,6 +3435,7 @@ class _SyncScreenState extends State<SyncScreen> {
                     tankShapeWarnings: const {},
                     nextButtonText: 'Check Compatibility',
                     hideButtonsWhenKeyboardVisible: true, // Add this parameter
+                    maxDraggableHeight: 0.50, // 60% of screen height for sync screen
                               ),
                             ),
                           ],
@@ -4239,7 +4236,7 @@ class _SyncScreenState extends State<SyncScreen> {
       case 'compatible':
         return 'Compatible';
       case 'conditional':
-        return 'Compatible with Conditions';
+        return 'Conditional';
       case 'incompatible':
       default:
         return 'Not Compatible';

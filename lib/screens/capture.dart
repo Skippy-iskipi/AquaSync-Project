@@ -21,6 +21,7 @@ import '../widgets/fish_images_grid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../widgets/auth_required_dialog.dart';
 import '../screens/auth_screen.dart';
+import '../services/favorites_service.dart';
 
 // Widget for displaying grouped recommendation fields in an ExpansionTile
 class _RecommendationExpansionGroup extends StatefulWidget {
@@ -47,16 +48,14 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
         children: [
           Icon(firstField['icon'] as IconData, size: 22, color: Color(0xFF00ACC1)),
           const SizedBox(width: 8),
-          Expanded(
+          Flexible(
             child: Text(
               firstField['label'],
               style: const TextStyle(
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF00ACC1),
-                overflow: TextOverflow.ellipsis,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              softWrap: true,
             ),
           ),
           if (remainingCount > 0)
@@ -144,6 +143,649 @@ class _RecommendationExpansionGroupState extends State<_RecommendationExpansionG
           setState(() {});
         }
       },
+    );
+  }
+}
+
+class PredictionResultsScreen extends StatefulWidget {
+  final XFile imageFile;
+  final List<FishPrediction> predictions;
+  final Map<String, dynamic>? careData;
+  final Future<void> Function(List<FishPrediction>) savePredictions;
+  final bool Function() canSave;
+
+  const PredictionResultsScreen({
+    super.key,
+    required this.imageFile,
+    required this.predictions,
+    this.careData,
+    required this.savePredictions,
+    required this.canSave,
+  });
+
+  @override
+  State<PredictionResultsScreen> createState() => _PredictionResultsScreenState();
+}
+
+class _PredictionResultsScreenState extends State<PredictionResultsScreen> {
+  final ScrollController _scrollController = ScrollController();
+  final FavoritesService _favoritesService = FavoritesService();
+  bool _isFavorite = false;
+  late StreamSubscription _favoritesSubscription;
+
+  final Map<String, String> temperamentDescriptions = {
+    'Peaceful': 'They can coexist harmoniously with other species, especially those of similar size and temperament.',
+    'Aggressive': 'May attack or harass other fish, best kept alone or with carefully chosen tankmates.',
+    'Semi-aggressive': 'May show aggression towards certain tankmates, especially during feeding or breeding.',
+  };
+
+  final Map<String, String> socialBehaviorDescriptions = {
+    'Schooling': 'Prefers to swim together in a coordinated group of 6 or more.',
+    'Territorial': 'Defends a specific area of the tank from other fish.',
+    'Shoaling': 'Prefers to stay together in a loose group, but does not swim in a coordinated way.',
+    'Small groups': 'Best kept in small groups of 3-5 individuals.',
+    'Solitary': 'Prefers to be kept alone, may be aggressive towards its own species.',
+    'Pairs': 'Forms a bonded pair with one other individual.',
+    'Pairs/Small groups': 'Can be kept in pairs or small groups.',
+    'Harem groups': 'Best kept with one male and multiple females.',
+    'Peaceful': 'Generally non-aggressive towards other fish.',
+    'Community': 'Suitable for a community tank with other peaceful species.',
+    'Semi-social': 'Interacts with others of its species but doesn\'t form tight groups.',
+    'Colonial': 'Forms colonies with a social structure.',
+    'Predatory': 'Will eat smaller fish and invertebrates.',
+  };
+
+  final Map<String, String> tankLevelDescriptions = {
+    'All': 'Swims in all areas of the tank.',
+    'Mid': 'Prefers the middle levels of the tank.',
+    'Top': 'Prefers the top levels of the tank.',
+    'Bottom': 'Dwells at the bottom of the tank.',
+    'Bottom-Mid': 'Prefers the bottom to middle levels of the tank.',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    final highestPrediction = widget.predictions.reduce((curr, next) {
+      double currProb = double.parse(curr.probability.replaceAll('%', ''));
+      double nextProb = double.parse(next.probability.replaceAll('%', ''));
+      return currProb > nextProb ? curr : next;
+    });
+    _isFavorite = _favoritesService.isFavorite(highestPrediction.commonName);
+    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+      if (mounted) {
+        setState(() {
+          _isFavorite = favorites.contains(highestPrediction.commonName);
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _favoritesSubscription.cancel();
+    super.dispose();
+  }
+
+  void _scrollToTop() {
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final highestPrediction = widget.predictions.reduce((curr, next) {
+      double currProb = double.parse(curr.probability.replaceAll('%', ''));
+      double nextProb = double.parse(next.probability.replaceAll('%', ''));
+      return currProb > nextProb ? curr : next;
+    });
+
+    return WillPopScope(
+      onWillPop: () async {
+        // Redirect to homepage initial state instead of going back
+        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (context) => const HomePage(initialTabIndex: 0),
+          ),
+          (route) => false,
+        );
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Color(0xFF00ACC1)),
+            onPressed: () {
+              // Redirect to homepage initial state instead of going back
+              Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                MaterialPageRoute(
+                  builder: (context) => const HomePage(initialTabIndex: 0),
+                ),
+                (route) => false,
+              );
+            },
+          ),
+          title: const Text(
+            'Fish Identification Results',
+            style: TextStyle(
+              color: Color(0xFF00ACC1),
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          actions: [
+            IconButton(
+              icon: Icon(
+                _isFavorite ? Icons.favorite : Icons.favorite_border,
+                color: _isFavorite ? Colors.redAccent : Color(0xFF00ACC1),
+              ),
+              onPressed: () {
+                final highestPrediction = widget.predictions.reduce((curr, next) {
+                  double currProb = double.parse(curr.probability.replaceAll('%', ''));
+                  double nextProb = double.parse(next.probability.replaceAll('%', ''));
+                  return currProb > nextProb ? curr : next;
+                });
+                _favoritesService.toggleFavorite(highestPrediction.commonName);
+              },
+              tooltip: 'Favorite',
+            ),
+          ],
+        ),
+        body: SingleChildScrollView(
+          controller: _scrollController,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Image container with fish name overlay
+              Stack(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 350,
+                    child: kIsWeb
+                        ? Image.network(
+                            widget.imageFile.path,
+                            fit: BoxFit.cover,
+                          )
+                        : Image.file(
+                            io.File(widget.imageFile.path),
+                            fit: BoxFit.cover,
+                          ),
+                  ),
+                  // Fish name overlay positioned higher for better visibility
+                  Positioned(
+                    bottom: 15,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.8),
+                            Colors.black.withOpacity(0.95),
+                          ],
+                        ),
+                      ),
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            highestPrediction.commonName,
+                            style: const TextStyle(
+                              fontSize: 36,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                  offset: Offset(1, 1),
+                                  blurRadius: 3,
+                                  color: Colors.black54,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            highestPrediction.scientificName,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontStyle: FontStyle.italic,
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                  offset: Offset(1, 1),
+                                  blurRadius: 3,
+                                  color: Colors.black54,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              
+              // Floating info card
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                child: Transform.translate(
+                  offset: const Offset(0, -30),
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 20,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _buildInfoCard('Max Size', highestPrediction.maxSize, Icons.straighten),
+                        _buildInfoCard('Lifespan', highestPrediction.lifespan, Icons.timer),
+                        _buildInfoCard('Water Type', highestPrediction.waterType, Icons.water),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              
+              // About this fish section
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DescriptionWidget(
+                      description: highestPrediction.description,
+                      maxWords: 20,
+                    ),
+                    const SizedBox(height: 30),
+                    
+                    // Image gallery
+                    FishImagesGrid(fishName: highestPrediction.commonName),
+                    const SizedBox(height: 30),
+                    
+                    // Basic Information section
+                    const Text(
+                      'Basic Information',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF00ACC1),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _buildDetailCard('Temperament', highestPrediction.temperament, Icons.psychology, temperamentDescriptions[highestPrediction.temperament]),
+                    _buildDetailCard('Social Behavior', highestPrediction.socialBehavior, Icons.group, socialBehaviorDescriptions[highestPrediction.socialBehavior]),
+                    _buildDetailCard('Compatibility Notes', highestPrediction.compatibilityNotes, Icons.info),
+                    const SizedBox(height: 30),
+                    
+                    // Habitat Information section
+                    const Text(
+                      'Habitat Information',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF00ACC1),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _buildDetailCard('pH Range', highestPrediction.phRange.isNotEmpty ? highestPrediction.phRange : 'Unknown', Icons.science),
+                    _buildDetailCard('Minimum Tank Size', highestPrediction.minimumTankSize.isNotEmpty ? highestPrediction.minimumTankSize : 'Unknown', Icons.water_drop),
+                    _buildDetailCard(
+                      'Temperature Range',
+                      (highestPrediction.temperatureRange.isNotEmpty &&
+                              highestPrediction.temperatureRange.toLowerCase() != 'unknown')
+                          ? '${highestPrediction.temperatureRange} °C'
+                          : 'Unknown',
+                      Icons.thermostat,
+                    ),
+                    _buildDetailCard('Tank Level', highestPrediction.tankLevel.isNotEmpty ? highestPrediction.tankLevel : 'Unknown', Icons.layers, tankLevelDescriptions[highestPrediction.tankLevel]),
+                    const SizedBox(height: 30),
+                    
+                    // Diet Information section
+                    const Text(
+                      'Diet Information',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF00ACC1),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    // Diet recommendation with expandable groups using Supabase data
+                    if (widget.careData?.containsKey('error') == true)
+                      Text(widget.careData!['error'], style: const TextStyle(color: Colors.red)),
+                    if (widget.careData?.containsKey('error') != true) ...[
+                      Builder(
+                        builder: (context) {
+                          final dietData = widget.careData ?? {
+                            'diet_type': highestPrediction.diet,
+                            'preferred_foods': highestPrediction.preferredFood,
+                            'feeding_frequency': highestPrediction.feedingFrequency,
+                            'portion_size': 'Small amounts that can be consumed in 2-3 minutes',
+                            'overfeeding_risks': 'Can lead to water quality issues and health problems',
+                            'feeding_notes': 'Follow standard feeding guidelines for this species',
+                          };
+                          final fields = [
+                            {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
+                            {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
+                            {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
+                            {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
+                            {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
+                            {'label': 'Feeding Notes', 'key': 'feeding_notes', 'icon': Icons.psychology},
+                          ];
+                          final List<List<Map<String, dynamic>>> fieldGroups = [
+                            fields.sublist(0, 2),
+                            fields.sublist(2, 4),
+                            fields.sublist(4, 6),
+                          ];
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ...fieldGroups.map((group) => _RecommendationExpansionGroup(fields: group, data: dietData)).toList(),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                    const SizedBox(height: 40),
+                    
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 56,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Color(0xFF00ACC1),
+                                  Color(0xFF26C6DA),
+                                  Color(0xFF4DD0E1),
+                                ],
+                                stops: [0.0, 0.5, 1.0],
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 6),
+                                  spreadRadius: 0,
+                                ),
+                                BoxShadow(
+                                  color: const Color(0xFF4DD0E1).withOpacity(0.2),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 8),
+                                  spreadRadius: -2,
+                                ),
+                              ],
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  HapticFeedback.mediumImpact();
+                                  if (widget.canSave()) {
+                                    widget.savePredictions([highestPrediction]);
+                                  } else {
+                                    // Show auth required dialog
+                                    showDialog(
+                                      context: context,
+                                      builder: (BuildContext context) => AuthRequiredDialog(
+                                        title: 'Sign In Required',
+                                        message: 'You need to sign in to save fish captures to your collection.',
+                                      ),
+                                    );
+                                  }
+                                },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        'Save to Collection',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.white,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Container(
+                            height: 56,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Color(0xFF00ACC1),
+                                  Color(0xFF26C6DA),
+                                  Color(0xFF4DD0E1),
+                                ],
+                                stops: [0.0, 0.5, 1.0],
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF00ACC1).withOpacity(0.3),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 6),
+                                  spreadRadius: 0,
+                                ),
+                                BoxShadow(
+                                  color: const Color(0xFF4DD0E1).withOpacity(0.2),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 8),
+                                  spreadRadius: -2,
+                                ),
+                              ],
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  HapticFeedback.mediumImpact();
+                                  if (widget.canSave()) {
+                                    // Navigate to sync screen directly without saving
+                                    Navigator.pushReplacement(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => HomePage(
+                                          initialTabIndex: 1,
+                                          initialFish: highestPrediction.commonName,
+                                          initialFishImage: io.File(widget.imageFile.path),
+                                        ),
+                                      ),
+                                    );
+                                  } else {
+                                    // Show auth required dialog
+                                    showDialog(
+                                      context: context,
+                                      builder: (BuildContext context) => AuthRequiredDialog(
+                                        title: 'Sign In Required',
+                                        message: 'You need to sign in to access fish compatibility checking.',
+                                      ),
+                                    );
+                                  }
+                                },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        'Check Compatibility',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.white,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    Center(
+                      child: TextButton.icon(
+                        onPressed: _scrollToTop,
+                        icon: const Icon(Icons.arrow_upward, color: Color(0xFF00ACC1)),
+                        label: const Text(
+                          'Back to Top',
+                          style: TextStyle(
+                            color: Color(0xFF00ACC1),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoCard(String label, String value, IconData icon) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          icon,
+          color: const Color(0xFF00ACC1),
+          size: 28,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF00ACC1),
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.grey[600],
+            fontWeight: FontWeight.w500,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailCard(String label, String value, IconData icon, [String? description]) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00ACC1).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              icon,
+              color: const Color(0xFF00ACC1),
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF00ACC1),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                RichText(
+                  text: TextSpan(
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: Colors.grey[700],
+                      height: 1.4,
+                    ),
+                    children: [
+                      TextSpan(
+                        text: value,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      if (description != null)
+                        TextSpan(
+                          text: ' — $description',
+                          style: const TextStyle(fontWeight: FontWeight.normal),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -817,7 +1459,7 @@ class CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
-  void _savePredictions(List<FishPrediction> predictions) async {
+  Future<void> _savePredictions(List<FishPrediction> predictions) async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
       // Show auth required dialog with redirect to homepage after login
@@ -959,421 +1601,13 @@ class CaptureScreenState extends State<CaptureScreen> {
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (BuildContext context) {
-          return WillPopScope(
-            onWillPop: () async {
-              // Redirect to homepage initial state instead of going back
-              Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                MaterialPageRoute(
-                  builder: (context) => const HomePage(initialTabIndex: 0),
-                ),
-                (route) => false,
-              );
-              return false;
-            },
-            child: Scaffold(
-              backgroundColor: Colors.white,
-              appBar: AppBar(
-                backgroundColor: Colors.white,
-                elevation: 0,
-                leading: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Color(0xFF00ACC1)),
-                  onPressed: () {
-                    // Redirect to homepage initial state instead of going back
-                    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                      MaterialPageRoute(
-                        builder: (context) => const HomePage(initialTabIndex: 0),
-                      ),
-                      (route) => false,
-                    );
-                  },
-                ),
-                title: const Text(
-                  'Fish Identification Results',
-                  style: TextStyle(
-                    color: Color(0xFF00ACC1),
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              body: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Image container with fish name overlay
-                    Stack(
-                      children: [
-                        SizedBox(
-                          width: double.infinity,
-                          height: 350,
-                          child: kIsWeb
-                              ? Image.network(
-                                  imageFile.path,
-                                  fit: BoxFit.cover,
-                                )
-                              : Image.file(
-                                  io.File(imageFile.path),
-                                  fit: BoxFit.cover,
-                                ),
-                        ),
-                        // Fish name overlay positioned higher for better visibility
-                        Positioned(
-                          bottom: 15,
-                          left: 0,
-                          right: 0,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.black.withOpacity(0.8),
-                                  Colors.black.withOpacity(0.95),
-                                ],
-                              ),
-                            ),
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  highestPrediction.commonName,
-                                  style: const TextStyle(
-                                    fontSize: 36,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                    shadows: [
-                                      Shadow(
-                                        offset: Offset(1, 1),
-                                        blurRadius: 3,
-                                        color: Colors.black54,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  highestPrediction.scientificName,
-                                  style: const TextStyle(
-                                    fontSize: 22,
-                                    fontStyle: FontStyle.italic,
-                                    color: Colors.white,
-                                    shadows: [
-                                      Shadow(
-                                        offset: Offset(1, 1),
-                                        blurRadius: 3,
-                                        color: Colors.black54,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    
-                    // Floating info card
-                    Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Transform.translate(
-                        offset: const Offset(0, -30),
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
-                                blurRadius: 20,
-                                offset: const Offset(0, 10),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceAround,
-                            children: [
-                              _buildInfoCard('Max Size', highestPrediction.maxSize, Icons.straighten),
-                              _buildInfoCard('Lifespan', highestPrediction.lifespan, Icons.timer),
-                              _buildInfoCard('Water Type', highestPrediction.waterType, Icons.water),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    
-                    // About this fish section
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          DescriptionWidget(
-                            description: highestPrediction.description,
-                            maxLines: 6,
-                          ),
-                          const SizedBox(height: 30),
-                          
-                          // Image gallery
-                          FishImagesGrid(fishName: highestPrediction.commonName),
-                          const SizedBox(height: 30),
-                          
-                          // Basic Information section
-                          const Text(
-                            'Basic Information',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF00ACC1),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          _buildDetailCard('Temperament', highestPrediction.temperament, Icons.psychology),
-                          _buildDetailCard('Social Behavior', highestPrediction.socialBehavior, Icons.group),
-                          _buildDetailCard('Compatibility Notes', highestPrediction.compatibilityNotes, Icons.info),
-                          const SizedBox(height: 30),
-                          
-                          // Habitat Information section
-                          const Text(
-                            'Habitat Information',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF00ACC1),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          _buildDetailCard('pH Range', highestPrediction.phRange.isNotEmpty ? highestPrediction.phRange : 'Unknown', Icons.science),
-                          _buildDetailCard('Minimum Tank Size', highestPrediction.minimumTankSize.isNotEmpty ? highestPrediction.minimumTankSize : 'Unknown', Icons.water_drop),
-                          _buildDetailCard(
-                            'Temperature Range',
-                            (highestPrediction.temperatureRange.isNotEmpty &&
-                                    highestPrediction.temperatureRange.toLowerCase() != 'unknown')
-                                ? '${highestPrediction.temperatureRange} °C'
-                                : 'Unknown',
-                            Icons.thermostat,
-                          ),
-                          _buildDetailCard('Tank Level', highestPrediction.tankLevel.isNotEmpty ? highestPrediction.tankLevel : 'Unknown', Icons.layers),
-                          const SizedBox(height: 30),
-                          
-                          // Diet Information section
-                          const Text(
-                            'Diet Information',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF00ACC1),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          // Diet recommendation with expandable groups using Supabase data
-                          if (careData?.containsKey('error') == true)
-                            Text(careData!['error'], style: const TextStyle(color: Colors.red)),
-                          if (careData?.containsKey('error') != true) ...[
-                            Builder(
-                              builder: (context) {
-                                final dietData = careData ?? {
-                                  'diet_type': highestPrediction.diet,
-                                  'preferred_foods': highestPrediction.preferredFood,
-                                  'feeding_frequency': highestPrediction.feedingFrequency,
-                                  'portion_size': 'Small amounts that can be consumed in 2-3 minutes',
-                                  'overfeeding_risks': 'Can lead to water quality issues and health problems',
-                                  'feeding_notes': 'Follow standard feeding guidelines for this species',
-                                };
-                                final fields = [
-                                  {'label': 'Diet Type', 'key': 'diet_type', 'icon': Icons.restaurant},
-                                  {'label': 'Preferred Foods', 'key': 'preferred_foods', 'icon': Icons.set_meal},
-                                  {'label': 'Feeding Frequency', 'key': 'feeding_frequency', 'icon': Icons.schedule},
-                                  {'label': 'Portion Size', 'key': 'portion_size', 'icon': Icons.line_weight},
-                                  {'label': 'Overfeeding Risks', 'key': 'overfeeding_risks', 'icon': Icons.error},
-                                  {'label': 'Feeding Notes', 'key': 'feeding_notes', 'icon': Icons.psychology},
-                                ];
-                                final List<List<Map<String, dynamic>>> fieldGroups = [
-                                  fields.sublist(0, 2),
-                                  fields.sublist(2, 4),
-                                  fields.sublist(4, 6),
-                                ];
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    ...fieldGroups.map((group) => _RecommendationExpansionGroup(fields: group, data: dietData)).toList(),
-                                  ],
-                                );
-                              },
-                            ),
-                          ],
-                          const SizedBox(height: 40),
-                          
-                          // Action buttons
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Container(
-                                  height: 56,
-                                  decoration: BoxDecoration(
-                                    gradient: const LinearGradient(
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                      colors: [
-                                        Color(0xFF00ACC1),
-                                        Color(0xFF26C6DA),
-                                        Color(0xFF4DD0E1),
-                                      ],
-                                      stops: [0.0, 0.5, 1.0],
-                                    ),
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: const Color(0xFF00ACC1).withOpacity(0.3),
-                                        blurRadius: 12,
-                                        offset: const Offset(0, 6),
-                                        spreadRadius: 0,
-                                      ),
-                                      BoxShadow(
-                                        color: const Color(0xFF4DD0E1).withOpacity(0.2),
-                                        blurRadius: 20,
-                                        offset: const Offset(0, 8),
-                                        spreadRadius: -2,
-                                      ),
-                                    ],
-                                  ),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: () {
-                                        HapticFeedback.mediumImpact();
-                                        if (_canSave()) {
-                                          _savePredictions([highestPrediction]);
-                                        } else {
-                                          // Show auth required dialog
-                                          showDialog(
-                                            context: context,
-                                            builder: (BuildContext context) => AuthRequiredDialog(
-                                              title: 'Sign In Required',
-                                              message: 'You need to sign in to save fish captures to your collection.',
-                                            ),
-                                          );
-                                        }
-                                      },
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            const Text(
-                                              'Save to Collection',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w700,
-                                                color: Colors.white,
-                                                letterSpacing: 0.5,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Container(
-                                  height: 56,
-                                  decoration: BoxDecoration(
-                                    gradient: const LinearGradient(
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                      colors: [
-                                        Color(0xFF00ACC1),
-                                        Color(0xFF26C6DA),
-                                        Color(0xFF4DD0E1),
-                                      ],
-                                      stops: [0.0, 0.5, 1.0],
-                                    ),
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: const Color(0xFF00ACC1).withOpacity(0.3),
-                                        blurRadius: 12,
-                                        offset: const Offset(0, 6),
-                                        spreadRadius: 0,
-                                      ),
-                                      BoxShadow(
-                                        color: const Color(0xFF4DD0E1).withOpacity(0.2),
-                                        blurRadius: 20,
-                                        offset: const Offset(0, 8),
-                                        spreadRadius: -2,
-                                      ),
-                                    ],
-                                  ),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: () {
-                                        HapticFeedback.mediumImpact();
-                                        if (_canSave()) {
-                                          // Navigate to sync screen directly without saving
-                                          Navigator.pushReplacement(
-                                            context,
-                                            MaterialPageRoute(
-                                              builder: (context) => HomePage(
-                                                initialTabIndex: 1,
-                                                initialFish: highestPrediction.commonName,
-                                                initialFishImage: io.File(imageFile.path),
-                                              ),
-                                            ),
-                                          );
-                                        } else {
-                                          // Show auth required dialog
-                                          showDialog(
-                                            context: context,
-                                            builder: (BuildContext context) => AuthRequiredDialog(
-                                              title: 'Sign In Required',
-                                              message: 'You need to sign in to access fish compatibility checking.',
-                                            ),
-                                          );
-                                        }
-                                      },
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            const Text(
-                                              'Check Compatibility',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w700,
-                                                color: Colors.white,
-                                                letterSpacing: 0.5,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
+        builder: (BuildContext context) => PredictionResultsScreen(
+          imageFile: imageFile,
+          predictions: predictions,
+          careData: careData,
+          savePredictions: _savePredictions,
+          canSave: _canSave,
+        ),
       ),
     );
   }
@@ -1497,92 +1731,6 @@ class CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
-  Widget _buildInfoCard(String label, String value, IconData icon) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          icon,
-          color: const Color(0xFF00ACC1),
-          size: 28,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF00ACC1),
-          ),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            color: Colors.grey[600],
-            fontWeight: FontWeight.w500,
-          ),
-          textAlign: TextAlign.center,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDetailCard(String label, String value, IconData icon) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00ACC1).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              icon,
-              color: const Color(0xFF00ACC1),
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF00ACC1),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-
   Future<void> _captureImage() async {
     if (_controller == null || !_isCameraAvailable) {
       showCustomNotification(
@@ -1686,7 +1834,7 @@ class CaptureScreenState extends State<CaptureScreen> {
             left: 16,
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.5),
+                color: Colors.black.withOpacity(0.5),
                 shape: BoxShape.circle,
               ),
               child: IconButton(

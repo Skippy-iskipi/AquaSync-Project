@@ -566,7 +566,7 @@ class _AuthRequiredDialogState extends State<AuthRequiredDialog>
                   ),
                   SizedBox(width: isSmallScreen ? 10 : 12),
                   Text(
-                    widget.actionButtonText ?? 'Sign In / Sign Up',
+                    widget.actionButtonText ?? 'Login / Register',
                     style: TextStyle(
                       fontSize: isSmallScreen ? 14 : 15, // Reduced from 15/16
                       fontWeight: FontWeight.w700,
