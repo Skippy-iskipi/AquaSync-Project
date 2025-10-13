@@ -149,7 +149,8 @@ def find_fish_folder(fish_name: str) -> str:
         if folder_path.exists() and folder_path.is_dir():
             return str(folder_path)
     
-    # If no exact match, try fuzzy matching
+    # If no exact match, try fuzzy matching with preference for shorter/exact matches
+    matches = []
     for folder in base_path.iterdir():
         if folder.is_dir():
             folder_name = folder.name.lower()
@@ -160,7 +161,29 @@ def find_fish_folder(fish_name: str) -> str:
                 folder_name in fish_name_lower or
                 fish_name_lower.replace(' ', '') in folder_name.replace(' ', '') or
                 folder_name.replace(' ', '') in fish_name_lower.replace(' ', '')):
-                return str(folder)
+                
+                # Calculate match score (prefer shorter names and exact matches)
+                score = 0
+                
+                # Exact match (case-insensitive) gets highest score
+                if folder_name == fish_name_lower:
+                    score = 1000
+                # Folder name is exactly the fish name without spaces
+                elif folder_name.replace(' ', '') == fish_name_lower.replace(' ', ''):
+                    score = 900
+                # Fish name equals folder name exactly
+                elif fish_name_lower == folder_name:
+                    score = 800
+                # Prefer shorter folder names (less likely to be a variant)
+                else:
+                    score = 500 - len(folder_name)
+                
+                matches.append((score, str(folder)))
+    
+    # Return the best match (highest score)
+    if matches:
+        matches.sort(key=lambda x: x[0], reverse=True)
+        return matches[0][1]
     
     return None
 

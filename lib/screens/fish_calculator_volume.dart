@@ -585,8 +585,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       showDialog(
         context: context,
         builder: (BuildContext context) => const AuthRequiredDialog(
-          title: 'Sign In Required',
-          message: 'You need to sign in to save fish calculations to your collection.',
+          title: 'Log In Required',
+          message: 'You need to log in to save fish calculations to your collection.',
         ),
       );
       return;

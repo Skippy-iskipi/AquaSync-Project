@@ -16,7 +16,7 @@ class AuthService {
   // Get current session
   Session? get currentSession => _supabase.auth.currentSession;
 
-  // Sign up with email and password
+  // Register with email and password
   Future<AuthResponse> signUpWithEmail({
     required String email,
     required String password,
@@ -37,7 +37,7 @@ class AuthService {
     }
   }
 
-  // Sign in with email and password
+  // Log in with email and password
   Future<AuthResponse> signInWithEmail({
     required String email,
     required String password,
@@ -69,7 +69,7 @@ class AuthService {
     }
   }
 
-  // Sign in with Google
+  // Log in with Google
   Future<void> signInWithGoogle() async {
     try {
       await _supabase.auth.signInWithOAuth(
@@ -88,12 +88,12 @@ class AuthService {
     }
   }
 
-  // Sign out
+  // Log out
   Future<void> signOut() async {
     try {
-      // Sign out from Google if signed in
+      // Log out from Google if logged in
       await _googleSignIn.signOut();
-      // Sign out from Supabase
+      // Log out from Supabase
       await _supabase.auth.signOut();
     } catch (error) {
       rethrow;

@@ -56,7 +56,7 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Password updated successfully! Please sign in with your new password.'),
+            content: Text('Password updated successfully! Please log in with your new password.'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 3),
           ),

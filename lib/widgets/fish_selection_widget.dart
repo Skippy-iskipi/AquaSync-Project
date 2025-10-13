@@ -1263,10 +1263,9 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
                             // Check Compatibility Button - Only show if onCheckCompatibility is provided and there are selected fish
                             if (widget.onCheckCompatibility != null && widget.selectedFish.isNotEmpty) ...[
                               Expanded(
-                                child: ElevatedButton.icon(
+                                child: ElevatedButton(
                                   onPressed: widget.canProceed ? widget.onCheckCompatibility : null,
-                                  icon: const Icon(Icons.check_circle_outline),
-                                  label: Text(widget.nextButtonText ?? 'Check Compatibility'),
+                                  child: Text(widget.nextButtonText ?? 'Check Compatibility'),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFF00BCD4),
                                     foregroundColor: Colors.white,
@@ -1282,10 +1281,9 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
                             // Next/Save Button - Only show if onNext is provided and there are selected fish
                             if (widget.onNext != null && widget.selectedFish.isNotEmpty) ...[
                               Expanded(
-                                child: ElevatedButton.icon(
+                                child: ElevatedButton(
                                   onPressed: widget.canProceed ? widget.onNext : null,
-                                  icon: Icon(widget.isLastStep ? Icons.save : Icons.arrow_forward),
-                                  label: Text(widget.nextButtonText ?? (widget.isLastStep ? 'Save Tank' : 'Next')),
+                                  child: Text(widget.nextButtonText ?? (widget.isLastStep ? 'Save Tank' : 'Next')),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFF00BCD4),
                                     foregroundColor: Colors.white,

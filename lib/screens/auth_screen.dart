@@ -534,7 +534,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                   child: _isLoading
                                       ? const CircularProgressIndicator(color: Colors.white)
                                       : Text(
-                                          _isLogin ? 'Sign In' : 'Sign Up',
+                                          _isLogin ? 'Log In' : 'Register',
                                           style: const TextStyle(
                                             fontSize: 16,
                                             fontWeight: FontWeight.bold,
@@ -617,7 +617,7 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                     ),
                                     child: Text(
-                                      _isLogin ? 'Sign Up' : 'Sign In',
+                                      _isLogin ? 'Register' : 'Log In',
                                       style: const TextStyle(
                                         color: Color(0xFF00BFB3),
                                         decoration: TextDecoration.underline,

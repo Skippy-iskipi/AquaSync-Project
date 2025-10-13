@@ -830,8 +830,8 @@ class _DietCalculatorState extends State<DietCalculator> with SingleTickerProvid
         showDialog(
           context: context,
           builder: (BuildContext context) => const AuthRequiredDialog(
-            title: 'Sign In Required',
-            message: 'You need to sign in to save diet calculations to your collection.',
+            title: 'Log In Required',
+            message: 'You need to log in to save diet calculations to your collection.',
           ),
         );
         return;

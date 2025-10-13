@@ -882,7 +882,7 @@ class _TankManagementState extends State<TankManagement> {
       builder: (context) => AuthRequiredDialog(
         title: title,
         message: message,
-        actionButtonText: 'Sign In to Continue',
+        actionButtonText: 'Log In to Continue',
         onActionPressed: () {
           // Navigate to auth screen
           Navigator.of(context).push(

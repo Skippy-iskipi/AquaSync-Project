@@ -555,8 +555,8 @@ class _PredictionResultsScreenState extends State<PredictionResultsScreen> {
                                     showDialog(
                                       context: context,
                                       builder: (BuildContext context) => AuthRequiredDialog(
-                                        title: 'Sign In Required',
-                                        message: 'You need to sign in to save fish captures to your collection.',
+                                        title: 'Log In Required',
+                                        message: 'You need to log in to save fish captures to your collection.',
                                       ),
                                     );
                                   }
@@ -636,8 +636,8 @@ class _PredictionResultsScreenState extends State<PredictionResultsScreen> {
                                     showDialog(
                                       context: context,
                                       builder: (BuildContext context) => AuthRequiredDialog(
-                                        title: 'Sign In Required',
-                                        message: 'You need to sign in to access fish compatibility checking.',
+                                        title: 'Log In Required',
+                                        message: 'You need to log in to access fish compatibility checking.',
                                       ),
                                     );
                                   }
@@ -1466,8 +1466,8 @@ class CaptureScreenState extends State<CaptureScreen> {
       showDialog(
         context: context,
         builder: (BuildContext context) => AuthRequiredDialog(
-          title: 'Sign In Required',
-          message: 'You need to sign in to save fish captures to your collection.',
+          title: 'Log In Required',
+          message: 'You need to log in to save fish captures to your collection.',
           onActionPressed: () async {
             // Close the dialog first
             Navigator.of(context).pop();
@@ -1500,8 +1500,8 @@ class CaptureScreenState extends State<CaptureScreen> {
       showDialog(
         context: context,
         builder: (BuildContext context) => AuthRequiredDialog(
-          title: 'Sign In Required',
-          message: 'You need to sign in to save fish captures to your collection.',
+          title: 'Log In Required',
+          message: 'You need to log in to save fish captures to your collection.',
         ),
       );
       return;

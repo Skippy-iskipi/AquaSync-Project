@@ -71,7 +71,7 @@ class EmailNotConfirmedScreen extends StatelessWidget {
                   // AuthWrapper will navigate to AuthScreen after signOut
                 },
                 child: const Text(
-                  'Sign Out',
+                  'Log Out',
                   style: TextStyle(
                     color: Colors.red,
                     fontSize: 16,

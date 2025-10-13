@@ -2153,8 +2153,8 @@ class _SyncScreenState extends State<SyncScreen> {
       showDialog(
         context: context,
         builder: (BuildContext context) => const AuthRequiredDialog(
-          title: 'Sign In Required',
-          message: 'You need to sign in to save compatibility results to your collection.',
+          title: 'Log In Required',
+          message: 'You need to log in to save compatibility results to your collection.',
         ),
       );
       return;

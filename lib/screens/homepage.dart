@@ -1008,13 +1008,13 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
                                       const Icon(Icons.logout, color: Color(0xFF00BFB3), size: 16),
                                       const SizedBox(width: 6),
                                       Text(
-                                        'Sign Out',
-                                        style: TextStyle(
-                                          color: Colors.grey[800],
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13,
-                                        ),
-                                      ),
+                        'Log Out',
+                        style: TextStyle(
+                          color: Colors.grey[800],
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
                                     ],
                                   ),
                                 ),
@@ -1050,7 +1050,7 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
           ),
           icon: const Icon(Icons.login, size: 20),
           label: const Text(
-            'Sign In / Sign Up',
+            'Log In / Register',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
@@ -1171,7 +1171,7 @@ class _UserProfileSheetState extends State<_UserProfileSheet> {
         context: context,
         builder: (context) => AuthRequiredDialog(
           title: 'Authentication Required',
-          message: 'Please sign in to create a new tank.',
+          message: 'Please log in to create a new tank.',
         ),
       );
       // Listen for authentication state change

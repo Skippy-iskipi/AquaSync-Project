@@ -59,7 +59,11 @@ class _AddEditTankState extends State<AddEditTank> {
   bool _isLoadingTemplate = false; // Flag to prevent volume recalculation during template load
   double? _templateTargetVolume; // Target volume when loading from template
   Set<String> _selectedTemplateIds = {}; // Track which templates have been loaded
-  Map<String, int> _fishFromDietCalculator = {}; // Track fish added from diet calculator
+  Map<String, int> _fishFromDietCalculator = {}; // Track fish added from diet calculator (deprecated - use _fishFromDietCalculators)
+  Map<String, Map<String, int>> _fishFromCompatibilityResults = {}; // Track fish from each compatibility result
+  Map<String, Map<String, int>> _fishFromDietCalculators = {}; // Track fish from each diet calculator
+  Set<String> _expandedCompatibilityResults = {}; // Track which compatibility results are expanded to show all fish
+  Set<String> _expandedPreferredFoods = {}; // Track which fish have their preferred foods expanded in summary
   
 
   // Feed inventory
@@ -253,20 +257,48 @@ class _AddEditTankState extends State<AddEditTank> {
     }
   }
 
-  // Load template from saved calculator result
+  // Load template from saved calculator result (Tank calculators - only one at a time)
   void _loadTemplateFromCalculation(String source, String tankShape, String tankVolumeStr, Map<String, int> fishSelections, String templateId) {
     // Check if already selected - if so, deselect it
     if (_selectedTemplateIds.contains(templateId)) {
       setState(() {
         _selectedTemplateIds.remove(templateId);
-        // Clear all data when deselecting tank calculator
+        
+        // Clear all template tracking
+        _fishFromDietCalculator.clear();
+        _fishFromDietCalculators.clear();
+        _fishFromCompatibilityResults.clear();
+        _expandedCompatibilityResults.clear();
+        _expandedPreferredFoods.clear();
+        
+        // Clear all fish data
         _fishSelections.clear();
         _fishQuantityControllers.forEach((key, controller) => controller.dispose());
         _fishQuantityControllers.clear();
+        
+        // Clear all feed data
         _availableFeeds.clear();
         _feedQuantityControllers.forEach((key, controller) => controller.dispose());
         _feedQuantityControllers.clear();
-        _fishFromDietCalculator.clear();
+        _feedDurationData.clear();
+        _incompatibleFeeds.clear();
+        
+        // Clear tank inputs (back to defaults)
+        _nameController.clear();
+        _lengthController.clear();
+        _widthController.clear();
+        _heightController.clear();
+        _selectedShape = 'rectangle';
+        _selectedUnit = 'CM';
+        _calculatedVolume = 0.0;
+        
+        // Clear compatibility and feeding data
+        _compatibilityResults = {};
+        _feedingRecommendations = {};
+        _recommendedFishQuantities = {};
+        _feedPortionData = {};
+        _fishTankShapeWarnings = {};
+        _fishDetails = {};
       });
       return;
     }
@@ -282,8 +314,11 @@ class _AddEditTankState extends State<AddEditTank> {
     final dimensions = _calculateDimensionsFromVolume(volume, tankShape);
     
     setState(() {
-      // Clear ALL selections when switching tank calculators
+      // Clear ALL selections when switching tank calculators (only one tank calculator allowed)
       _selectedTemplateIds.clear();
+      _fishFromDietCalculator.clear();
+      _fishFromDietCalculators.clear();
+      _fishFromCompatibilityResults.clear();
       
       // Mark this template as selected
       _selectedTemplateIds.add(templateId);
@@ -308,7 +343,6 @@ class _AddEditTankState extends State<AddEditTank> {
       _availableFeeds.clear();
       _feedQuantityControllers.forEach((key, controller) => controller.dispose());
       _feedQuantityControllers.clear();
-      _fishFromDietCalculator.clear(); // Clear diet tracking
       
       // Add fish from this template
       for (final entry in fishSelections.entries) {
@@ -335,85 +369,140 @@ class _AddEditTankState extends State<AddEditTank> {
     });
   }
 
-  // Load template from diet calculator (fish + feeds)
+  // Load template from compatibility result (allows MULTIPLE selections)
+  void _loadTemplateFromCompatibility(dynamic result, String templateId) {
+    // Check if already selected - if so, deselect it
+    if (_selectedTemplateIds.contains(templateId)) {
+      setState(() {
+        _selectedTemplateIds.remove(templateId);
+        _fishFromCompatibilityResults.remove(templateId);
+        _expandedCompatibilityResults.remove(templateId);
+        
+        // Clear ALL data and reset to defaults when deselecting
+        _fishSelections.clear();
+        _fishQuantityControllers.forEach((key, controller) => controller.dispose());
+        _fishQuantityControllers.clear();
+        
+        _availableFeeds.clear();
+        _feedQuantityControllers.forEach((key, controller) => controller.dispose());
+        _feedQuantityControllers.clear();
+        _feedDurationData.clear();
+        _incompatibleFeeds.clear();
+        
+        // Clear tank inputs (back to defaults)
+        _nameController.clear();
+        _lengthController.clear();
+        _widthController.clear();
+        _heightController.clear();
+        _selectedShape = 'rectangle';
+        _selectedUnit = 'CM';
+        _calculatedVolume = 0.0;
+        
+        // Clear all template tracking
+        _fishFromDietCalculator.clear();
+        _fishFromDietCalculators.clear();
+        _fishFromCompatibilityResults.clear();
+        _selectedTemplateIds.clear();
+        
+        // Clear compatibility and feeding data
+        _compatibilityResults = {};
+        _feedingRecommendations = {};
+        _recommendedFishQuantities = {};
+        _feedPortionData = {};
+        _fishTankShapeWarnings = {};
+        _fishDetails = {};
+      });
+      return;
+    }
+    
+    setState(() {
+      // Mark this compatibility result as selected
+      _selectedTemplateIds.add(templateId);
+      
+      // Track fish from THIS compatibility result
+      _fishFromCompatibilityResults[templateId] = Map<String, int>.from(result.selectedFish);
+      
+      // MERGE fish selections with existing (from tank calculators, other compatibility results, or diet calculators)
+      for (final entry in result.selectedFish.entries) {
+        final currentQty = _fishSelections[entry.key] ?? 0;
+        final entryValue = (entry.value is int) ? entry.value as int : (entry.value as num).toInt();
+        final newQty = currentQty + entryValue;
+        _fishSelections[entry.key] = newQty;
+        
+        if (_fishQuantityControllers.containsKey(entry.key)) {
+          _fishQuantityControllers[entry.key]!.text = newQty.toString();
+        } else {
+          _fishQuantityControllers[entry.key] = TextEditingController(text: newQty.toString());
+        }
+      }
+    });
+    
+    // Run compatibility checks after state is set
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkCompatibility();
+      _checkAllFishTankShapeCompatibility();
+      _calculateFeedDurations();
+      _analyzeFeedCompatibility();
+    });
+  }
+
+  // Load template from diet calculator (allows MULTIPLE selections)
   void _loadTemplateFromDietCalculation(DietCalculation calc) {
     final templateId = 'diet_${calc.id}';
     
     // Check if already selected - if so, deselect it
     if (_selectedTemplateIds.contains(templateId)) {
       setState(() {
-        // Clear all diet calculator selections
-        _selectedTemplateIds.removeWhere((id) => id.startsWith('diet_'));
+        _selectedTemplateIds.remove(templateId);
+        _fishFromDietCalculators.remove(templateId);
         
-        // Restore fish quantities by subtracting the diet calculator's contribution
-        for (final entry in _fishFromDietCalculator.entries) {
-          final fishName = entry.key;
-          final dietQty = entry.value;
-          final currentQty = _fishSelections[fishName] ?? 0;
-          final newQty = currentQty - dietQty;
-          
-          if (newQty <= 0) {
-            // Remove fish completely if quantity becomes 0 or negative
-            _fishSelections.remove(fishName);
-            _fishQuantityControllers[fishName]?.dispose();
-            _fishQuantityControllers.remove(fishName);
-          } else {
-            _fishSelections[fishName] = newQty;
-            if (_fishQuantityControllers.containsKey(fishName)) {
-              _fishQuantityControllers[fishName]!.text = newQty.toString();
-            }
-          }
-        }
+        // Clear ALL data and reset to defaults when deselecting
+        _fishSelections.clear();
+        _fishQuantityControllers.forEach((key, controller) => controller.dispose());
+        _fishQuantityControllers.clear();
+        
+        _availableFeeds.clear();
+        _feedQuantityControllers.forEach((key, controller) => controller.dispose());
+        _feedQuantityControllers.clear();
+        _feedDurationData.clear();
+        _incompatibleFeeds.clear();
+        
+        // Clear tank inputs (back to defaults)
+        _nameController.clear();
+        _lengthController.clear();
+        _widthController.clear();
+        _heightController.clear();
+        _selectedShape = 'rectangle';
+        _selectedUnit = 'CM';
+        _calculatedVolume = 0.0;
+        
+        // Clear all template tracking
         _fishFromDietCalculator.clear();
+        _fishFromDietCalculators.clear();
+        _fishFromCompatibilityResults.clear();
+        _expandedCompatibilityResults.clear();
+        _expandedPreferredFoods.clear();
+        _selectedTemplateIds.clear();
         
-        // Feeds are NOT auto-added from diet calculator, so no need to clear them
-      });
-      
-      // Recalculate after deselection
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _checkCompatibility();
-        _checkAllFishTankShapeCompatibility();
-        _calculateFeedDurations();
-        _analyzeFeedCompatibility(); // Update incompatible feeds list
+        // Clear compatibility and feeding data
+        _compatibilityResults = {};
+        _feedingRecommendations = {};
+        _recommendedFishQuantities = {};
+        _feedPortionData = {};
+        _fishTankShapeWarnings = {};
+        _fishDetails = {};
       });
       return;
     }
     
     setState(() {
-      // First, remove fish from previous diet calculator template if any
-      if (_fishFromDietCalculator.isNotEmpty) {
-        for (final entry in _fishFromDietCalculator.entries) {
-          final fishName = entry.key;
-          final dietQty = entry.value;
-          final currentQty = _fishSelections[fishName] ?? 0;
-          final newQty = currentQty - dietQty;
-          
-          if (newQty <= 0) {
-            _fishSelections.remove(fishName);
-            _fishQuantityControllers[fishName]?.dispose();
-            _fishQuantityControllers.remove(fishName);
-          } else {
-            _fishSelections[fishName] = newQty;
-            if (_fishQuantityControllers.containsKey(fishName)) {
-              _fishQuantityControllers[fishName]!.text = newQty.toString();
-            }
-          }
-        }
-      }
-      
-      // Clear any other diet calculator selections (only one diet template allowed)
-      _selectedTemplateIds.removeWhere((id) => id.startsWith('diet_'));
-      
-      // Clear previous diet fish tracking
-      _fishFromDietCalculator.clear();
-      
-      // Mark this template as selected
+      // Mark this diet calculator as selected
       _selectedTemplateIds.add(templateId);
       
-      // Track fish from NEW diet calculator for proper deselection later
-      _fishFromDietCalculator = Map<String, int>.from(calc.fishSelections);
+      // Track fish from THIS diet calculator
+      _fishFromDietCalculators[templateId] = Map<String, int>.from(calc.fishSelections);
       
-      // MERGE fish selections with existing (from tank calculator if any)
+      // MERGE fish selections with existing (from tank calculators, other diet calculators, or compatibility results)
       for (final entry in calc.fishSelections.entries) {
         final currentQty = _fishSelections[entry.key] ?? 0;
         final newQty = currentQty + entry.value;
@@ -446,10 +535,11 @@ class _AddEditTankState extends State<AddEditTank> {
     final fishVolumeCalculations = logBookProvider.savedFishVolumeCalculations;
     final fishCalculations = logBookProvider.savedFishCalculations;
     final dietCalculations = logBookProvider.savedDietCalculations;
+    final compatibilityResults = logBookProvider.savedCompatibilityResults;
     
     final totalTemplates = waterCalculations.length + 
                           fishVolumeCalculations.length + fishCalculations.length + 
-                          dietCalculations.length;
+                          dietCalculations.length + compatibilityResults.length;
     
     if (totalTemplates == 0) {
       return const SizedBox.shrink();
@@ -501,7 +591,7 @@ class _AddEditTankState extends State<AddEditTank> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text(
-                          'Load Template',
+                          'Saved Results',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
@@ -509,7 +599,7 @@ class _AddEditTankState extends State<AddEditTank> {
                           ),
                         ),
                         Text(
-                          '$totalTemplates template${totalTemplates == 1 ? '' : 's'} from calculators',
+                          '$totalTemplates saved result${totalTemplates == 1 ? '' : 's'}',
                           style: TextStyle(
                             fontSize: 11,
                             color: Colors.grey[600],
@@ -549,8 +639,8 @@ class _AddEditTankState extends State<AddEditTank> {
                             children: [
                               Text(
                                 _selectedTemplateIds.isEmpty
-                                    ? 'Select templates to load:'
-                                    : '${_selectedTemplateIds.length} template${_selectedTemplateIds.length == 1 ? '' : 's'} selected',
+                                    ? 'Select saved results to load:'
+                                    : '${_selectedTemplateIds.length} result${_selectedTemplateIds.length == 1 ? '' : 's'} selected',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: Colors.black87,
@@ -561,15 +651,42 @@ class _AddEditTankState extends State<AddEditTank> {
                                 TextButton(
                                   onPressed: () {
                                     setState(() {
+                                      // Clear all template selections
                                       _selectedTemplateIds.clear();
-                                      // Clear all loaded data
+                                      _fishFromDietCalculator.clear();
+                                      _fishFromDietCalculators.clear();
+                                      _fishFromCompatibilityResults.clear();
+                                      _expandedCompatibilityResults.clear();
+                                      _expandedPreferredFoods.clear();
+                                      
+                                      // Clear all fish data
                                       _fishSelections.clear();
                                       _fishQuantityControllers.forEach((key, controller) => controller.dispose());
                                       _fishQuantityControllers.clear();
+                                      
+                                      // Clear all feed data
                                       _availableFeeds.clear();
                                       _feedQuantityControllers.forEach((key, controller) => controller.dispose());
                                       _feedQuantityControllers.clear();
-                                      _fishFromDietCalculator.clear();
+                                      _feedDurationData.clear();
+                                      _incompatibleFeeds.clear();
+                                      
+                                      // Clear tank inputs (back to defaults)
+                                      _nameController.clear();
+                                      _lengthController.clear();
+                                      _widthController.clear();
+                                      _heightController.clear();
+                                      _selectedShape = 'rectangle';
+                                      _selectedUnit = 'CM';
+                                      _calculatedVolume = 0.0;
+                                      
+                                      // Clear compatibility and feeding data
+                                      _compatibilityResults = {};
+                                      _feedingRecommendations = {};
+                                      _recommendedFishQuantities = {};
+                                      _feedPortionData = {};
+                                      _fishTankShapeWarnings = {};
+                                      _fishDetails = {};
                                     });
                                   },
                                   style: TextButton.styleFrom(
@@ -869,6 +986,182 @@ class _AddEditTankState extends State<AddEditTank> {
                                 ),
                               );
                             }).toList(),
+                          ],
+                          
+                          // Compatibility Results
+                          if (compatibilityResults.isNotEmpty) ...[
+                            Text(
+                              'Compatibility Checker (${compatibilityResults.length})',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF006064),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            ...compatibilityResults.take(5).map((result) {
+                              final templateId = 'compat_${result.id}';
+                              final isSelected = _selectedTemplateIds.contains(templateId);
+                              final isExpanded = _expandedCompatibilityResults.contains(templateId);
+                              
+                              // Build fish display
+                              final allFishNames = result.selectedFish.keys.toList();
+                              final fishNames = allFishNames.take(2).join(', ');
+                              final remainingCount = allFishNames.length > 2 ? allFishNames.length - 2 : 0;
+                              final fishDisplay = result.selectedFish.isEmpty 
+                                  ? 'No fish' 
+                                  : remainingCount > 0 
+                                      ? '$fishNames +${remainingCount} more'
+                                      : fishNames;
+                              
+                              // Get compatibility status with color
+                              Color statusColor;
+                              String statusText;
+                              IconData statusIcon;
+                              
+                              if (result.compatibilityLevel.toLowerCase() == 'compatible') {
+                                statusColor = Colors.green;
+                                statusText = 'Compatible';
+                                statusIcon = Icons.check_circle;
+                              } else if (result.compatibilityLevel.toLowerCase().contains('conditional')) {
+                                statusColor = Colors.orange;
+                                statusText = 'Conditional';
+                                statusIcon = Icons.warning;
+                              } else {
+                                statusColor = Colors.red;
+                                statusText = 'Incompatible';
+                                statusIcon = Icons.cancel;
+                              }
+                              
+                              return GestureDetector(
+                                onTap: () => _loadTemplateFromCompatibility(result, templateId),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? const Color(0xFF00BCD4).withOpacity(0.15)
+                                        : Colors.grey[50],
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? const Color(0xFF00BCD4)
+                                          : Colors.grey[300]!,
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: Text(
+                                                        isExpanded 
+                                                            ? allFishNames.map((name) {
+                                                                final qty = result.selectedFish[name] ?? 1;
+                                                                return qty > 1 ? '$name (x$qty)' : name;
+                                                              }).join(', ')
+                                                            : fishDisplay,
+                                                        style: const TextStyle(
+                                                          fontSize: 13,
+                                                          fontWeight: FontWeight.w600,
+                                                          color: Color(0xFF006064),
+                                                        ),
+                                                        maxLines: isExpanded ? null : 1,
+                                                        overflow: isExpanded ? null : TextOverflow.ellipsis,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Container(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                      decoration: BoxDecoration(
+                                                        color: statusColor.withOpacity(0.1),
+                                                        borderRadius: BorderRadius.circular(4),
+                                                        border: Border.all(color: statusColor.withOpacity(0.3)),
+                                                      ),
+                                                      child: Row(
+                                                        mainAxisSize: MainAxisSize.min,
+                                                        children: [
+                                                          Icon(statusIcon, color: statusColor, size: 10),
+                                                          const SizedBox(width: 4),
+                                                          Text(
+                                                            statusText,
+                                                            style: TextStyle(
+                                                              fontSize: 9,
+                                                              color: statusColor,
+                                                              fontWeight: FontWeight.bold,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  children: [
+                                                    Text(
+                                                      result.dateChecked.toString().split(' ')[0],
+                                                      style: TextStyle(
+                                                        fontSize: 9,
+                                                        color: Colors.grey[500],
+                                                      ),
+                                                    ),
+                                                    if (remainingCount > 0) ...[
+                                                      const SizedBox(width: 8),
+                                                      const Text(
+                                                        '•',
+                                                        style: TextStyle(
+                                                          fontSize: 9,
+                                                          color: Colors.grey,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      GestureDetector(
+                                                        onTap: () {
+                                                          setState(() {
+                                                            if (isExpanded) {
+                                                              _expandedCompatibilityResults.remove(templateId);
+                                                            } else {
+                                                              _expandedCompatibilityResults.add(templateId);
+                                                            }
+                                                          });
+                                                        },
+                                                        child: Text(
+                                                          isExpanded ? 'See less' : 'See more',
+                                                          style: const TextStyle(
+                                                            fontSize: 10,
+                                                            color: Color(0xFF00BCD4),
+                                                            fontWeight: FontWeight.w600,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          Icon(
+                                            isSelected ? Icons.check_circle : Icons.arrow_forward_ios,
+                                            size: isSelected ? 20 : 12,
+                                            color: const Color(0xFF00BCD4),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                            const SizedBox(height: 12),
                           ],
                           
                           // Diet Calculator Results
@@ -2088,9 +2381,9 @@ class _AddEditTankState extends State<AddEditTank> {
             ),
             
             // Navigation buttons (hide on fish selection step to avoid overflow)
-            if (widget.lockedMode)
+            if (widget.lockedMode && _currentStep != 1) // Hide bottom Update button when on fish selection step in locked mode
               _buildLockedModeButtons()
-            else if (_currentStep != 1) // Hide on fish selection step - use AppBar back button instead
+            else if (!widget.lockedMode && _currentStep != 1) // Hide on fish selection step - use AppBar back button instead
               _buildNavigationButtons(),
           ],
         ),
@@ -2135,7 +2428,6 @@ class _AddEditTankState extends State<AddEditTank> {
           onPressed: _currentStep == _stepTitles.length - 1 
               ? _saveTank 
               : _canProceedToNext() ? _nextStep : null,
-          icon: Icon(_currentStep == _stepTitles.length - 1 ? Icons.save : Icons.arrow_forward),
           label: Text(_currentStep == _stepTitles.length - 1 ? 'Save Tank' : 'Next'),
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF00BCD4),
@@ -2167,10 +2459,9 @@ class _AddEditTankState extends State<AddEditTank> {
       ),
       child: SizedBox(
         width: double.infinity,
-        child: ElevatedButton.icon(
+        child: ElevatedButton(
           onPressed: _updateTankInLockedMode,
-          icon: const Icon(Icons.check),
-          label: const Text('Update'),
+          child: const Text('Update'),
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF00BCD4),
             foregroundColor: Colors.white,
@@ -2779,9 +3070,10 @@ class _AddEditTankState extends State<AddEditTank> {
             },
             availableFish: _availableFish,
             onBack: null, // Use AppBar back button instead
-            onNext: _canProceedToNext() ? _nextStep : null, // Show Next button inside widget
+            onNext: widget.lockedMode ? _updateTankInLockedMode : (_canProceedToNext() ? _nextStep : null), // Replace Next with Update in locked mode
             canProceed: _canProceedToNext(),
             isLastStep: _currentStep == _stepTitles.length - 1,
+            nextButtonText: widget.lockedMode ? 'Update' : null, // Show "Update" instead of "Next" in locked mode
             compatibilityResults: _compatibilityResults,
             tankShapeWarnings: _fishTankShapeWarnings,
             onTankShapeWarningsChanged: (warnings) {
@@ -3468,7 +3760,7 @@ class _AddEditTankState extends State<AddEditTank> {
                               if (fishDetail['feeding_frequency'] != null)
                                 _buildSummaryRow('Feeding frequency', '${fishDetail['feeding_frequency']} times/day'),
                               if (fishDetail['preferred_food'] != null)
-                                _buildSummaryRow('Preferred food', fishDetail['preferred_food']),
+                                _buildExpandablePreferredFoodRow(fishName, fishDetail['preferred_food']),
                             ],
                           ],
                         ),
@@ -3849,9 +4141,9 @@ class _AddEditTankState extends State<AddEditTank> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AuthRequiredDialog(
-        title: 'Sign In Required',
-        message: 'You need to be logged in to save tanks. Sign in to create and save your tank configurations.',
-        actionButtonText: 'Sign In to Save',
+        title: 'Log In Required',
+        message: 'You need to be logged in to save tanks. Log in to create and save your tank configurations.',
+        actionButtonText: 'Log In to Save',
         onActionPressed: () {
           // Navigate to auth screen
           Navigator.of(context).push(
@@ -3947,8 +4239,89 @@ class _AddEditTankState extends State<AddEditTank> {
           ),
         ],
       ),
-      );
-    }
+    );
+  }
+
+  Widget _buildExpandablePreferredFoodRow(String fishName, String preferredFood) {
+    final isExpanded = _expandedPreferredFoods.contains(fishName);
+    
+    // Split preferred food by commas to count items
+    final foodItems = preferredFood.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    final hasMultipleItems = foodItems.length > 2;
+    
+    // Create truncated version (first 2 items)
+    final truncatedFood = hasMultipleItems 
+        ? '${foodItems.take(2).join(', ')}, +${foodItems.length - 2} more'
+        : preferredFood;
+    
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Flexible(
+                flex: 2,
+                child: Text(
+                  'Preferred food:',
+                  style: TextStyle(
+                    color: Colors.black87,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      isExpanded ? preferredFood : truncatedFood,
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.right,
+                      maxLines: isExpanded ? null : 2,
+                      overflow: isExpanded ? null : TextOverflow.ellipsis,
+                    ),
+                    if (hasMultipleItems) ...[
+                      const SizedBox(height: 4),
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            if (isExpanded) {
+                              _expandedPreferredFoods.remove(fishName);
+                            } else {
+                              _expandedPreferredFoods.add(fishName);
+                            }
+                          });
+                        },
+                        child: Text(
+                          isExpanded ? 'See less' : 'See more',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF00BCD4),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
     
   Widget _buildSection({required String title, required IconData icon, required List<Widget> children}) {
     return Container(
