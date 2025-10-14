@@ -474,7 +474,6 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                           style: TextStyle(
                                             color: Color(0xFF00BFB3),
                                             fontSize: 14,
-                                            decoration: TextDecoration.underline,
                                           ),
                                         ),
                                       ),
@@ -620,7 +619,6 @@ class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
                                       _isLogin ? 'Register' : 'Log In',
                                       style: const TextStyle(
                                         color: Color(0xFF00BFB3),
-                                        decoration: TextDecoration.underline,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),

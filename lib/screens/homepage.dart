@@ -326,7 +326,7 @@ class _HomePageState extends State<HomePage> {
                   Text(
                     _selectedIndex == 0 ? 'AquaSync' :
                     _selectedIndex == 1 ? 'Sync' :
-                    _selectedIndex == 2 ? 'Calculator' : 'History',
+                    _selectedIndex == 2 ? 'Calculator' : 'Saved',
                     style: const TextStyle(
                       color: Color(0xFF00BFB3),
                       fontSize: 24,
@@ -1209,7 +1209,7 @@ class _TipsAndGuidesSectionState extends State<_TipsAndGuidesSection> {
   final List<Map<String, String>> _guides = const [
     {
       'title': 'Beginner\'s Guide to Fish Keeping',
-      'url': 'https://www.tetra-fish.com/learning-center/getting-started/a-beginners-guide.aspx',
+      'url': 'https://www.thepetexpress.co.uk/blog/blog-new-products/the-beginners-guide-to-keeping-fish/',
       'image': 'aquarium basic.png',
     },
     {

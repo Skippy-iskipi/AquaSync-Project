@@ -7,9 +7,9 @@ class ApiConfig {
   static String get supabaseAnonKey => dotenv.env['SUPABASE_ANON_KEY'] ?? '';
   // List of available server URLs to try in order
   static const List<String> serverUrls = [
-    'https://aquasync-production-719a.up.railway.app',
+    //'https://aquasync-production-719a.up.railway.app',
     //'http://192.168.7.114:8000',
-   //'http://192.168.7.114:8000',
+   'http://192.168.7.114:8000',
     //'http://172.20.10.2:8000',
   ];
   

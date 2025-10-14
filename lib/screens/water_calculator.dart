@@ -126,6 +126,10 @@ class _WaterCalculatorState extends State<WaterCalculator> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Spacer when no suggestions to push help button to the right
+                if (suggestedFish.isEmpty)
+                  const Expanded(child: SizedBox()),
+                
                 // Suggestion card (if there are suggestions)
                 if (suggestedFish.isNotEmpty)
                   Expanded(
@@ -333,14 +337,17 @@ class _WaterCalculatorState extends State<WaterCalculator> {
                       width: 1,
                     ),
                   ),
-                  child: const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Icon(
-                        Icons.help_outline,
-                        color: Color(0xFF00BFB3),
-                        size: 20,
-                      ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(
+                          Icons.help_outline,
+                          color: Color(0xFF00BFB3),
+                          size: 20,
+                        ),
+                      ],
                     ),
                   ),
                 ),

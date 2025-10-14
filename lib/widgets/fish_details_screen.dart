@@ -865,7 +865,6 @@ class _ExpandableInfoItemState extends State<_ExpandableInfoItem> {
                         fontSize: 13,
                         color: Color(0xFF00BCD4),
                         fontWeight: FontWeight.w600,
-                        decoration: TextDecoration.underline,
                       ),
                     ),
                   ),

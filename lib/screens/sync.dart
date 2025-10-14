@@ -2220,7 +2220,7 @@ class _SyncScreenState extends State<SyncScreen> {
     );
     logbookProvider.addCompatibilityResult(newResult);
     Navigator.of(dialogContext).pop();
-    showCustomNotification(context, 'Result saved to History');
+    showCustomNotification(context, 'Result saved to Saved');
     
     // Clear the selected fish inputs after saving
     setState(() {
@@ -3055,7 +3055,7 @@ class _SyncScreenState extends State<SyncScreen> {
               Text(
                 'Tankmate Recommendations (${selectedFishNames.length} fish)',
                 style: const TextStyle(
-                  fontSize: 16,
+                  fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: Colors.black,
                 ),

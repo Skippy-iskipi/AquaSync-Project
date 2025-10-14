@@ -5,6 +5,8 @@ import 'fish_info_dialog.dart';
 import 'smart_search_widget.dart';
 import '../screens/capture.dart';
 import '../widgets/custom_notification.dart';
+import '../services/favorites_service.dart';
+import 'dart:async';
 import 'dart:io';
 
 class FishSelectionWidget extends StatefulWidget {
@@ -60,11 +62,39 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
   double _containerHeight = 0.08; // Initially only show header (8% of screen height)
   bool _isDragging = false;
   bool _isExpanded = false; // Track if container is expanded - start collapsed
+  
+  // Favorites
+  final FavoritesService _favoritesService = FavoritesService();
+  Set<String> _favoriteFish = {};
+  late StreamSubscription _favoritesSubscription;
 
   @override
   void initState() {
     super.initState();
     _filteredFish = widget.availableFish;
+    _loadInitialFavorites();
+    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+      if (mounted) {
+        setState(() {
+          _favoriteFish = favorites;
+        });
+      }
+    });
+  }
+
+  Future<void> _loadInitialFavorites() async {
+    await _favoritesService.loadFavorites();
+    if (mounted) {
+      setState(() {
+        _favoriteFish = _favoritesService.getFavorites();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _favoritesSubscription.cancel();
+    super.dispose();
   }
 
   void _onSearchChanged(String query) {
@@ -739,6 +769,16 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
       }).toList();
     }
     
+    // Sort by: 1) Selected first, 2) Favorites (among unselected), 3) Others
+    final selected = list.where((fish) => widget.selectedFish.containsKey(fish['common_name'])).toList();
+    final unselected = list.where((fish) => !widget.selectedFish.containsKey(fish['common_name'])).toList();
+    
+    // Among unselected, sort favorites first
+    final unselectedFavorites = unselected.where((fish) => _favoriteFish.contains(fish['common_name'])).toList();
+    final unselectedNonFavorites = unselected.where((fish) => !_favoriteFish.contains(fish['common_name'])).toList();
+    
+    list = [...selected, ...unselectedFavorites, ...unselectedNonFavorites];
+    
     return list;
   }
 
@@ -807,6 +847,7 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
     final fishName = fish['common_name'] as String? ?? 'Unknown';
     final scientificName = fish['scientific_name'] as String? ?? 'Unknown';
     final isSelected = widget.selectedFish.containsKey(fishName);
+    final isFavorite = _favoriteFish.contains(fishName);
 
     return Card(
       elevation: isSelected ? 3 : 2,
@@ -831,16 +872,45 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
               // Fish Image - Takes up most of the space
               Expanded(
                 flex: 3,
-                child: Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.zero,
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.zero,
-                    child: _buildFishImage(fishName),
-                  ),
+                child: Stack(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.zero,
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.zero,
+                        child: _buildFishImage(fishName),
+                      ),
+                    ),
+                    // Favorite indicator badge
+                    if (isFavorite)
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.2),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.favorite,
+                            color: Colors.red,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
 
@@ -1705,21 +1775,51 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
           final fishName = fish['common_name'] as String? ?? 'Unknown';
           final scientificName = fish['scientific_name'] as String? ?? 'Unknown';
           final isSelected = widget.selectedFish.containsKey(fishName);
+          final isFavorite = _favoriteFish.contains(fishName);
           
           return Container(
             margin: const EdgeInsets.only(bottom: 8),
             child: ListTile(
-              leading: Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: _buildFishImage(fishName),
-                ),
+              leading: Stack(
+                children: [
+                  Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: _buildFishImage(fishName),
+                    ),
+                  ),
+                  // Favorite indicator badge
+                  if (isFavorite)
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              blurRadius: 2,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.favorite,
+                          color: Colors.red,
+                          size: 12,
+                        ),
+                      ),
+                    ),
+                ],
               ),
               title: Text(
                 fishName,

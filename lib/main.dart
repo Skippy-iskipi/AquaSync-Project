@@ -717,7 +717,7 @@ class _AppTourScreenState extends State<AppTourScreen>
       previewImage: 'lib/icons/calculate_preview.jpg',
     ),
     TourStep(
-      title: 'History Tab',
+      title: 'Saved Tab',
       description: 'View your saved fish collection and identification history.',
       icon: Icons.book_outlined,
       highlightIndex: 4,
@@ -1365,7 +1365,7 @@ class _AppTourScreenState extends State<AppTourScreen>
           Expanded(child: _buildPreviewNavItem(1, 'Sync', Icons.sync_outlined, highlightIndex == 1)),
           Expanded(child: _buildPreviewCaptureButton(highlightIndex == 2)),
           Expanded(child: _buildPreviewNavItem(3, 'Calculator', Icons.calculate_outlined, highlightIndex == 3)),
-          Expanded(child: _buildPreviewNavItem(4, 'History', Icons.book_outlined, highlightIndex == 4)),
+          Expanded(child: _buildPreviewNavItem(4, 'Saved', Icons.book_outlined, highlightIndex == 4)),
         ],
       ),
     );
