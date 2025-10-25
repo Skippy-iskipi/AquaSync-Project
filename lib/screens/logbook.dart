@@ -21,7 +21,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../widgets/calculation_result_widget.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
-import '../services/favorites_service.dart';
+import '../services/database_favorites_service.dart';
 
 
 
@@ -48,7 +48,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     'Compatibility',
   ];
 
-  final FavoritesService _favoritesService = FavoritesService();
+  final DatabaseFavoritesService _databaseFavoritesService = DatabaseFavoritesService();
   Set<String> _favoriteFish = {};
   late StreamSubscription _favoritesSubscription;
   TabController? _tabController;
@@ -62,7 +62,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     }
     _tabController = TabController(length: 2, vsync: this);
     _loadInitialFavorites();
-    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+    _favoritesSubscription = _databaseFavoritesService.favoritesStream.listen((favorites) {
       if (mounted) {
         setState(() {
           _favoriteFish = favorites;
@@ -72,10 +72,10 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
   }
 
   Future<void> _loadInitialFavorites() async {
-    await _favoritesService.loadFavorites();
+    await _databaseFavoritesService.loadFavorites();
     if (mounted) {
       setState(() {
-        _favoriteFish = _favoritesService.getFavorites();
+        _favoriteFish = _databaseFavoritesService.getFavorites();
       });
     }
   }
@@ -156,7 +156,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
             }).toList(),
           ),
           // Archived toggle button
-          Container(
+          /*Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
               children: [
@@ -201,7 +201,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                 ),
               ],
             ),
-          ),
+          ),*/
         ],
       ),
     );
@@ -279,9 +279,9 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               calculation is WaterCalculation 
                   ? 'Water Requirements' 
                   : calculation is FishCalculation
-                    ? 'Fish Requirements'
+                    ? 'Fish Count Calculation'
                     : calculation is FishVolumeCalculation
-                      ? 'Fish Volume Calculation'
+                      ? 'Fish Count Calculation'
                       : 'Diet Calculation',
               style: const TextStyle(
                 fontSize: 24,
@@ -340,8 +340,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
           
           // Tank Dimensions Card
           CalculationResultWidget(
-            title: 'Tank Dimensions',
-            subtitle: 'Aquarium size and volume information',
+            title: 'Tank Volume',
+            subtitle: 'Aquarium volume information',
             icon: Icons.rectangle_rounded,
             infoRows: [
               CalculationInfoRow(
@@ -423,34 +423,77 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
         children: [
           const SizedBox(height: 24),
           
-          // Selected Fish Card
-          FishSelectionCard(
-            fishSelections: calculation.fishSelections,
-            cardTitle: 'Selected Fish',
-            cardSubtitle: 'Fish species for dimension calculation',
-          ),
-          const SizedBox(height: 20),
+          // Tank Shape Card
+          if (calculation.tankShape != null) ...[
+            CalculationResultWidget(
+              title: 'Tank Shape',
+              subtitle: 'Selected aquarium configuration',
+              icon: Icons.rectangle_rounded,
+              infoRows: [
+                CalculationInfoRow(
+                  icon: Icons.rectangle_rounded,
+                  label: 'Shape',
+                  value: calculation.tankShape!,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+          ],
           
-          // Tank Dimensions Card
+          // Tank Volume Card
           CalculationResultWidget(
-            title: 'Tank Dimensions',
-            subtitle: 'Aquarium size and volume information',
+            title: 'Tank Volume',
+            subtitle: 'Aquarium volume information',
             icon: Icons.rectangle_rounded,
             infoRows: [
               CalculationInfoRow(
                 icon: Icons.water,
                 label: 'Tank Volume',
                 value: calculation.tankVolume,
-                                ),
-                            ],
-                          ),
+              ),
+            ],
+          ),
           const SizedBox(height: 20),
           
-          // Water Parameters Card
+          // Selected Fish Card
+          FishSelectionCard(
+            fishSelections: calculation.fishSelections,
+            cardTitle: 'Selected Fish',
+            cardSubtitle: 'Fish species for fish count calculation',
+          ),
+          const SizedBox(height: 20),
+          
+          // Recommended Quantities Card
+          if (calculation.recommendedQuantities.isNotEmpty) ...[
+            CalculationResultWidget(
+              title: 'Recommended Quantities',
+              subtitle: 'Optimal fish quantities for your tank',
+              icon: Icons.recommend_rounded,
+              infoRows: calculation.recommendedQuantities.entries.map((entry) => 
+                CalculationInfoRow(
+                  icon: Icons.recommend_rounded,
+                  label: entry.key,
+                  value: '${entry.value} recommended',
+                ),
+              ).toList(),
+            ),
+            const SizedBox(height: 20),
+          ],
+          
+          // Tankmate Recommendations Card
+          if (calculation.tankmateRecommendations != null && calculation.tankmateRecommendations!.isNotEmpty) ...[
+            TankmateRecommendationsCard(
+              tankmates: calculation.tankmateRecommendations!,
+              compatibleWithConditions: null, // Add this data if available
+            ),
+            const SizedBox(height: 20),
+          ],
+          
+          // Water Requirements Card
           CalculationResultWidget(
-            title: 'Water Parameters',
-            subtitle: 'Optimal water conditions for your fish',
-            icon: Icons.thermostat_rounded,
+            title: 'Water Requirements',
+            subtitle: 'Optimal water parameters for your fish',
+            icon: Icons.water_drop_rounded,
             infoRows: [
               CalculationInfoRow(
                 icon: Icons.thermostat_rounded,
@@ -461,51 +504,10 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                 icon: Icons.science_rounded,
                 label: 'pH Range',
                 value: calculation.phRange,
-                    ),
-                  ],
-                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 20),
-          
-          // AI-generated content cards
-          if (calculation.waterParametersResponse != null) ...[
-            _buildAIContentCard(
-              'Water Parameters',
-              Icons.water_drop,
-              calculation.waterParametersResponse!,
-            ),
-            const SizedBox(height: 20),
-          ],
-          if (calculation.tankAnalysisResponse != null) ...[
-            _buildAIContentCard(
-              'Tank & Environment',
-              null,
-              calculation.tankAnalysisResponse!,
-            ),
-            const SizedBox(height: 20),
-          ],
-          if (calculation.filtrationResponse != null) ...[
-            _buildAIContentCard(
-              'Filtration & Equipment',
-              Icons.filter_alt,
-              calculation.filtrationResponse!,
-            ),
-            const SizedBox(height: 20),
-          ],
-          if (calculation.dietCareResponse != null) ...[
-            _buildAIContentCard(
-              'Diet & Care Tips',
-              Icons.restaurant,
-              calculation.dietCareResponse!,
-            ),
-            const SizedBox(height: 20),
-          ],
-          if (calculation.tankmateRecommendations != null && calculation.tankmateRecommendations!.isNotEmpty) ...[
-            TankmateRecommendationsCard(
-              tankmates: calculation.tankmateRecommendations!,
-              compatibleWithConditions: null, // Add this data if available
-            ),
-            const SizedBox(height: 20),
-          ],
           
           // Feeding Information Card
           if (calculation.feedingInformation != null && calculation.feedingInformation!.isNotEmpty) ...[
@@ -516,71 +518,6 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
       ),
     );
   }
-
-  Widget _buildAIContentCard(String title, IconData? icon, String content) {
-    return SizedBox(
-      width: double.infinity,
-      child: Card(
-        elevation: 2,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE0F7FA),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: icon != null 
-                      ? (icon == Icons.water_drop 
-                          ? Image.asset(
-                              'lib/icons/Create_Aquarium.png',
-                              width: 20,
-                              height: 20,
-                              color: const Color(0xFF006064),
-                            )
-                          : Icon(
-                              icon,
-                              color: const Color(0xFF006064),
-                            ))
-                      : Image.asset(
-                          'lib/icons/Create_Aquarium.png',
-                          width: 20,
-                          height: 20,
-                          color: const Color(0xFF006064),
-                        ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF006064),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                content,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Colors.black87,
-                  height: 1.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
 
   Widget _buildFishVolumeCalculationDetails(FishVolumeCalculation calculation) {
     return Padding(
@@ -607,8 +544,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
           
           // Tank Dimensions Card
           CalculationResultWidget(
-            title: 'Tank Dimensions',
-            subtitle: 'Aquarium size and volume information',
+            title: 'Tank Volume',
+            subtitle: 'Aquarium volume information',
             icon: Icons.rectangle_rounded,
             infoRows: [
               CalculationInfoRow(
@@ -806,7 +743,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  _showArchived ? 'No archived fish predictions' : 'No fish predictions saved yet',
+                  _showArchived ? 'No deleted fish in collection' : 'No fish in collection yet',
                   style: const TextStyle(
                     fontSize: 16,
                     color: Colors.grey,
@@ -894,12 +831,12 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
             return _showArchived 
               ? _buildArchivedFishCard(prediction, logBookProvider)
               : Dismissible(
-                  key: Key(prediction.commonName),
+                  key: Key('${prediction.commonName}_${prediction.createdAt?.millisecondsSinceEpoch ?? index}'),
                   background: Container(
                     color: const Color.fromARGB(255, 255, 17, 0),
                     alignment: Alignment.center,
                     child: const Text(
-                      'Archive',
+                      'Delete',
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -910,9 +847,11 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   confirmDismiss: (direction) async {
                     return await _showDeleteConfirmationDialogFishPrediction(prediction);
                   },
-                  onDismissed: (direction) {
-                    logBookProvider.archivePrediction(prediction);
-                    showCustomNotification(context, '${prediction.commonName} archived from collection');
+                  onDismissed: (direction) async {
+                    await logBookProvider.archivePrediction(prediction);
+                    if (mounted) {
+                      showCustomNotification(context, '${prediction.commonName} deleted from collection');
+                    }
                   },
                   child: _buildFishCard(prediction),
                 );
@@ -987,12 +926,12 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                                 final shouldDelete = await _showDeleteConfirmationDialogFishPrediction(prediction);
                                 if (shouldDelete) {
                                   Provider.of<LogBookProvider>(context, listen: false).archivePrediction(prediction);
-                                  showCustomNotification(context, '${prediction.commonName} archived from collection');
+                                  showCustomNotification(context, '${prediction.commonName} deleted from collection');
                                 }
                               },
                               icon: const Icon(
-                                Icons.archive,
-                                color: Colors.orange,
+                                Icons.delete,
+                                color: Colors.red,
                                 size: 20,
                               ),
                               padding: const EdgeInsets.all(8),
@@ -1166,13 +1105,13 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Icon(
-                                  Icons.archive,
+                                  Icons.delete,
                                   color: Colors.white,
                                   size: 12,
                                 ),
                                 SizedBox(width: 4),
                                 Text(
-                                  'Archived',
+                                  'Deleted',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 10,
@@ -1500,8 +1439,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.archive_outlined,
-                  color: Colors.orange,
+                  Icons.delete_outlined,
+                  color: Colors.red,
                   size: 28,
                 ),
               ),
@@ -1511,7 +1450,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Archive Fish',
+                      'Delete Fish',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -1539,7 +1478,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Are you sure you want to archive this fish from your collection?',
+                  'Are you sure you want to delete this fish from your collection?',
                   style: const TextStyle(
                     fontSize: 16,
                     color: Color(0xFF374151),
@@ -1644,7 +1583,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                       elevation: 0,
                     ),
                     child: const Text(
-                      'Archive',
+                      'Delete',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -1855,16 +1794,16 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
             provider.archivedFishCalculations.isEmpty && 
             provider.archivedDietCalculations.isEmpty && 
             provider.archivedFishVolumeCalculations.isEmpty) {
-          print('No archived calculations found, loading from database...');
+          print('No deleted calculations found, loading from database...');
           WidgetsBinding.instance.addPostFrameCallback((_) {
             provider.loadArchivedData();
           });
         } else {
-          print('Build calculator tab - Show archived: $_showArchived');
-          print('Water calculations: ${provider.archivedCalculations.length} archived, ${provider.savedCalculations.length} active');
-          print('Fish calculations: ${provider.archivedFishCalculations.length} archived, ${provider.savedFishCalculations.length} active');
-          print('Diet calculations: ${provider.archivedDietCalculations.length} archived, ${provider.savedDietCalculations.length} active');
-          print('Fish volume calculations: ${provider.archivedFishVolumeCalculations.length} archived, ${provider.savedFishVolumeCalculations.length} active');
+          print('Build calculator tab - Show deleted: $_showArchived');
+          print('Water calculations: ${provider.archivedCalculations.length} deleted, ${provider.savedCalculations.length} active');
+          print('Fish calculations: ${provider.archivedFishCalculations.length} deleted, ${provider.savedFishCalculations.length} active');
+          print('Diet calculations: ${provider.archivedDietCalculations.length} deleted, ${provider.savedDietCalculations.length} active');
+          print('Fish volume calculations: ${provider.archivedFishVolumeCalculations.length} deleted, ${provider.savedFishVolumeCalculations.length} active');
         }
 
         final allCalculations = _showArchived ? [
@@ -1914,7 +1853,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  _showArchived ? 'No archived calculations' : 'No calculations saved yet',
+                  _showArchived ? 'No deleted calculations' : 'No calculations saved yet',
                   style: const TextStyle(
                     fontSize: 16,
                     color: Colors.grey,
@@ -2003,18 +1942,18 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
             return _showArchived 
               ? _buildArchivedCalculationCard(calculation, provider)
               : Dismissible(
-              key: Key((calculation is WaterCalculation) 
-                  ? calculation.dateCalculated.toString() 
+              key: Key('calc_${(calculation is WaterCalculation) 
+                  ? '${calculation.dateCalculated.millisecondsSinceEpoch}_water' 
                   : (calculation is FishCalculation) 
-                    ? calculation.dateCalculated.toString()
+                    ? '${calculation.dateCalculated.millisecondsSinceEpoch}_fish'
                     : (calculation is DietCalculation)
-                      ? calculation.dateCalculated.toString()
-                      : (calculation as FishVolumeCalculation).dateCalculated.toString()),
+                      ? '${calculation.dateCalculated.millisecondsSinceEpoch}_diet'
+                      : '${(calculation as FishVolumeCalculation).dateCalculated.millisecondsSinceEpoch}_volume'}'),
               background: Container(
                 color: const Color.fromARGB(255, 255, 17, 0),
                 alignment: Alignment.center,
                 child: const Text(
-                  'Archive',
+                  'Delete',
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -2025,19 +1964,27 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               confirmDismiss: (direction) async {
                 return await _showDeleteConfirmationDialogCalculation(calculation);
               },
-              onDismissed: (direction) {
+              onDismissed: (direction) async {
                 if (calculation is WaterCalculation) {
-                  provider.archiveWaterCalculation(calculation);
-                  showCustomNotification(context, 'Water calculation archived');
+                  await provider.archiveWaterCalculation(calculation);
+                  if (mounted) {
+                    showCustomNotification(context, 'Water calculation deleted');
+                  }
                 } else if (calculation is FishCalculation) {
-                  provider.archiveFishCalculation(calculation);
-                  showCustomNotification(context, 'Fish calculation archived');
+                  await provider.archiveFishCalculation(calculation);
+                  if (mounted) {
+                    showCustomNotification(context, 'Fish calculation deleted');
+                  }
                 } else if (calculation is DietCalculation) {
-                  provider.archiveDietCalculation(calculation);
-                  showCustomNotification(context, 'Diet calculation archived');
+                  await provider.archiveDietCalculation(calculation);
+                  if (mounted) {
+                    showCustomNotification(context, 'Diet calculation deleted');
+                  }
                 } else if (calculation is FishVolumeCalculation) {
-                  provider.archiveFishVolumeCalculation(calculation);
-                  showCustomNotification(context, 'Fish volume calculation archived');
+                  await provider.archiveFishVolumeCalculation(calculation);
+                  if (mounted) {
+                    showCustomNotification(context, 'Fish volume calculation deleted');
+                  }
                 }
               },
               child: Card(
@@ -2069,7 +2016,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                                 )
                               : Icon(
                                   calculation is FishCalculation 
-                                    ? Icons.water
+                                    ? Icons.calculate
                                     : calculation is FishVolumeCalculation
                                       ? Icons.calculate
                                       : Icons.restaurant,
@@ -2084,11 +2031,11 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                             children: [
                               Text(
                                 calculation is WaterCalculation 
-                                    ? 'Water Calculator' 
+                                    ? 'Tank Volume Calculator' 
                                     : calculation is FishCalculation 
-                                      ? 'Fish Calculator'
+                                      ? 'Fish Count Calculator'
                                       : calculation is FishVolumeCalculation
-                                        ? 'Fish Volume Calculator'
+                                        ? 'Fish Count Calculator'
                                         : 'Diet Calculator',
                                 style: const TextStyle(
                                   color: Color(0xFF006064),
@@ -2103,22 +2050,25 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                                     : calculation is FishCalculation
                                       ? 'Tank Volume: ${calculation.tankVolume}'
                                       : calculation is FishVolumeCalculation
-                                        ? 'Tank: ${calculation.tankShape} - ${calculation.tankVolume}'
+                                        ? 'Tank Volume: ${calculation.tankVolume}'
                                         : 'Fish: ${(calculation as DietCalculation).fishSelections.keys.join(', ')}',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 16,
                                 ),
                               ),
-                              if (calculation is DietCalculation) ...[
-                                const SizedBox(height: 2),
+                              // Show recommended quantities for Fish Count Calculators
+                              if (calculation is FishCalculation || calculation is FishVolumeCalculation) ...[
+                                const SizedBox(height: 4),
                                 Text(
-                                  'Daily Portion: ${calculation.totalPortion} pieces',
+                                  _getRecommendedQuantitiesDisplay(calculation),
                                   style: const TextStyle(
                                     color: Color(0xFF006064),
                                     fontSize: 12,
                                     fontWeight: FontWeight.w500,
                                   ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ],
                               Text(
@@ -2153,26 +2103,26 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
   }
 
   Future<bool> _showDeleteConfirmationDialogCalculation(dynamic calculation) async {
-    String title = 'Archive Calculation';
-    String content = 'Are you sure you want to archive this calculation?';
+    String title = 'Delete Calculation';
+    String content = 'Are you sure you want to delete this calculation?';
     IconData icon = Icons.calculate;
     String typeName = 'Calculation';
     
     if (calculation is WaterCalculation) {
-      content = 'Are you sure you want to archive this water calculation?';
+      content = 'Are you sure you want to delete this water calculation?';
       icon = Icons.water_drop;
-      typeName = 'Water Calculator';
+      typeName = 'Tank Volume Calculator';
     } else if (calculation is FishCalculation) {
-      content = 'Are you sure you want to archive this fish calculation?';
+      content = 'Are you sure you want to delete this fish calculation?';
       icon = FontAwesomeIcons.fish;
-      typeName = 'Fish Calculator';
+      typeName = 'Fish Count Calculator';
       icon = FontAwesomeIcons.fish;
     } else if (calculation is FishVolumeCalculation) {
-      content = 'Are you sure you want to archive this fish volume calculation?';
+      content = 'Are you sure you want to delete this fish volume calculation?';
       icon = Icons.calculate;
-      typeName = 'Fish Volume Calculator';
+      typeName = 'Fish Count Calculator';
     } else if (calculation is DietCalculation) {
-      content = 'Are you sure you want to archive this diet calculation?';
+      content = 'Are you sure you want to delete this diet calculation?';
       icon = Icons.restaurant;
       typeName = 'Diet Calculator';
     }
@@ -2201,8 +2151,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.archive_outlined,
-                  color: Colors.orange,
+                  Icons.delete_outlined,
+                  color: Colors.red,
                   size: 28,
                 ),
               ),
@@ -2344,7 +2294,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                       elevation: 0,
                     ),
                     child: const Text(
-                      'Archive',
+                      'Delete',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -2369,7 +2319,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     if (calculation is WaterCalculation) {
       content = 'Are you sure you want to restore this water calculation?';
       icon = Icons.water_drop;
-      typeName = 'Water Calculator';
+      typeName = 'Tank Volume Calculator';
     } else if (calculation is FishCalculation) {
       content = 'Are you sure you want to restore this fish calculation?';
       icon = FontAwesomeIcons.fish;
@@ -2377,7 +2327,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     } else if (calculation is FishVolumeCalculation) {
       content = 'Are you sure you want to restore this fish volume calculation?';
       icon = Icons.calculate;
-      typeName = 'Fish Volume Calculator';
+      typeName = 'Fish Count Calculator';
     } else if (calculation is DietCalculation) {
       content = 'Are you sure you want to restore this diet calculation?';
       icon = Icons.restaurant;
@@ -2610,7 +2560,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                       )
                     : Icon(
                         calculation is FishCalculation 
-                          ? Icons.water
+                          ? Icons.calculate
                           : calculation is FishVolumeCalculation
                             ? Icons.calculate
                             : Icons.restaurant,
@@ -2645,13 +2595,13 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                Icons.archive,
+                                Icons.delete,
                                 color: Colors.white,
                                 size: 10,
                               ),
                               SizedBox(width: 4),
                               Text(
-                                'Archived',
+                                'Deleted',
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 9,
@@ -2668,18 +2618,21 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                       _getCalculationTitle(calculation),
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
+                      fontSize: 16,
                     ),
-                    if (calculation is DietCalculation) ...[
-                      const SizedBox(height: 2),
+                  ),
+                    // Show recommended quantities for Fish Count Calculators
+                    if (calculation is FishCalculation || calculation is FishVolumeCalculation) ...[
+                      const SizedBox(height: 4),
                       Text(
-                        'Daily Portion: ${calculation.totalPortion} pieces',
+                        _getRecommendedQuantitiesDisplay(calculation),
                         style: const TextStyle(
                           color: Color(0xFF006064),
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: FontWeight.w500,
                         ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                     Text(
@@ -2728,13 +2681,36 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
     );
   }
   
+  String _getRecommendedQuantitiesDisplay(dynamic calculation) {
+    Map<String, int>? recommendedQuantities;
+    
+    if (calculation is FishCalculation) {
+      recommendedQuantities = calculation.recommendedQuantities;
+    } else if (calculation is FishVolumeCalculation) {
+      recommendedQuantities = calculation.recommendedQuantities;
+    }
+    
+    if (recommendedQuantities == null || recommendedQuantities.isEmpty) {
+      return '';
+    }
+    
+    // Format as "X Fishname, Y Fishname2" etc.
+    final List<String> fishList = recommendedQuantities.entries.map((entry) {
+      final quantity = entry.value;
+      final fishName = entry.key;
+      return quantity > 1 ? '$quantity $fishName' : fishName;
+    }).toList();
+    
+    return fishList.join(', ');
+  }
+  
   String _getCalculationTitle(dynamic calculation) {
     if (calculation is WaterCalculation) {
       return 'Tank Volume: ${calculation.minimumTankVolume ?? 'N/A'}';
     } else if (calculation is FishCalculation) {
       return 'Tank Volume: ${calculation.tankVolume ?? 'N/A'}';
     } else if (calculation is FishVolumeCalculation) {
-      return 'Tank: ${calculation.tankShape ?? 'N/A'} - ${calculation.tankVolume ?? 'N/A'}';
+      return 'Tank Volume: ${calculation.tankVolume ?? 'N/A'}';
     } else if (calculation is DietCalculation) {
       return 'Fish: ${calculation.fishSelections?.keys.join(', ') ?? 'N/A'}';
     }
@@ -2869,12 +2845,12 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
         return _showArchived 
           ? _buildArchivedCompatibilityCard(result, logBookProvider)
           : Dismissible(
-              key: Key(result.id.toString()),
+              key: Key('compat_${result.id}_${result.dateChecked.millisecondsSinceEpoch}'),
               background: Container(
                 color: const Color.fromARGB(255, 255, 17, 0),
                 alignment: Alignment.center,
                 child: const Text(
-                  'Archive',
+                  'Delete',
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -2886,10 +2862,12 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               confirmDismiss: (direction) async {
                 return await _showDeleteConfirmationDialogCompatibility(result);
               },
-              onDismissed: (direction) {
-                logBookProvider.archiveCompatibilityResult(result);
-            showCustomNotification(context, 'Compatibility result archived');
-          },
+              onDismissed: (direction) async {
+                await logBookProvider.archiveCompatibilityResult(result);
+                if (mounted) {
+                  showCustomNotification(context, 'Compatibility result deleted');
+                }
+              },
            child: Container(
              margin: const EdgeInsets.only(bottom: 16),
              child: Material(
@@ -3076,13 +3054,13 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Icon(
-                                  Icons.archive,
+                                  Icons.delete,
                                   color: Colors.white,
                                   size: 10,
                                 ),
                                 SizedBox(width: 4),
                                 Text(
-                                  'Archived',
+                                  'Deleted',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 9,
@@ -3284,8 +3262,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.archive_outlined,
-                  color: Colors.orange,
+                  Icons.delete_outlined,
+                  color: Colors.red,
                   size: 28,
                 ),
               ),
@@ -3295,7 +3273,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Archive Compatibility',
+                      'Delete Compatibility',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -3323,7 +3301,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                               const Text(
-                  'Are you sure you want to archive this compatibility result?',
+                  'Are you sure you want to delete this compatibility result?',
                                 style: TextStyle(
                                   fontSize: 16,
                     color: Color(0xFF374151),
@@ -3432,7 +3410,7 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                       elevation: 0,
                     ),
                     child: const Text(
-                      'Archive',
+                      'Delete',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -3799,16 +3777,15 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                 ),
                 const SizedBox(height: 20),
                 
-                // Analysis Details Card
-                if (result.reasons.isNotEmpty) ...[
+                // Analysis Details Card - Only show when NOT compatible
+                if (result.compatibilityLevel != 'compatible' && result.reasons.isNotEmpty) ...[
                   CalculationResultWidget(
                     title: 'Analysis Details',
                     subtitle: 'Compatibility analysis breakdown',
                     icon: Icons.analytics,
                     infoRows: result.reasons.map((reason) => 
                       CalculationInfoRow(
-                        icon: result.compatibilityLevel == 'compatible' ? Icons.check_circle_outline :
-                              result.compatibilityLevel == 'conditional' ? Icons.warning_amber_outlined : Icons.error_outline,
+                        icon: result.compatibilityLevel == 'conditional' ? Icons.warning_amber_outlined : Icons.error_outline,
                         label: reason,
                         value: '',
                       ),
@@ -3817,8 +3794,8 @@ class _LogBookState extends State<LogBook> with SingleTickerProviderStateMixin {
                   const SizedBox(height: 20),
                 ],
                 
-                 // Pair Analysis Card
-                 if (result.pairAnalysis.isNotEmpty && result.pairAnalysis['pairs'] != null) ...[
+                 // Pair Analysis Card - Only show when 3 or more fish
+                 if (result.selectedFish.length >= 3 && result.pairAnalysis.isNotEmpty && result.pairAnalysis['pairs'] != null) ...[
                    CalculationResultWidget(
                      title: 'Pair-by-Pair Analysis',
                      subtitle: 'Individual fish pair compatibility',

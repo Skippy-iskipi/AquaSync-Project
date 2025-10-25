@@ -10,7 +10,8 @@ import '../widgets/fish_details_screen.dart';
 import '../models/fish_species.dart';
 import 'package:lottie/lottie.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import '../services/favorites_service.dart';
+import '../services/database_favorites_service.dart';
+import '../widgets/auth_required_dialog.dart';
 
 class FishListScreen extends StatefulWidget {
   final String title;
@@ -170,7 +171,7 @@ class _FishListScreenState extends State<FishListScreen> {
   String _currentSearchQuery = '';
   static const String _fishListCacheKey = 'fish_list_cache_v3'; // Updated version for temperature fix
   static const String _fishListCacheTimeKey = 'fish_list_cache_time_v3';
-  final FavoritesService _favoritesService = FavoritesService();
+  final DatabaseFavoritesService _databaseFavoritesService = DatabaseFavoritesService();
   Set<String> _favoriteFish = {};
   late StreamSubscription _favoritesSubscription;
 
@@ -196,13 +197,14 @@ class _FishListScreenState extends State<FishListScreen> {
   }
 
   Future<void> _initializeScreen() async {
-    await _favoritesService.loadFavorites();
+    // Load favorites from database if user is authenticated
+    await _databaseFavoritesService.loadFavorites();
     if (mounted) {
       setState(() {
-        _favoriteFish = _favoritesService.getFavorites();
+        _favoriteFish = _databaseFavoritesService.getFavorites();
       });
     }
-    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+    _favoritesSubscription = _databaseFavoritesService.favoritesStream.listen((favorites) {
       if (mounted) {
         setState(() {
           _favoriteFish = favorites;
@@ -294,6 +296,39 @@ class _FishListScreenState extends State<FishListScreen> {
       topSearchResults = [];
       filteredFishList = fishList;
     });
+  }
+
+  Future<void> _toggleFavorite(String fishName) async {
+    // Check if user is authenticated
+    if (!_databaseFavoritesService.isAuthenticated) {
+      _showSignInRequiredDialog();
+      return;
+    }
+
+    try {
+      await _databaseFavoritesService.toggleFavorite(fishName);
+    } catch (error) {
+      // Show error message to user
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating favorite: $error'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showSignInRequiredDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AuthRequiredDialog(
+        title: 'Sign In Required',
+        message: 'You need to be signed in to save favorites. Sign in to save your favorite fish and access them across all your devices.',
+        actionButtonText: 'Sign In to Save Favorites',
+      ),
+    );
   }
 
   void _onSmartSearchResults(List<Map<String, dynamic>> results) {
@@ -1241,7 +1276,7 @@ Widget buildFishListImage(String? fishName) {
                                 onTap: () => _showFishDetails(fish),
                                 buildFishListImage: buildFishListImage,
                                 isFavorite: _favoriteFish.contains(fish.commonName),
-                                onFavoriteTap: () => _favoritesService.toggleFavorite(fish.commonName),
+                                onFavoriteTap: () => _toggleFavorite(fish.commonName),
                               );
                             },
                           ),

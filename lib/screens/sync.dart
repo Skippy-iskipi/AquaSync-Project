@@ -174,6 +174,12 @@ class _SyncScreenState extends State<SyncScreen> {
   File? _capturedImage1;
   File? _capturedImage2;
   
+  // Real-time compatibility filtering
+  Map<String, Map<String, dynamic>> _compatibilityCache = {}; // Cache for fast compatibility lookups
+  Map<String, String> _suggestionCompatibilityStatus = {}; // Track compatibility status for suggestions
+  bool _isCheckingCompatibility = false; // Track if compatibility check is in progress
+  Timer? _compatibilityDebounceTimer; // Debounce timer for compatibility checks
+  
 
 
   @override
@@ -210,6 +216,144 @@ class _SyncScreenState extends State<SyncScreen> {
   // Removed fallback analysis - no longer needed
 
   // Removed AI analysis content - no longer needed
+
+  // Fast compatibility check for real-time filtering
+  Future<String> _getFastCompatibilityStatus(String fish1, String fish2) async {
+    // Create a cache key for this pair
+    final key = [fish1.toLowerCase(), fish2.toLowerCase()]..sort();
+    final cacheKey = key.join('|');
+    
+    // Check cache first
+    if (_compatibilityCache.containsKey(cacheKey)) {
+      return _compatibilityCache[cacheKey]!['status'] as String;
+    }
+    
+    try {
+      // Use a lightweight API call for quick compatibility check
+      final response = await http.post(
+        Uri.parse(ApiConfig.checkGroupEndpoint),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: jsonEncode({'fish_names': [fish1, fish2]}),
+      ).timeout(const Duration(seconds: 5)); // Short timeout for speed
+
+      if (response.statusCode == 200) {
+        final compatibilityData = jsonDecode(response.body);
+        final results = compatibilityData['results'] as List? ?? [];
+        
+        String status = 'compatible'; // Default to compatible
+        
+        // Check for any incompatible or conditional results
+        for (var result in results) {
+          final compatibility = result['compatibility'] as String?;
+          if (compatibility == 'Not Compatible') {
+            status = 'incompatible';
+            break;
+          } else if (compatibility == 'Conditional' || compatibility == 'Conditionally Compatible') {
+            status = 'conditional';
+            // Don't break here, continue checking for incompatible
+          }
+        }
+        
+        // Cache the result
+        _compatibilityCache[cacheKey] = {
+          'status': status,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        };
+        
+        return status;
+      }
+    } catch (e) {
+      print('Fast compatibility check failed: $e');
+    }
+    
+    // Default to compatible if check fails
+    return 'compatible';
+  }
+
+  // Check compatibility for all suggestions against selected fish
+  Future<void> _updateSuggestionCompatibility() async {
+    // Cancel previous timer if it exists
+    _compatibilityDebounceTimer?.cancel();
+    
+    // If no fish are selected, clear immediately
+    if (_selectedFish.isEmpty) {
+      await _performCompatibilityCheck();
+      return;
+    }
+    
+    // Debounce the compatibility check by 300ms for selections
+    _compatibilityDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
+      await _performCompatibilityCheck();
+    });
+  }
+  
+  // Perform the actual compatibility check
+  Future<void> _performCompatibilityCheck() async {
+    if (_selectedFish.isEmpty) {
+      setState(() {
+        _suggestionCompatibilityStatus.clear();
+        _isCheckingCompatibility = false;
+      });
+      return;
+    }
+    
+    // Prevent multiple simultaneous checks
+    if (_isCheckingCompatibility) return;
+    
+    setState(() {
+      _isCheckingCompatibility = true;
+    });
+    
+    final selectedFishNames = _selectedFish.keys.toList();
+    final suggestedFish = _getSuggestedFishNames();
+    
+    // Clear previous status
+    _suggestionCompatibilityStatus.clear();
+    
+    try {
+      print('Starting compatibility check for ${selectedFishNames.length} selected fish against ${suggestedFish.length} suggestions');
+      
+      // Update compatibility status for each suggestion
+      for (String suggestion in suggestedFish) {
+        String overallStatus = 'compatible';
+        
+        // Check compatibility with each selected fish
+        for (String selectedFish in selectedFishNames) {
+          if (suggestion != selectedFish) {
+            final status = await _getFastCompatibilityStatus(selectedFish, suggestion);
+            print('Checking $selectedFish vs $suggestion: $status');
+            if (status == 'incompatible') {
+              overallStatus = 'incompatible';
+              break;
+            } else if (status == 'conditional' && overallStatus == 'compatible') {
+              overallStatus = 'conditional';
+            }
+          }
+        }
+        
+        // Update status for this suggestion
+        _suggestionCompatibilityStatus[suggestion] = overallStatus;
+        print('Final status for $suggestion: $overallStatus');
+      }
+      
+      // Force UI update after all compatibility checks are done
+      if (mounted) {
+        setState(() {
+          _isCheckingCompatibility = false;
+        });
+      }
+    } catch (e) {
+      print('Error checking suggestion compatibility: $e');
+      if (mounted) {
+        setState(() {
+          _isCheckingCompatibility = false;
+        });
+      }
+    }
+  }
 
   Future<Map<String, Map<String, dynamic>>> _loadTankmateRecommendationsForAllFish(List<String> fishNames) async {
     try {
@@ -293,6 +437,7 @@ class _SyncScreenState extends State<SyncScreen> {
     // _controller1.dispose(); // No longer needed
     // _controller2.dispose(); // No longer needed
     _cameraController?.dispose();
+    _compatibilityDebounceTimer?.cancel();
     super.dispose();
   }
 
@@ -318,17 +463,29 @@ class _SyncScreenState extends State<SyncScreen> {
     }
   }
 
-  // Get unique fish names from saved predictions for suggestions
+  // Get unique fish names from saved predictions and compatibility results for suggestions
   List<String> _getSuggestedFishNames() {
     try {
       final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
       final savedPredictions = logBookProvider.savedPredictions;
+      final compatibilityResults = logBookProvider.savedCompatibilityResults;
       
-      // Get unique fish names from saved predictions
+      // Get unique fish names from saved predictions AND compatibility results
       final uniqueFishNames = <String>{};
+      
+      // Add fish from saved predictions
       for (final prediction in savedPredictions) {
         if (prediction.commonName.isNotEmpty) {
           uniqueFishNames.add(prediction.commonName);
+        }
+      }
+      
+      // Add fish from saved compatibility results
+      for (final result in compatibilityResults) {
+        for (final fishName in result.selectedFish.keys) {
+          if (fishName.isNotEmpty) {
+            uniqueFishNames.add(fishName);
+          }
         }
       }
       
@@ -347,6 +504,17 @@ class _SyncScreenState extends State<SyncScreen> {
         
         if (suggestedFish.isEmpty) {
           return const SizedBox.shrink();
+        }
+        
+        // Filter suggestions based on compatibility if fish are selected
+        List<String> filteredSuggestions = suggestedFish;
+        if (_selectedFish.isNotEmpty) {
+          filteredSuggestions = suggestedFish.where((fish) {
+            final status = _suggestionCompatibilityStatus[fish];
+            print('Fish: $fish, Status: $status, Selected: ${_selectedFish.keys.toList()}');
+            return status != 'incompatible'; // Show compatible and conditional, hide incompatible
+          }).toList();
+          print('Filtered suggestions: ${filteredSuggestions.length} out of ${suggestedFish.length}');
         }
     
         return Container(
@@ -402,12 +570,29 @@ class _SyncScreenState extends State<SyncScreen> {
                                 color: Color(0xFF006064),
                               ),
                             ),
-                            Text(
-                              '${suggestedFish.length} fish from your collection',
-                              style: TextStyle(
-                                fontSize: 11, // Reduced font size
-                                color: Colors.grey[600],
-                              ),
+                            Row(
+                              children: [
+                                Text(
+                                  _selectedFish.isNotEmpty 
+                                    ? '${filteredSuggestions.length} compatible fish'
+                                    : '${suggestedFish.length} fish from your collection',
+                                  style: TextStyle(
+                                    fontSize: 11, // Reduced font size
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                                if (_isCheckingCompatibility) ...[
+                                  const SizedBox(width: 8),
+                                  const SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ],
                         ),
@@ -444,8 +629,9 @@ class _SyncScreenState extends State<SyncScreen> {
                                 alignment: WrapAlignment.start, // Align to start/left
                                 spacing: 10,
                                 runSpacing: 10,
-                                children: suggestedFish.take(8).map((fishName) {
+                                children: filteredSuggestions.take(8).map((fishName) {
                                   final isSelected = _selectedFish.containsKey(fishName);
+                                  final compatibilityStatus = _suggestionCompatibilityStatus[fishName] ?? 'compatible';
                                   return GestureDetector(
                                     onTap: () {
                                       setState(() {
@@ -454,6 +640,8 @@ class _SyncScreenState extends State<SyncScreen> {
                                         } else {
                                           _selectedFish[fishName] = 1;
                                         }
+                                        // Trigger compatibility update when selection changes
+                                        _updateSuggestionCompatibility();
                                       });
                                     },
                                     child: AnimatedContainer(
@@ -462,18 +650,27 @@ class _SyncScreenState extends State<SyncScreen> {
                                       decoration: BoxDecoration(
                                         color: isSelected 
                                             ? const Color(0xFF00BCD4)
-                                            : Colors.grey[50],
+                                            : _getCompatibilityColor(compatibilityStatus).withOpacity(0.1),
                                         borderRadius: BorderRadius.circular(6),
                                         border: Border.all(
                                           color: isSelected 
                                               ? const Color(0xFF00BCD4)
-                                              : Colors.grey[300]!,
+                                              : _getCompatibilityColor(compatibilityStatus).withOpacity(0.3),
                                           width: 1.5,
                                         ),
                                       ),
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
+                                          // Compatibility indicator
+                                          if (_selectedFish.isNotEmpty && !isSelected) ...[
+                                            Icon(
+                                              _getCompatibilityIcon(compatibilityStatus),
+                                              size: 12,
+                                              color: _getCompatibilityColor(compatibilityStatus),
+                                            ),
+                                            const SizedBox(width: 6),
+                                          ],
                                           Text(
                                             fishName,
                                             style: TextStyle(
@@ -481,7 +678,9 @@ class _SyncScreenState extends State<SyncScreen> {
                                               fontWeight: FontWeight.w500,
                                               color: isSelected 
                                                   ? Colors.white
-                                                  : Colors.black87,
+                                                  : _selectedFish.isNotEmpty 
+                                                      ? _getCompatibilityColor(compatibilityStatus)
+                                                      : Colors.black87,
                                             ),
                                           ),
                                           if (isSelected) ...[
@@ -508,7 +707,7 @@ class _SyncScreenState extends State<SyncScreen> {
                             ),
                             
                             // Show more indicator if needed
-                            if (suggestedFish.length > 8) ...[
+                            if (filteredSuggestions.length > 8) ...[
                               const SizedBox(height: 12),
                               Center(
                                 child: Container(
@@ -518,7 +717,7 @@ class _SyncScreenState extends State<SyncScreen> {
                                     borderRadius: BorderRadius.circular(15),
                                   ),
                                   child: Text(
-                                    '+${suggestedFish.length - 8} more available',
+                                    '+${filteredSuggestions.length - 8} more available',
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: Colors.grey[600],
@@ -1182,7 +1381,23 @@ class _SyncScreenState extends State<SyncScreen> {
         if (!hasFish200 || lowConf200 || confidence200 < _confidenceThreshold) {
           if (mounted) {
             Navigator.pop(context); // Close the scanning dialog
-            _showSnapTipsDialog(!hasFish200 ? 'No fish detected' : 'Low confidence: ${(confidence200 * 100).toStringAsFixed(1)}%');
+            String message;
+            if (!hasFish200) {
+              // Check if API detected what the object actually is
+              if (decodedResponse.containsKey('predicted_name') && decodedResponse['predicted_name'] != null) {
+                message = 'No fish detected. This appears to be: ${decodedResponse['predicted_name']}';
+              } else {
+                message = 'No fish detected';
+              }
+            } else {
+              // Low confidence case - check if we have a predicted name
+              if (decodedResponse.containsKey('predicted_name') && decodedResponse['predicted_name'] != null) {
+                message = 'Low confidence fish detection. This appears to be: ${decodedResponse['predicted_name']}';
+              } else {
+                message = 'Low confidence: ${(confidence200 * 100).toStringAsFixed(1)}%';
+              }
+            }
+            _showSnapTipsDialog(message);
             setState(() { _isLoading = false; });
           }
           return false;
@@ -1263,7 +1478,23 @@ class _SyncScreenState extends State<SyncScreen> {
         // Show dialog for no fish or low confidence
         if (!hasFish || lowConf || confidence < _confidenceThreshold) {
           if (mounted) {
-            _showSnapTipsDialog(!hasFish ? 'No fish detected' : 'Low confidence: ${(confidence * 100).toStringAsFixed(1)}%');
+            String message;
+            if (!hasFish) {
+              // Check if API detected what the object actually is
+              if (decodedResponse.containsKey('predicted_name') && decodedResponse['predicted_name'] != null) {
+                message = 'No fish detected. This appears to be: ${decodedResponse['predicted_name']}';
+              } else {
+                message = 'No fish detected';
+              }
+            } else {
+              // Low confidence case - check if we have a predicted name
+              if (decodedResponse.containsKey('predicted_name') && decodedResponse['predicted_name'] != null) {
+                message = 'Low confidence fish detection. This appears to be: ${decodedResponse['predicted_name']}';
+              } else {
+                message = 'Low confidence: ${(confidence * 100).toStringAsFixed(1)}%';
+              }
+            }
+            _showSnapTipsDialog(message);
           }
           setState(() {
             _isLoading = false;
@@ -3426,6 +3657,8 @@ class _SyncScreenState extends State<SyncScreen> {
                       setState(() {
                         _selectedFish = newSelection;
                       });
+                      // Trigger real-time compatibility checking for suggestions
+                      _updateSuggestionCompatibility();
                     },
                     canProceed: _canCheckCompatibility() && !isKeyboardVisible, // Check if compatibility can be enabled
                     isLastStep: true,

@@ -3,10 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:math';
+import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../models/tank.dart';
-import '../models/diet_calculation.dart';
 import '../providers/tank_provider.dart';
 import '../config/api_config.dart';
 import '../widgets/fish_selection_widget.dart';
@@ -43,6 +43,7 @@ class _AddEditTankState extends State<AddEditTank> {
   // Tab/Group management
   int _currentStep = 0;
   final List<String> _stepTitles = [
+    'Tank Name',
     'Tank Setup',
     'Fish Selection',
     'Feed Inventory',
@@ -59,10 +60,6 @@ class _AddEditTankState extends State<AddEditTank> {
   bool _isLoadingTemplate = false; // Flag to prevent volume recalculation during template load
   double? _templateTargetVolume; // Target volume when loading from template
   Set<String> _selectedTemplateIds = {}; // Track which templates have been loaded
-  Map<String, int> _fishFromDietCalculator = {}; // Track fish added from diet calculator (deprecated - use _fishFromDietCalculators)
-  Map<String, Map<String, int>> _fishFromCompatibilityResults = {}; // Track fish from each compatibility result
-  Map<String, Map<String, int>> _fishFromDietCalculators = {}; // Track fish from each diet calculator
-  Set<String> _expandedCompatibilityResults = {}; // Track which compatibility results are expanded to show all fish
   Set<String> _expandedPreferredFoods = {}; // Track which fish have their preferred foods expanded in summary
   
 
@@ -100,6 +97,12 @@ class _AddEditTankState extends State<AddEditTank> {
   
   // Tank shape compatibility warnings
   Map<String, String> _fishTankShapeWarnings = {};
+  
+  // Real-time compatibility filtering
+  Map<String, Map<String, dynamic>> _compatibilityCache = {}; // Cache for fast compatibility lookups
+  Map<String, String> _suggestionCompatibilityStatus = {}; // Track compatibility status for suggestions
+  bool _isCheckingCompatibility = false; // Track if compatibility check is in progress
+  Timer? _compatibilityDebounceTimer; // Debounce timer for compatibility checks
 
   @override
   void initState() {
@@ -113,6 +116,13 @@ class _AddEditTankState extends State<AddEditTank> {
         _currentStep = step.toInt();
       });
     }
+    
+    // Trigger compatibility check if there are existing fish selections
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_fishSelections.isNotEmpty) {
+        _updateSuggestionCompatibility();
+      }
+    });
   }
 
   void _nextStep() {
@@ -122,8 +132,15 @@ class _AddEditTankState extends State<AddEditTank> {
       });
       
       // Load fish details when going to summary step
-      if (_currentStep == 3) {
+      if (_currentStep == 4) {
         _loadFishDetails();
+      }
+      
+      // Trigger compatibility check when entering fish selection step
+      if (_currentStep == 2 && _fishSelections.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _updateSuggestionCompatibility();
+        });
       }
     }
   }
@@ -133,17 +150,25 @@ class _AddEditTankState extends State<AddEditTank> {
       setState(() {
         _currentStep--;
       });
+      
+      // Trigger compatibility check when entering fish selection step
+      if (_currentStep == 2 && _fishSelections.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _updateSuggestionCompatibility();
+        });
+      }
     }
   }
 
   bool _canProceedToNext() {
     switch (_currentStep) {
-      case 0: // Tank Setup
-        return _nameController.text.trim().isNotEmpty && 
-               (_calculatedVolume > 0 || _selectedShape == 'bowl');
-      case 1: // Fish Selection
+      case 0: // Tank Name
+        return _nameController.text.trim().isNotEmpty;
+      case 1: // Tank Setup
+        return (_calculatedVolume > 0 || _selectedShape == 'bowl');
+      case 2: // Fish Selection
         return _fishSelections.isNotEmpty;
-      case 2: // Feed Inventory
+      case 3: // Feed Inventory
         return true; // Feed inventory is optional
       default:
         return false;
@@ -257,52 +282,356 @@ class _AddEditTankState extends State<AddEditTank> {
     }
   }
 
+  // Show confirmation dialog before loading template
+  Future<void> _showTemplateConfirmationDialog(String source, String tankShape, String tankVolumeStr, Map<String, int> fishSelections, String templateId) async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: 8,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 400),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white,
+                const Color(0xFFE0F7FA).withOpacity(0.3),
+              ],
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header with gradient background
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      const Color(0xFF00BCD4),
+                      const Color(0xFF00BCD4).withOpacity(0.8),
+                    ],
+                  ),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(20),
+                    topRight: Radius.circular(20),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Load Saved Result?',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'This will set up your tank automatically',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Content
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Source badge
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00BCD4).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: const Color(0xFF00BCD4).withOpacity(0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.source_rounded,
+                                size: 14,
+                                color: Color(0xFF00BCD4),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                source,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF006064),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    
+                    const SizedBox(height: 20),
+                    
+                    // Tank volume info
+                    _buildInfoRow(
+                      Icons.water_drop_rounded,
+                      'Tank Volume',
+                      tankVolumeStr,
+                      const Color(0xFF00BCD4),
+                    ),
+                    
+                    const SizedBox(height: 12),
+                    
+                    // Tank shape info
+                    _buildInfoRow(
+                      Icons.square_rounded,
+                      'Tank Shape',
+                      '${tankShape[0].toUpperCase()}${tankShape.substring(1)}',
+                      const Color(0xFF00BCD4),
+                    ),
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Fish selection
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE0F7FA).withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Fish Species (${fishSelections.length})',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF006064),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: fishSelections.entries.take(4).map((entry) {
+                              return InkWell(
+                                onTap: () {
+                                  showDialog(
+                                    context: context,
+                                    builder: (context) => FishInfoDialog(fishName: entry.key),
+                                  );
+                                },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: const Color(0xFF00BCD4).withOpacity(0.3),
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(0xFF00BCD4).withOpacity(0.1),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        '${entry.key} (×${entry.value})',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w500,
+                                          color: Color(0xFF006064),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      const Icon(
+                                        Icons.visibility,
+                                        size: 12,
+                                        color: Color(0xFF00BCD4),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList()
+                              ..addAll(fishSelections.length > 4 ? [
+                                InkWell(
+                                  onTap: () {},
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF00BCD4).withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      '+${fishSelections.length - 4} more',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF006064),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ] : []),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Actions
+              Container(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          side: BorderSide(color: Colors.grey.shade300),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF00BCD4),
+                              Color(0xFF00ACC1),
+                            ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF00BCD4).withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                          child: const Text(
+                            'Load Result',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (result == true) {
+      _loadTemplateFromCalculation(source, tankShape, tankVolumeStr, fishSelections, templateId);
+    }
+  }
+
+  Widget _buildInfoRow(IconData icon, String label, String value, Color color) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 18, color: color),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF006064),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   // Load template from saved calculator result (Tank calculators - only one at a time)
   void _loadTemplateFromCalculation(String source, String tankShape, String tankVolumeStr, Map<String, int> fishSelections, String templateId) {
-    // Check if already selected - if so, deselect it
-    if (_selectedTemplateIds.contains(templateId)) {
-      setState(() {
-        _selectedTemplateIds.remove(templateId);
-        
-        // Clear all template tracking
-        _fishFromDietCalculator.clear();
-        _fishFromDietCalculators.clear();
-        _fishFromCompatibilityResults.clear();
-        _expandedCompatibilityResults.clear();
-        _expandedPreferredFoods.clear();
-        
-        // Clear all fish data
-        _fishSelections.clear();
-        _fishQuantityControllers.forEach((key, controller) => controller.dispose());
-        _fishQuantityControllers.clear();
-        
-        // Clear all feed data
-        _availableFeeds.clear();
-        _feedQuantityControllers.forEach((key, controller) => controller.dispose());
-        _feedQuantityControllers.clear();
-        _feedDurationData.clear();
-        _incompatibleFeeds.clear();
-        
-        // Clear tank inputs (back to defaults)
-        _nameController.clear();
-        _lengthController.clear();
-        _widthController.clear();
-        _heightController.clear();
-        _selectedShape = 'rectangle';
-        _selectedUnit = 'CM';
-        _calculatedVolume = 0.0;
-        
-        // Clear compatibility and feeding data
-        _compatibilityResults = {};
-        _feedingRecommendations = {};
-        _recommendedFishQuantities = {};
-        _feedPortionData = {};
-        _fishTankShapeWarnings = {};
-        _fishDetails = {};
-      });
-      return;
-    }
-    
     // Parse volume
     final volumeMatch = RegExp(r'(\d+\.?\d*)').firstMatch(tankVolumeStr);
     if (volumeMatch == null) return;
@@ -316,9 +645,6 @@ class _AddEditTankState extends State<AddEditTank> {
     setState(() {
       // Clear ALL selections when switching tank calculators (only one tank calculator allowed)
       _selectedTemplateIds.clear();
-      _fishFromDietCalculator.clear();
-      _fishFromDietCalculators.clear();
-      _fishFromCompatibilityResults.clear();
       
       // Mark this template as selected
       _selectedTemplateIds.add(templateId);
@@ -357,176 +683,20 @@ class _AddEditTankState extends State<AddEditTank> {
       _checkCompatibility();
       _checkAllFishTankShapeCompatibility();
       
-      // Clear template loading flag after a short delay to allow user to see the volume
+      // Clear template loading flag and navigate to feed inventory step
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
           setState(() {
             _isLoadingTemplate = false;
             _templateTargetVolume = null;
+            // Navigate to feed inventory step (step 3)
+            _currentStep = 3;
           });
         }
       });
     });
   }
 
-  // Load template from compatibility result (allows MULTIPLE selections)
-  void _loadTemplateFromCompatibility(dynamic result, String templateId) {
-    // Check if already selected - if so, deselect it
-    if (_selectedTemplateIds.contains(templateId)) {
-      setState(() {
-        _selectedTemplateIds.remove(templateId);
-        _fishFromCompatibilityResults.remove(templateId);
-        _expandedCompatibilityResults.remove(templateId);
-        
-        // Clear ALL data and reset to defaults when deselecting
-        _fishSelections.clear();
-        _fishQuantityControllers.forEach((key, controller) => controller.dispose());
-        _fishQuantityControllers.clear();
-        
-        _availableFeeds.clear();
-        _feedQuantityControllers.forEach((key, controller) => controller.dispose());
-        _feedQuantityControllers.clear();
-        _feedDurationData.clear();
-        _incompatibleFeeds.clear();
-        
-        // Clear tank inputs (back to defaults)
-        _nameController.clear();
-        _lengthController.clear();
-        _widthController.clear();
-        _heightController.clear();
-        _selectedShape = 'rectangle';
-        _selectedUnit = 'CM';
-        _calculatedVolume = 0.0;
-        
-        // Clear all template tracking
-        _fishFromDietCalculator.clear();
-        _fishFromDietCalculators.clear();
-        _fishFromCompatibilityResults.clear();
-        _selectedTemplateIds.clear();
-        
-        // Clear compatibility and feeding data
-        _compatibilityResults = {};
-        _feedingRecommendations = {};
-        _recommendedFishQuantities = {};
-        _feedPortionData = {};
-        _fishTankShapeWarnings = {};
-        _fishDetails = {};
-      });
-      return;
-    }
-    
-    setState(() {
-      // Mark this compatibility result as selected
-      _selectedTemplateIds.add(templateId);
-      
-      // Track fish from THIS compatibility result
-      _fishFromCompatibilityResults[templateId] = Map<String, int>.from(result.selectedFish);
-      
-      // MERGE fish selections with existing (from tank calculators, other compatibility results, or diet calculators)
-      for (final entry in result.selectedFish.entries) {
-        final currentQty = _fishSelections[entry.key] ?? 0;
-        final entryValue = (entry.value is int) ? entry.value as int : (entry.value as num).toInt();
-        final newQty = currentQty + entryValue;
-        _fishSelections[entry.key] = newQty;
-        
-        if (_fishQuantityControllers.containsKey(entry.key)) {
-          _fishQuantityControllers[entry.key]!.text = newQty.toString();
-        } else {
-          _fishQuantityControllers[entry.key] = TextEditingController(text: newQty.toString());
-        }
-      }
-    });
-    
-    // Run compatibility checks after state is set
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkCompatibility();
-      _checkAllFishTankShapeCompatibility();
-      _calculateFeedDurations();
-      _analyzeFeedCompatibility();
-    });
-  }
-
-  // Load template from diet calculator (allows MULTIPLE selections)
-  void _loadTemplateFromDietCalculation(DietCalculation calc) {
-    final templateId = 'diet_${calc.id}';
-    
-    // Check if already selected - if so, deselect it
-    if (_selectedTemplateIds.contains(templateId)) {
-      setState(() {
-        _selectedTemplateIds.remove(templateId);
-        _fishFromDietCalculators.remove(templateId);
-        
-        // Clear ALL data and reset to defaults when deselecting
-        _fishSelections.clear();
-        _fishQuantityControllers.forEach((key, controller) => controller.dispose());
-        _fishQuantityControllers.clear();
-        
-        _availableFeeds.clear();
-        _feedQuantityControllers.forEach((key, controller) => controller.dispose());
-        _feedQuantityControllers.clear();
-        _feedDurationData.clear();
-        _incompatibleFeeds.clear();
-        
-        // Clear tank inputs (back to defaults)
-        _nameController.clear();
-        _lengthController.clear();
-        _widthController.clear();
-        _heightController.clear();
-        _selectedShape = 'rectangle';
-        _selectedUnit = 'CM';
-        _calculatedVolume = 0.0;
-        
-        // Clear all template tracking
-        _fishFromDietCalculator.clear();
-        _fishFromDietCalculators.clear();
-        _fishFromCompatibilityResults.clear();
-        _expandedCompatibilityResults.clear();
-        _expandedPreferredFoods.clear();
-        _selectedTemplateIds.clear();
-        
-        // Clear compatibility and feeding data
-        _compatibilityResults = {};
-        _feedingRecommendations = {};
-        _recommendedFishQuantities = {};
-        _feedPortionData = {};
-        _fishTankShapeWarnings = {};
-        _fishDetails = {};
-      });
-      return;
-    }
-    
-    setState(() {
-      // Mark this diet calculator as selected
-      _selectedTemplateIds.add(templateId);
-      
-      // Track fish from THIS diet calculator
-      _fishFromDietCalculators[templateId] = Map<String, int>.from(calc.fishSelections);
-      
-      // MERGE fish selections with existing (from tank calculators, other diet calculators, or compatibility results)
-      for (final entry in calc.fishSelections.entries) {
-        final currentQty = _fishSelections[entry.key] ?? 0;
-        final newQty = currentQty + entry.value;
-        _fishSelections[entry.key] = newQty;
-        
-        if (_fishQuantityControllers.containsKey(entry.key)) {
-          _fishQuantityControllers[entry.key]!.text = newQty.toString();
-        } else {
-          _fishQuantityControllers[entry.key] = TextEditingController(text: newQty.toString());
-        }
-      }
-      
-      // Don't automatically add feeds to inventory - they will appear in recommendations section
-      // Users can manually add them if needed
-    });
-    
-    // Run compatibility checks and update feed recommendations
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkCompatibility();
-      _checkAllFishTankShapeCompatibility();
-      _calculateFeedDurations();
-      _analyzeFeedCompatibility(); // Update feed recommendations based on new fish selection
-    });
-  }
 
   // Build template selector widget
   Widget _buildTemplateSelector() {
@@ -534,12 +704,9 @@ class _AddEditTankState extends State<AddEditTank> {
     final waterCalculations = logBookProvider.savedCalculations;
     final fishVolumeCalculations = logBookProvider.savedFishVolumeCalculations;
     final fishCalculations = logBookProvider.savedFishCalculations;
-    final dietCalculations = logBookProvider.savedDietCalculations;
-    final compatibilityResults = logBookProvider.savedCompatibilityResults;
     
     final totalTemplates = waterCalculations.length + 
-                          fishVolumeCalculations.length + fishCalculations.length + 
-                          dietCalculations.length + compatibilityResults.length;
+                          fishVolumeCalculations.length + fishCalculations.length;
     
     if (totalTemplates == 0) {
       return const SizedBox.shrink();
@@ -653,10 +820,6 @@ class _AddEditTankState extends State<AddEditTank> {
                                     setState(() {
                                       // Clear all template selections
                                       _selectedTemplateIds.clear();
-                                      _fishFromDietCalculator.clear();
-                                      _fishFromDietCalculators.clear();
-                                      _fishFromCompatibilityResults.clear();
-                                      _expandedCompatibilityResults.clear();
                                       _expandedPreferredFoods.clear();
                                       
                                       // Clear all fish data
@@ -672,7 +835,6 @@ class _AddEditTankState extends State<AddEditTank> {
                                       _incompatibleFeeds.clear();
                                       
                                       // Clear tank inputs (back to defaults)
-                                      _nameController.clear();
                                       _lengthController.clear();
                                       _widthController.clear();
                                       _heightController.clear();
@@ -730,7 +892,7 @@ class _AddEditTankState extends State<AddEditTank> {
                                       : fishNames;
                               
                               return GestureDetector(
-                                onTap: () => _loadTemplateFromCalculation(
+                                onTap: () => _showTemplateConfirmationDialog(
                                   'Water Calculator',
                                   calc.tankShape ?? 'rectangle',
                                   calc.minimumTankVolume,
@@ -824,7 +986,7 @@ class _AddEditTankState extends State<AddEditTank> {
                                       : fishNames;
                               
                               return GestureDetector(
-                                onTap: () => _loadTemplateFromCalculation(
+                                onTap: () => _showTemplateConfirmationDialog(
                                   'Fish Calculator (Volume)',
                                   calc.tankShape,
                                   calc.tankVolume,
@@ -918,7 +1080,7 @@ class _AddEditTankState extends State<AddEditTank> {
                                       : fishNames;
                               
                               return GestureDetector(
-                                onTap: () => _loadTemplateFromCalculation(
+                                onTap: () => _showTemplateConfirmationDialog(
                                   'Fish Calculator (Dimensions)',
                                   'rectangle', // Default to rectangle if not specified
                                   calc.tankVolume,
@@ -957,272 +1119,6 @@ class _AddEditTankState extends State<AddEditTank> {
                                             const SizedBox(height: 2),
                                             Text(
                                               fishDisplay,
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                color: Colors.grey[600],
-                                                fontStyle: FontStyle.italic,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            const SizedBox(height: 2),
-                                            Text(
-                                              calc.dateCalculated.toString().split(' ')[0],
-                                              style: TextStyle(
-                                                fontSize: 9,
-                                                color: Colors.grey[500],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Icon(
-                                        isSelected ? Icons.check_circle : Icons.arrow_forward_ios,
-                                        size: isSelected ? 20 : 12,
-                                        color: const Color(0xFF00BCD4),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ],
-                          
-                          // Compatibility Results
-                          if (compatibilityResults.isNotEmpty) ...[
-                            Text(
-                              'Compatibility Checker (${compatibilityResults.length})',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF006064),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            ...compatibilityResults.take(5).map((result) {
-                              final templateId = 'compat_${result.id}';
-                              final isSelected = _selectedTemplateIds.contains(templateId);
-                              final isExpanded = _expandedCompatibilityResults.contains(templateId);
-                              
-                              // Build fish display
-                              final allFishNames = result.selectedFish.keys.toList();
-                              final fishNames = allFishNames.take(2).join(', ');
-                              final remainingCount = allFishNames.length > 2 ? allFishNames.length - 2 : 0;
-                              final fishDisplay = result.selectedFish.isEmpty 
-                                  ? 'No fish' 
-                                  : remainingCount > 0 
-                                      ? '$fishNames +${remainingCount} more'
-                                      : fishNames;
-                              
-                              // Get compatibility status with color
-                              Color statusColor;
-                              String statusText;
-                              IconData statusIcon;
-                              
-                              if (result.compatibilityLevel.toLowerCase() == 'compatible') {
-                                statusColor = Colors.green;
-                                statusText = 'Compatible';
-                                statusIcon = Icons.check_circle;
-                              } else if (result.compatibilityLevel.toLowerCase().contains('conditional')) {
-                                statusColor = Colors.orange;
-                                statusText = 'Conditional';
-                                statusIcon = Icons.warning;
-                              } else {
-                                statusColor = Colors.red;
-                                statusText = 'Incompatible';
-                                statusIcon = Icons.cancel;
-                              }
-                              
-                              return GestureDetector(
-                                onTap: () => _loadTemplateFromCompatibility(result, templateId),
-                                child: Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? const Color(0xFF00BCD4).withOpacity(0.15)
-                                        : Colors.grey[50],
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? const Color(0xFF00BCD4)
-                                          : Colors.grey[300]!,
-                                      width: isSelected ? 2 : 1,
-                                    ),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Row(
-                                                  children: [
-                                                    Expanded(
-                                                      child: Text(
-                                                        isExpanded 
-                                                            ? allFishNames.map((name) {
-                                                                final qty = result.selectedFish[name] ?? 1;
-                                                                return qty > 1 ? '$name (x$qty)' : name;
-                                                              }).join(', ')
-                                                            : fishDisplay,
-                                                        style: const TextStyle(
-                                                          fontSize: 13,
-                                                          fontWeight: FontWeight.w600,
-                                                          color: Color(0xFF006064),
-                                                        ),
-                                                        maxLines: isExpanded ? null : 1,
-                                                        overflow: isExpanded ? null : TextOverflow.ellipsis,
-                                                      ),
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                    Container(
-                                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                      decoration: BoxDecoration(
-                                                        color: statusColor.withOpacity(0.1),
-                                                        borderRadius: BorderRadius.circular(4),
-                                                        border: Border.all(color: statusColor.withOpacity(0.3)),
-                                                      ),
-                                                      child: Row(
-                                                        mainAxisSize: MainAxisSize.min,
-                                                        children: [
-                                                          Icon(statusIcon, color: statusColor, size: 10),
-                                                          const SizedBox(width: 4),
-                                                          Text(
-                                                            statusText,
-                                                            style: TextStyle(
-                                                              fontSize: 9,
-                                                              color: statusColor,
-                                                              fontWeight: FontWeight.bold,
-                                                            ),
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Row(
-                                                  children: [
-                                                    Text(
-                                                      result.dateChecked.toString().split(' ')[0],
-                                                      style: TextStyle(
-                                                        fontSize: 9,
-                                                        color: Colors.grey[500],
-                                                      ),
-                                                    ),
-                                                    if (remainingCount > 0) ...[
-                                                      const SizedBox(width: 8),
-                                                      const Text(
-                                                        '•',
-                                                        style: TextStyle(
-                                                          fontSize: 9,
-                                                          color: Colors.grey,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 8),
-                                                      GestureDetector(
-                                                        onTap: () {
-                                                          setState(() {
-                                                            if (isExpanded) {
-                                                              _expandedCompatibilityResults.remove(templateId);
-                                                            } else {
-                                                              _expandedCompatibilityResults.add(templateId);
-                                                            }
-                                                          });
-                                                        },
-                                                        child: Text(
-                                                          isExpanded ? 'See less' : 'See more',
-                                                          style: const TextStyle(
-                                                            fontSize: 10,
-                                                            color: Color(0xFF00BCD4),
-                                                            fontWeight: FontWeight.w600,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ],
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                          Icon(
-                                            isSelected ? Icons.check_circle : Icons.arrow_forward_ios,
-                                            size: isSelected ? 20 : 12,
-                                            color: const Color(0xFF00BCD4),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                            const SizedBox(height: 12),
-                          ],
-                          
-                          // Diet Calculator Results
-                          if (dietCalculations.isNotEmpty) ...[
-                            Text(
-                              'Diet Calculator (${dietCalculations.length})',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF006064),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            ...dietCalculations.take(5).map((calc) {
-                              final templateId = 'diet_${calc.id}';
-                              final isSelected = _selectedTemplateIds.contains(templateId);
-                              final fishNames = calc.fishSelections.keys.take(2).join(', ');
-                              final remainingCount = calc.fishSelections.length > 2 ? calc.fishSelections.length - 2 : 0;
-                              final fishDisplay = calc.fishSelections.isEmpty 
-                                  ? 'No fish' 
-                                  : remainingCount > 0 
-                                      ? '$fishNames +${remainingCount} more'
-                                      : fishNames;
-                              
-                              return GestureDetector(
-                                onTap: () => _loadTemplateFromDietCalculation(calc),
-                                child: Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? const Color(0xFF00BCD4).withOpacity(0.15)
-                                        : Colors.grey[50],
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? const Color(0xFF00BCD4)
-                                          : Colors.grey[300]!,
-                                      width: isSelected ? 2 : 1,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              fishDisplay,
-                                              style: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.w600,
-                                                color: Color(0xFF006064),
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            const SizedBox(height: 2),
-                                            if (calc.recommendedFoodTypes != null && calc.recommendedFoodTypes!.isNotEmpty)
-                                              Text(
-                                                'Feeds: ${calc.recommendedFoodTypes!.take(2).join(', ')}${calc.recommendedFoodTypes!.length > 2 ? '...' : ''}',
                                                 style: TextStyle(
                                                   fontSize: 10,
                                                   color: Colors.grey[600],
@@ -1264,27 +1160,221 @@ class _AddEditTankState extends State<AddEditTank> {
     );
   }
 
+  // Fast compatibility check for real-time filtering
+  Future<String> _getFastCompatibilityStatus(String fish1, String fish2) async {
+    // Create a cache key for this pair
+    final key = [fish1.toLowerCase(), fish2.toLowerCase()]..sort();
+    final cacheKey = key.join('|');
+    
+    // Check cache first
+    if (_compatibilityCache.containsKey(cacheKey)) {
+      return _compatibilityCache[cacheKey]!['status'] as String;
+    }
+    
+    try {
+      // Use a lightweight API call for quick compatibility check
+      final response = await http.post(
+        Uri.parse(ApiConfig.checkGroupEndpoint),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: json.encode({'fish_names': [fish1, fish2]}),
+      ).timeout(const Duration(seconds: 5)); // Short timeout for speed
+
+      if (response.statusCode == 200) {
+        final compatibilityData = json.decode(response.body);
+        final results = compatibilityData['results'] as List? ?? [];
+        
+        String status = 'compatible'; // Default to compatible
+        
+        // Check for any incompatible or conditional results
+        for (var result in results) {
+          final compatibility = result['compatibility'] as String?;
+          if (compatibility == 'Not Compatible') {
+            status = 'incompatible';
+            break;
+          } else if (compatibility == 'Conditional' || compatibility == 'Conditionally Compatible') {
+            status = 'conditional';
+            // Don't break here, continue checking for incompatible
+          }
+        }
+        
+        // Cache the result
+        _compatibilityCache[cacheKey] = {
+          'status': status,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        };
+        
+        return status;
+      }
+    } catch (e) {
+      print('Fast compatibility check failed: $e');
+    }
+    
+    // Default to compatible if check fails
+    return 'compatible';
+  }
+
+  // Check compatibility for all suggestions against selected fish
+  Future<void> _updateSuggestionCompatibility() async {
+    // Cancel previous timer if it exists
+    _compatibilityDebounceTimer?.cancel();
+    
+    // If no fish are selected, clear immediately
+    if (_fishSelections.isEmpty) {
+      await _performCompatibilityCheck();
+      return;
+    }
+    
+    // Debounce the compatibility check by 300ms for selections
+    _compatibilityDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
+      await _performCompatibilityCheck();
+    });
+  }
+  
+  // Perform the actual compatibility check
+  Future<void> _performCompatibilityCheck() async {
+    if (_fishSelections.isEmpty) {
+      setState(() {
+        _suggestionCompatibilityStatus.clear();
+        _isCheckingCompatibility = false;
+      });
+      return;
+    }
+    
+    // Prevent multiple simultaneous checks
+    if (_isCheckingCompatibility) return;
+    
+    setState(() {
+      _isCheckingCompatibility = true;
+    });
+    
+    final selectedFishNames = _fishSelections.keys.toList();
+    final suggestedFish = _getSuggestedFishNames();
+    
+    // Clear previous status
+    _suggestionCompatibilityStatus.clear();
+    
+    try {
+      print('Starting compatibility check for ${selectedFishNames.length} selected fish against ${suggestedFish.length} suggestions');
+      
+      // Update compatibility status for each suggestion
+      for (String suggestion in suggestedFish) {
+        String overallStatus = 'compatible';
+        
+        // Check compatibility with each selected fish
+        for (String selectedFish in selectedFishNames) {
+          if (suggestion != selectedFish) {
+            final status = await _getFastCompatibilityStatus(selectedFish, suggestion);
+            print('Checking $selectedFish vs $suggestion: $status');
+            if (status == 'incompatible') {
+              overallStatus = 'incompatible';
+              break;
+            } else if (status == 'conditional' && overallStatus == 'compatible') {
+              overallStatus = 'conditional';
+            }
+          }
+        }
+        
+        // Update status for this suggestion
+        _suggestionCompatibilityStatus[suggestion] = overallStatus;
+        print('Final status for $suggestion: $overallStatus');
+      }
+      
+      // Force UI update after all compatibility checks are done
+      if (mounted) {
+        setState(() {
+          _isCheckingCompatibility = false;
+        });
+      }
+    } catch (e) {
+      print('Error checking suggestion compatibility: $e');
+      if (mounted) {
+        setState(() {
+          _isCheckingCompatibility = false;
+        });
+      }
+    }
+  }
+
+  // Helper methods for compatibility display
+  IconData _getCompatibilityIcon(String level) {
+    switch (level) {
+      case 'compatible':
+        return Icons.check_circle;
+      case 'conditional':
+        return Icons.warning;
+      case 'incompatible':
+      default:
+        return Icons.cancel;
+    }
+  }
+
+  Color _getCompatibilityColor(String level) {
+    switch (level) {
+      case 'compatible':
+        return Colors.green;
+      case 'conditional':
+        return Colors.orange;
+      case 'incompatible':
+      default:
+        return Colors.red;
+    }
+  }
+
+  // Get suggested fish names
+  List<String> _getSuggestedFishNames() {
+    try {
+      final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
+      final savedPredictions = logBookProvider.savedPredictions;
+      final compatibilityResults = logBookProvider.savedCompatibilityResults;
+      
+      // Get unique fish names from saved predictions AND compatibility results
+      final uniqueFishNames = <String>{};
+      
+      // Add fish from saved predictions
+      for (final prediction in savedPredictions) {
+        if (prediction.commonName.isNotEmpty) {
+          uniqueFishNames.add(prediction.commonName);
+        }
+      }
+      
+      // Add fish from saved compatibility results
+      for (final result in compatibilityResults) {
+        for (final fishName in result.selectedFish.keys) {
+          if (fishName.isNotEmpty) {
+            uniqueFishNames.add(fishName);
+          }
+        }
+      }
+      
+      return uniqueFishNames.toList()..sort();
+    } catch (e) {
+      print('Error getting suggested fish names: $e');
+      return [];
+    }
+  }
+
   // Build fish suggestion section for fish selection step
   Widget _buildFishSuggestionSection() {
     return Consumer<LogBookProvider>(
       builder: (context, logBookProvider, child) {
-        // Get unique fish names from saved predictions
-        final uniqueFishNames = <String>{};
-        final savedPredictions = logBookProvider.savedPredictions;
-        
-        if (savedPredictions.isEmpty) {
-          return const SizedBox.shrink();
-        }
-        
-        for (final prediction in savedPredictions) {
-          if (prediction.commonName.isNotEmpty) {
-            uniqueFishNames.add(prediction.commonName);
-          }
-        }
-        final suggestedFish = uniqueFishNames.toList()..sort();
+        final suggestedFish = _getSuggestedFishNames();
         
         if (suggestedFish.isEmpty) {
           return const SizedBox.shrink();
+        }
+        
+        // Filter suggestions based on compatibility if fish are selected
+        List<String> filteredSuggestions = suggestedFish;
+        if (_fishSelections.isNotEmpty) {
+          filteredSuggestions = suggestedFish.where((fish) {
+            final status = _suggestionCompatibilityStatus[fish];
+            print('Fish: $fish, Status: $status, Selected: ${_fishSelections.keys.toList()}');
+            return status != 'incompatible'; // Show compatible and conditional, hide incompatible
+          }).toList();
+          print('Filtered suggestions: ${filteredSuggestions.length} out of ${suggestedFish.length}');
         }
     
         return Container(
@@ -1325,12 +1415,29 @@ class _AddEditTankState extends State<AddEditTank> {
                           color: Color(0xFF006064),
                         ),
                       ),
-                      Text(
-                        '${suggestedFish.length} fish from your collection',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                        ),
+                      Row(
+                        children: [
+                          Text(
+                            _fishSelections.isNotEmpty 
+                              ? '${filteredSuggestions.length} compatible fish'
+                              : '${suggestedFish.length} fish from your saved results',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                          if (_isCheckingCompatibility) ...[
+                            const SizedBox(width: 8),
+                            const SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ],
                   ),
@@ -1344,7 +1451,11 @@ class _AddEditTankState extends State<AddEditTank> {
                   alignment: WrapAlignment.start,
                   spacing: 10,
                   runSpacing: 10,
-                  children: suggestedFish.take(8).map((fishName) {
+                  children: filteredSuggestions.take(8).map((fishName) {
+                    final isSelected = _fishSelections.containsKey(fishName);
+                    final quantity = _fishSelections[fishName] ?? 0;
+                    final compatibilityStatus = _suggestionCompatibilityStatus[fishName] ?? 'compatible';
+                    
                     return GestureDetector(
                       onTap: () {
                         setState(() {
@@ -1356,33 +1467,52 @@ class _AddEditTankState extends State<AddEditTank> {
                         _checkAllFishTankShapeCompatibility();
                         // Update feed recommendations in real-time
                         _analyzeFeedCompatibility();
+                        // Trigger compatibility update when selection changes
+                        _updateSuggestionCompatibility();
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
-                          color: Colors.grey[50],
+                          color: isSelected 
+                              ? const Color(0xFF00BCD4).withOpacity(0.15)
+                              : _getCompatibilityColor(compatibilityStatus).withOpacity(0.1),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                            color: Colors.grey[300]!,
-                            width: 1.5,
+                            color: isSelected 
+                                ? const Color(0xFF00BCD4)
+                                : _getCompatibilityColor(compatibilityStatus).withOpacity(0.3),
+                            width: isSelected ? 2 : 1.5,
                           ),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            // Compatibility indicator
+                            if (_fishSelections.isNotEmpty && !isSelected) ...[
+                              Icon(
+                                _getCompatibilityIcon(compatibilityStatus),
+                                size: 12,
+                                color: _getCompatibilityColor(compatibilityStatus),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
                             Text(
-                              fishName,
-                              style: const TextStyle(
+                              isSelected ? '$fishName (×$quantity)' : fishName,
+                              style: TextStyle(
                                 fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.black87,
+                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                color: isSelected 
+                                    ? const Color(0xFF006064)
+                                    : _fishSelections.isNotEmpty 
+                                        ? _getCompatibilityColor(compatibilityStatus)
+                                        : Colors.black87,
                               ),
                             ),
                             const SizedBox(width: 8),
-                            const Icon(
-                              Icons.add_circle_outline,
+                            Icon(
+                              isSelected ? Icons.check_circle : Icons.add_circle_outline,
                               size: 14,
-                              color: Color(0xFF00BCD4),
+                              color: const Color(0xFF00BCD4),
                             ),
                           ],
                         ),
@@ -1391,7 +1521,7 @@ class _AddEditTankState extends State<AddEditTank> {
                   }).toList(),
                 ),
               ),
-              if (suggestedFish.length > 8) ...[
+              if (filteredSuggestions.length > 8) ...[
                 const SizedBox(height: 12),
                 Center(
                   child: Container(
@@ -1401,7 +1531,7 @@ class _AddEditTankState extends State<AddEditTank> {
                       borderRadius: BorderRadius.circular(15),
                     ),
                     child: Text(
-                      '+${suggestedFish.length - 8} more available',
+                      '+${filteredSuggestions.length - 8} more available',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey[600],
@@ -2312,17 +2442,25 @@ class _AddEditTankState extends State<AddEditTank> {
     _heightController.dispose();
     _fishQuantityControllers.values.forEach((controller) => controller.dispose());
     _feedQuantityControllers.values.forEach((controller) => controller.dispose());
+    _compatibilityDebounceTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Trigger compatibility check when building fish selection step with existing fish
+    if (_currentStep == 2 && _fishSelections.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _updateSuggestionCompatibility();
+      });
+    }
+    
     // Determine the title based on locked mode
     String title;
     if (widget.lockedMode) {
-      if (_currentStep == 1) {
+      if (_currentStep == 2) {
         title = 'Edit Fish Selection';
-      } else if (_currentStep == 2) {
+      } else if (_currentStep == 3) {
         title = 'Edit Feed Inventory';
       } else {
         title = widget.tank != null ? 'Edit Tank' : 'Create New Tank';
@@ -2372,7 +2510,7 @@ class _AddEditTankState extends State<AddEditTank> {
           children: [
             // Current step content
             Expanded(
-              child: _currentStep == 1 
+              child: _currentStep == 2 
                   ? _buildCurrentStepContent() // Fish selection step - no scroll view
                   : SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
@@ -2381,9 +2519,9 @@ class _AddEditTankState extends State<AddEditTank> {
             ),
             
             // Navigation buttons (hide on fish selection step to avoid overflow)
-            if (widget.lockedMode && _currentStep != 1) // Hide bottom Update button when on fish selection step in locked mode
+            if (widget.lockedMode && _currentStep != 2) // Hide bottom Update button when on fish selection step in locked mode
               _buildLockedModeButtons()
-            else if (!widget.lockedMode && _currentStep != 1) // Hide on fish selection step - use AppBar back button instead
+            else if (!widget.lockedMode && _currentStep != 2) // Hide on fish selection step - use AppBar back button instead
               _buildNavigationButtons(),
           ],
         ),
@@ -2396,12 +2534,14 @@ class _AddEditTankState extends State<AddEditTank> {
   Widget _buildCurrentStepContent() {
     switch (_currentStep) {
       case 0:
-        return _buildTankSetupStep();
+        return _buildTankNameStep();
       case 1:
-        return _buildFishSelectionStep();
+        return _buildTankSetupStep();
       case 2:
-        return _buildFeedInventoryStep();
+        return _buildFishSelectionStep();
       case 3:
+        return _buildFeedInventoryStep();
+      case 4:
         return _buildSummaryStep();
       default:
         return Container();
@@ -2488,8 +2628,8 @@ class _AddEditTankState extends State<AddEditTank> {
     }
 
     try {
-      // If editing fish (step 1), recalculate compatibility and feeding recommendations
-      if (_currentStep == 1 && _fishSelections.isNotEmpty) {
+      // If editing fish (step 2), recalculate compatibility and feeding recommendations
+      if (_currentStep == 2 && _fishSelections.isNotEmpty) {
         // Recalculate compatibility
         await _checkCompatibility();
         
@@ -2502,8 +2642,8 @@ class _AddEditTankState extends State<AddEditTank> {
         await _calculateFeedDurations();
       }
       
-      // If editing feeds (step 2), recalculate feed durations
-      if (_currentStep == 2) {
+      // If editing feeds (step 3), recalculate feed durations
+      if (_currentStep == 3) {
         await _calculateFeedDurations();
       }
 
@@ -2548,21 +2688,28 @@ class _AddEditTankState extends State<AddEditTank> {
     }
   }
 
-  Widget _buildTankSetupStep() {
+  Widget _buildTankNameStep() {
     return _buildSection(
-      title: 'Tank Setup',
-      icon: Icons.water_drop,
+      title: 'Tank Name',
+      icon: Icons.label,
       children: [
-        // Template selector (only show when creating new tank)
-        if (widget.tank == null) _buildTemplateSelector(),
-        
-        // Tank Name
+        const Text(
+          'Give your tank a unique name to easily identify it later.',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.black54,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 20),
         TextFormField(
           controller: _nameController,
           decoration: const InputDecoration(
             labelText: 'Tank Name',
+            hintText: 'e.g., My Fish Tank, My Aquarium...',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.label),
+            prefixIcon: Icon(Icons.label, color: Color(0xFF00BCD4)),
+            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           ),
           onChanged: (_) => setState(() {}), // Update UI to enable/disable Next button
           validator: (value) {
@@ -2571,8 +2718,22 @@ class _AddEditTankState extends State<AddEditTank> {
             }
             return null;
           },
+          textCapitalization: TextCapitalization.words,
+          autofocus: widget.tank == null, // Auto-focus for new tanks
         ),
-        const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  Widget _buildTankSetupStep() {
+    return _buildSection(
+      title: 'Tank Setup',
+      icon: Icons.water_drop,
+      children: [
+        // Template selector (only show when creating new tank)
+        if (widget.tank == null) _buildTemplateSelector(),
+        
+        // Removed Tank Name field - now in separate step
 
         // Tank Shape and Unit Selection - Side by Side (75/25)
         Row(
@@ -3049,6 +3210,13 @@ class _AddEditTankState extends State<AddEditTank> {
   }
 
    Widget _buildFishSelectionStep() {
+    // Trigger compatibility check when entering fish selection step with existing fish
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_fishSelections.isNotEmpty) {
+        _updateSuggestionCompatibility();
+      }
+    });
+    
     return Column(
       children: [
         _buildFishSuggestionSection(),
@@ -3067,6 +3235,8 @@ class _AddEditTankState extends State<AddEditTank> {
               _calculateFeedDurations();
               // Update feed recommendations in real-time
               _analyzeFeedCompatibility();
+              // Trigger real-time compatibility checking for suggestions
+              _updateSuggestionCompatibility();
             },
             availableFish: _availableFish,
             onBack: null, // Use AppBar back button instead
@@ -3221,7 +3391,7 @@ class _AddEditTankState extends State<AddEditTank> {
         // Feed Inventory List
         if (_availableFeeds.isNotEmpty) ...[
           Text(
-            'Feed Inventory',
+            'Feed Selection',
             style: const TextStyle(
               fontWeight: FontWeight.bold,
               color: Color(0xFF006064),
@@ -3313,7 +3483,7 @@ class _AddEditTankState extends State<AddEditTank> {
                   Icons.restaurant,
                   color: isCritical ? Colors.red.shade700 : 
                          isLowStock ? Colors.orange.shade700 : const Color(0xFF006064),
-                  size: 20,
+                  size: 18,
                 ),
                 const SizedBox(width: 8),
                             Expanded(
@@ -3321,7 +3491,7 @@ class _AddEditTankState extends State<AddEditTank> {
                                 feedName,
                   style: TextStyle(
                       fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                      fontSize: 14,
                       color: isCritical ? Colors.red.shade700 : 
                              isLowStock ? Colors.orange.shade700 : const Color(0xFF006064),
                     ),

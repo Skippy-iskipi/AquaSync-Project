@@ -302,7 +302,7 @@ class FishSelectionCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '${quantity}x $fishName',
+                    quantity > 1 ? '${quantity}x $fishName' : fishName,
                     style: const TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.normal,

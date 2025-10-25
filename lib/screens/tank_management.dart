@@ -46,7 +46,7 @@ class _TankManagementState extends State<TankManagement> {
           backgroundColor: Colors.white,
           body: Column(
             children: [
-              // Archived toggle button
+              /* // Archived toggle button
               Container(
                 margin: const EdgeInsets.all(16),
                 child: Row(
@@ -93,6 +93,7 @@ class _TankManagementState extends State<TankManagement> {
                   ],
                 ),
               ),
+              */
               // Tank list
               Expanded(
                 child: tanks.isEmpty
@@ -277,9 +278,9 @@ class _TankManagementState extends State<TankManagement> {
                           value: 'archive',
                           child: Row(
                             children: [
-                              Icon(Icons.archive, size: 16, color: Colors.orange),
+                              Icon(Icons.delete, size: 16, color: Colors.red),
                               SizedBox(width: 8),
-                              Text('Archive Tank'),
+                              Text('Delete Tank'),
                             ],
                           ),
                         ),
@@ -392,7 +393,7 @@ class _TankManagementState extends State<TankManagement> {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: () => _navigateToEditTank(context, tank, initialStep: 1, lockedMode: true),
+                        onPressed: () => _navigateToEditTank(context, tank, initialStep: 2, lockedMode: true),
                         style: OutlinedButton.styleFrom(
                           side: BorderSide(color: const Color(0xFF006064).withOpacity(0.4)),
                           foregroundColor: const Color(0xFF006064),
@@ -406,7 +407,7 @@ class _TankManagementState extends State<TankManagement> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: () => _navigateToEditTank(context, tank, initialStep: 2, lockedMode: true),
+                        onPressed: () => _navigateToEditTank(context, tank, initialStep: 3, lockedMode: true),
                         style: OutlinedButton.styleFrom(
                           side: BorderSide(color: const Color(0xFF006064).withOpacity(0.4)),
                           foregroundColor: const Color(0xFF006064),
@@ -769,7 +770,7 @@ class _TankManagementState extends State<TankManagement> {
     // Check if user is authenticated before allowing tank archiving
     final authService = Provider.of<AuthService>(context, listen: false);
     if (!authService.isAuthenticated) {
-      _showAuthRequiredDialog(context, 'Archive Tank', 'You need to be logged in to archive tanks.');
+      _showAuthRequiredDialog(context, 'Delete Tank', 'You need to be logged in to delete tanks.');
       return;
     }
     
@@ -783,9 +784,9 @@ class _TankManagementState extends State<TankManagement> {
         actionsPadding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         title: Row(
           children: const [
-            Icon(Icons.archive_outlined, color: Colors.orange, size: 22),
+            Icon(Icons.delete_outlined, color: Colors.red, size: 22),
             SizedBox(width: 8),
-            Text('Archive Tank'),
+            Text('Delete Tank'),
           ],
         ),
         content: Column(
@@ -793,25 +794,25 @@ class _TankManagementState extends State<TankManagement> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'This will move "${tank.name}" to Archived. You can restore it anytime from the Archived list.',
+              'This will move "${tank.name}" to Deleted.',
               style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.4),
             ),
             const SizedBox(height: 10),
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.08),
+                color: Colors.red.withOpacity(0.08),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                border: Border.all(color: Colors.red.withOpacity(0.3)),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: const [
-                  Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                  Icon(Icons.info_outline, color: Colors.red, size: 18),
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Archived tanks are hidden from your active list but not deleted.',
+                      'Deleted tanks are hidden from your active list.',
                       style: TextStyle(fontSize: 12, color: Colors.black87),
                     ),
                   ),
@@ -844,13 +845,13 @@ class _TankManagementState extends State<TankManagement> {
                 }
               }
             },
-            icon: const Icon(Icons.archive, size: 16),
+            icon: const Icon(Icons.delete, size: 16),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
+              backgroundColor: Colors.red,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            label: const Text('Archive'),
+            label: const Text('Delete'),
           ),
         ],
       ),

@@ -1,5 +1,6 @@
 class FishCalculation {
   final String? id;
+  final String? tankShape;
   final String tankVolume;
   final Map<String, int> fishSelections;
   final Map<String, int> recommendedQuantities;
@@ -19,6 +20,7 @@ class FishCalculation {
 
   FishCalculation({
     this.id,
+    this.tankShape,
     required this.tankVolume,
     required this.fishSelections,
     required this.recommendedQuantities,
@@ -39,6 +41,7 @@ class FishCalculation {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'tank_shape': tankShape,
       'tank_volume': tankVolume,
       'fish_selections': fishSelections,
       'recommended_quantities': recommendedQuantities,
@@ -60,6 +63,7 @@ class FishCalculation {
   factory FishCalculation.fromJson(Map<String, dynamic> json) {
     return FishCalculation(
       id: json['id'],
+      tankShape: json['tank_shape'] ?? json['tankShape'],
       tankVolume: json['tank_volume'] ?? json['tankVolume'],
       fishSelections: Map<String, int>.from(json['fish_selections'] ?? json['fishSelections']),
       recommendedQuantities: Map<String, int>.from(json['recommended_quantities'] ?? json['recommendedQuantities'] ?? {}),

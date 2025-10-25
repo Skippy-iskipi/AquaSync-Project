@@ -514,16 +514,17 @@ async def get_model_status():
 @app.post("/predict", 
     summary="Identify fish species from an image",
     description="""
-    Upload an image to identify the fish species. The API will:
-    1. Use YOLOv8 to detect fish in the image
-    2. Crop the detected fish and classify it using the CNN model
-    3. Return detailed information about the identified species
+    Upload an image to identify the fish species. The API follows this flow:
+    1. Use YOLOv8 to detect if there's a fish in the image and get bounding box
+    2. If no fish detected, use YOLO's general object detection to identify what object is in the image
+    3. If fish detected, crop the fish region and classify it using the CNN model
+    4. Return detailed information about the identified species or detected object
     
     Supported image formats: JPG, JPEG, PNG
     Maximum file size: 5 MB
     This endpoint provides the most accurate identification, including test-time augmentation, confidence calibration, and threshold filtering.
     """,
-    response_description="Fish species identification details with confidence scores"
+    response_description="Fish species identification details with confidence scores, or detected object information if no fish found"
 )
 async def predict(
     file: UploadFile = File(..., description="Image file containing a fish to identify"),
@@ -547,14 +548,124 @@ async def predict(
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image.")
 
     try:
-        # First, use YOLO to detect fish with smaller inference size to reduce memory
+        # Step 1: Use YOLO to detect fish with smaller inference size to reduce memory
+        logger.info("Step 1: Running YOLO fish detection...")
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(
             executor, lambda: yolo_model(image, imgsz=384, device='cpu')
         )
+        logger.info(f"YOLO detection completed. Found {len(results[0].boxes)} objects.")
         
-        # Check if any fish was detected
-        if len(results[0].boxes) == 0:
+        # Check if any fish was detected with sufficient confidence
+        # IMPORTANT: The YOLO model is using COCO classes where:
+        # - class 0 = "person" (NOT fish!)
+        # - class 16 = "dog"
+        # - class 15 = "cat"
+        # - class 8 = "boat" (closest to fish)
+        # We need to check the actual class name, not just confidence
+        FISH_DETECTION_THRESHOLD = 0.5  # Minimum confidence for fish detection
+        fish_detected = False
+        fish_confidence = 0.0
+        
+        if len(results[0].boxes) > 0:
+            # Check if the highest confidence detection is actually a fish
+            boxes = results[0].boxes
+            confidences = boxes.conf.cpu().numpy()
+            best_box_idx = np.argmax(confidences)
+            fish_confidence = float(confidences[best_box_idx])
+            
+            # Get the class ID to verify it's actually a fish
+            class_id = int(boxes[best_box_idx].cls[0].cpu().numpy())
+            logger.info(f"YOLO detected object with class ID: {class_id}, confidence: {fish_confidence:.3f}")
+            
+            # Only consider it a fish if confidence is above threshold
+            # Note: The YOLO model should be trained to detect fish as class 0 or a specific class
+            # For now, we'll use a higher threshold to prevent false positives
+            if fish_confidence >= FISH_DETECTION_THRESHOLD:
+                # Check if this is actually a fish detection
+                # If the YOLO model is trained for fish detection, it should have a specific class for fish
+                # If it's using COCO classes, we need to be more careful
+                coco_classes = [
+                    'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+                    'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
+                    'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
+                    'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
+                    'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+                    'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+                    'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
+                    'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+                    'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator',
+                    'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+                ]
+                
+                if class_id < len(coco_classes):
+                    detected_class = coco_classes[class_id]
+                    logger.info(f"YOLO detected: {detected_class} (class ID: {class_id}), confidence: {fish_confidence:.3f}")
+                    
+                    # Only consider it a fish if it's actually detected as a fish or aquatic animal
+                    # IMPORTANT: class_id == 0 is "person" in COCO classes, NOT fish!
+                    if detected_class in ['fish', 'boat']:  # Only if it's actually fish or boat
+                        fish_detected = True
+                        logger.info(f"Fish detected with confidence: {fish_confidence:.3f} (above threshold {FISH_DETECTION_THRESHOLD})")
+                    else:
+                        logger.info(f"Object detected but not a fish: {detected_class} (class ID: {class_id})")
+                else:
+                    # If class ID is out of range, assume it's a fish if confidence is high enough
+                    fish_detected = True
+                    logger.info(f"Fish detected with confidence: {fish_confidence:.3f} (above threshold {FISH_DETECTION_THRESHOLD})")
+            else:
+                logger.info(f"Low confidence fish detection: {fish_confidence:.3f} (below threshold {FISH_DETECTION_THRESHOLD})")
+        
+        if not fish_detected:
+            logger.info("No fish detected. Step 2: Running general object detection...")
+            # Try to detect what object is in the image using YOLO's general object detection
+            try:
+                # Use YOLO's general object detection to identify what's in the image
+                # Note: This uses the same YOLO model but with different parameters for general detection
+                general_results = await loop.run_in_executor(
+                    executor, lambda: yolo_model(image, imgsz=640, device='cpu')
+                )
+                
+                if len(general_results[0].boxes) > 0:
+                    # Get the most confident detection
+                    general_boxes = general_results[0].boxes
+                    general_confidences = general_boxes.conf.cpu().numpy()
+                    best_general_idx = np.argmax(general_confidences)
+                    best_general_box = general_boxes[best_general_idx]
+                    
+                    # Get the class name from YOLO's COCO classes
+                    class_id = int(best_general_box.cls[0].cpu().numpy())
+                    coco_classes = [
+                        'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+                        'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
+                        'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
+                        'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
+                        'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+                        'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+                        'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
+                        'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+                        'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator',
+                        'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+                    ]
+                    
+                    if class_id < len(coco_classes):
+                        detected_object = coco_classes[class_id]
+                        confidence = float(general_confidences[best_general_idx])
+                        
+                        logger.info(f"General object detection found: {detected_object} (confidence: {confidence:.3f})")
+                        
+                        return JSONResponse(
+                            status_code=400,
+                            content={
+                                "detail": f"No fish detected in the image. This appears to be: {detected_object}",
+                                "has_fish": False,
+                                "predicted_name": detected_object,
+                                "detection_confidence": confidence
+                            }
+                        )
+            except Exception as e:
+                logger.warning(f"Error in general object detection: {e}")
+            
             return JSONResponse(
                 status_code=400,
                 content={
@@ -563,16 +674,19 @@ async def predict(
                 }
             )
 
-        # Get the box with highest confidence
-        boxes = results[0].boxes
-        confidences = boxes.conf.cpu().numpy()
-        best_box_idx = np.argmax(confidences)
+        # Get the box with highest confidence (we already have this from above)
         best_box = boxes[best_box_idx]
         
         # Extract the region with the detected fish
         x1, y1, x2, y2 = map(int, best_box.xyxy[0].cpu().numpy())
         fish_image = image.crop((x1, y1, x2, y2))
         
+        # Log the detection results
+        logger.info(f"Fish bounding box: ({x1}, {y1}) to ({x2}, {y2})")
+        logger.info(f"Cropped fish image size: {fish_image.size}")
+        
+        # Step 2: Classify the detected fish using CNN
+        logger.info("Step 2: Running fish species classification...")
         # Simplified test-time augmentation for better performance
         class_probs = None
         # Disable TTA to reduce memory usage on small instances
@@ -612,7 +726,7 @@ async def predict(
             class_idx = pred_idx.item()
             score = confidence.item()
 
-        logger.info(f"Prediction after test-time augmentation: class={class_idx}, raw confidence={score:.4f}, temperature={temperature}")
+        logger.info(f"Classification completed: class={class_idx}, raw confidence={score:.4f}, temperature={temperature}")
         
         # Release detection intermediates to reduce memory
         try:
@@ -636,13 +750,50 @@ async def predict(
                 } for val, idx in zip(top_values, top_indices)
             ]
             
+            # Try to detect what object is in the image using YOLO's general object detection
+            predicted_name = None
+            try:
+                # Use YOLO's general object detection to identify what's in the image
+                general_results = await loop.run_in_executor(
+                    executor, lambda: yolo_model(image, imgsz=640, device='cpu')
+                )
+                
+                if len(general_results[0].boxes) > 0:
+                    # Get the most confident detection
+                    general_boxes = general_results[0].boxes
+                    general_confidences = general_boxes.conf.cpu().numpy()
+                    best_general_idx = np.argmax(general_confidences)
+                    best_general_box = general_boxes[best_general_idx]
+                    
+                    # Get the class name from YOLO's COCO classes
+                    class_id = int(best_general_box.cls[0].cpu().numpy())
+                    coco_classes = [
+                        'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+                        'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
+                        'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
+                        'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
+                        'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+                        'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+                        'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
+                        'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+                        'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator',
+                        'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+                    ]
+                    
+                    if class_id < len(coco_classes):
+                        predicted_name = coco_classes[class_id]
+                        logger.info(f"General object detection found: {predicted_name} (confidence: {general_confidences[best_general_idx]:.3f})")
+            except Exception as e:
+                logger.warning(f"Error in general object detection: {e}")
+            
             return JSONResponse(
                 status_code=200,
                 content={
                     "has_fish": True,
-                    "detection_confidence": float(confidences[best_box_idx]),
+                    "detection_confidence": float(fish_confidence),
                     "low_confidence": True,
-                    "message": "Low confidence prediction. Consider taking a clearer photo.",
+                    "message": f"This appears to be: {predicted_name or 'unknown object'}" if predicted_name else "Consider taking a clearer photo.",
+                    "predicted_name": predicted_name,
                     "top_predictions": top_predictions
                 }
             )
@@ -679,6 +830,8 @@ async def predict(
             } for val, idx in zip(top_values, top_indices)
         ]
 
+        logger.info(f"✅ Fish identification completed: {match.get('common_name', 'Unknown')} (confidence: {score:.3f})")
+        
         return {
             "has_fish": True,
             "detection_confidence": float(confidences[best_box_idx]),

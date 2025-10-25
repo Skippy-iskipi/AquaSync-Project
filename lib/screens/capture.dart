@@ -21,7 +21,7 @@ import '../widgets/fish_images_grid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../widgets/auth_required_dialog.dart';
 import '../screens/auth_screen.dart';
-import '../services/favorites_service.dart';
+import '../services/database_favorites_service.dart';
 
 // Widget for displaying grouped recommendation fields in an ExpansionTile
 class _RecommendationExpansionGroup extends StatefulWidget {
@@ -169,7 +169,7 @@ class PredictionResultsScreen extends StatefulWidget {
 
 class _PredictionResultsScreenState extends State<PredictionResultsScreen> {
   final ScrollController _scrollController = ScrollController();
-  final FavoritesService _favoritesService = FavoritesService();
+  final DatabaseFavoritesService _databaseFavoritesService = DatabaseFavoritesService();
   bool _isFavorite = false;
   late StreamSubscription _favoritesSubscription;
 
@@ -211,14 +211,47 @@ class _PredictionResultsScreenState extends State<PredictionResultsScreen> {
       double nextProb = double.parse(next.probability.replaceAll('%', ''));
       return currProb > nextProb ? curr : next;
     });
-    _isFavorite = _favoritesService.isFavorite(highestPrediction.commonName);
-    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+    _isFavorite = _databaseFavoritesService.isFavorite(highestPrediction.commonName);
+    _favoritesSubscription = _databaseFavoritesService.favoritesStream.listen((favorites) {
       if (mounted) {
         setState(() {
           _isFavorite = favorites.contains(highestPrediction.commonName);
         });
       }
     });
+  }
+
+  Future<void> _toggleFavorite(String fishName) async {
+    // Check if user is authenticated
+    if (!_databaseFavoritesService.isAuthenticated) {
+      _showSignInRequiredDialog();
+      return;
+    }
+
+    try {
+      await _databaseFavoritesService.toggleFavorite(fishName);
+    } catch (error) {
+      // Show error message to user
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating favorite: $error'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showSignInRequiredDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AuthRequiredDialog(
+        title: 'Sign In Required',
+        message: 'You need to be signed in to save favorites. Sign in to save your favorite fish and access them across all your devices.',
+        actionButtonText: 'Sign In to Save Favorites',
+      ),
+    );
   }
 
   @override
@@ -292,7 +325,7 @@ class _PredictionResultsScreenState extends State<PredictionResultsScreen> {
                   double nextProb = double.parse(next.probability.replaceAll('%', ''));
                   return currProb > nextProb ? curr : next;
                 });
-                _favoritesService.toggleFavorite(highestPrediction.commonName);
+                _toggleFavorite(highestPrediction.commonName);
               },
               tooltip: 'Favorite',
             ),
@@ -1306,7 +1339,23 @@ class CaptureScreenState extends State<CaptureScreen> {
                 _safePop(); // Close scanning dialog first
                 await Future.delayed(const Duration(milliseconds: 200));
                 if (mounted) {
-                  _showSnapTipsDialog(fromCamera, !hasFish ? 'No fish detected' : 'Low confidence: ${(confidence * 100).toStringAsFixed(1)}%');
+                  String message;
+                  if (!hasFish) {
+                    // Check if API detected what the object actually is
+                    if (decodedResponse.containsKey('predicted_name') && decodedResponse['predicted_name'] != null) {
+                      message = 'No fish detected. This appears to be: ${decodedResponse['predicted_name']}';
+                    } else {
+                      message = 'No fish detected';
+                    }
+                  } else {
+                    // Low confidence case - check if we have a predicted name
+                    if (decodedResponse.containsKey('predicted_name') && decodedResponse['predicted_name'] != null) {
+                      message = 'Low confidence fish detection. This appears to be: ${decodedResponse['predicted_name']}';
+                    } else {
+                      message = 'Low confidence: ${(confidence * 100).toStringAsFixed(1)}%';
+                    }
+                  }
+                  _showSnapTipsDialog(fromCamera, message);
                 }
               }
               return; // Stop further processing for this attempt
@@ -1377,7 +1426,10 @@ class CaptureScreenState extends State<CaptureScreen> {
                   await Future.delayed(const Duration(milliseconds: 200));
                   if (mounted) {
                     String message = 'No fish detected';
-                    if (decodedResponse.containsKey('detail')) {
+                    // Check if API detected what the object actually is
+                    if (decodedResponse.containsKey('predicted_name') && decodedResponse['predicted_name'] != null) {
+                      message = 'No fish detected. This appears to be: ${decodedResponse['predicted_name']}';
+                    } else if (decodedResponse.containsKey('detail')) {
                       message = decodedResponse['detail'];
                     }
                     _showSnapTipsDialog(fromCamera, message);
@@ -1422,7 +1474,12 @@ class CaptureScreenState extends State<CaptureScreen> {
             _safePop(); // Close scanning dialog first
             await Future.delayed(const Duration(milliseconds: 200));
             if (mounted) {
-              _showSnapTipsDialog(fromCamera, 'No fish detected');
+              String message = 'No fish detected';
+              // Check if API detected what the object actually is
+              if (decodedResponse.containsKey('predicted_name') && decodedResponse['predicted_name'] != null) {
+                message = 'No fish detected. This appears to be: ${decodedResponse['predicted_name']}';
+              }
+              _showSnapTipsDialog(fromCamera, message);
             }
           }
         } else {

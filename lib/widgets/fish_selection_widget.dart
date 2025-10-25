@@ -5,7 +5,7 @@ import 'fish_info_dialog.dart';
 import 'smart_search_widget.dart';
 import '../screens/capture.dart';
 import '../widgets/custom_notification.dart';
-import '../services/favorites_service.dart';
+import '../services/database_favorites_service.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -64,16 +64,19 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
   bool _isExpanded = false; // Track if container is expanded - start collapsed
   
   // Favorites
-  final FavoritesService _favoritesService = FavoritesService();
+  final DatabaseFavoritesService _databaseFavoritesService = DatabaseFavoritesService();
   Set<String> _favoriteFish = {};
   late StreamSubscription _favoritesSubscription;
+
+  int _previousFishCount = 0;
 
   @override
   void initState() {
     super.initState();
     _filteredFish = widget.availableFish;
+    _previousFishCount = widget.selectedFish.length;
     _loadInitialFavorites();
-    _favoritesSubscription = _favoritesService.favoritesStream.listen((favorites) {
+    _favoritesSubscription = _databaseFavoritesService.favoritesStream.listen((favorites) {
       if (mounted) {
         setState(() {
           _favoriteFish = favorites;
@@ -82,11 +85,27 @@ class _FishSelectionWidgetState extends State<FishSelectionWidget> {
     });
   }
 
+  @override
+  void didUpdateWidget(FishSelectionWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    
+    // If fish were added (count increased), keep container collapsed
+    if (widget.selectedFish.length > _previousFishCount) {
+      setState(() {
+        _containerHeight = 0.08; // Keep collapsed when adding fish
+        _isExpanded = false;
+      });
+    }
+    
+    // Update previous count
+    _previousFishCount = widget.selectedFish.length;
+  }
+
   Future<void> _loadInitialFavorites() async {
-    await _favoritesService.loadFavorites();
+    await _databaseFavoritesService.loadFavorites();
     if (mounted) {
       setState(() {
-        _favoriteFish = _favoritesService.getFavorites();
+        _favoriteFish = _databaseFavoritesService.getFavorites();
       });
     }
   }

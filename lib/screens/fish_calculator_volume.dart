@@ -61,6 +61,12 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
 
   // Suggestions state
   bool _isSuggestionsExpanded = false;
+  
+  // Real-time compatibility filtering
+  Map<String, Map<String, dynamic>> _compatibilityCache = {}; // Cache for fast compatibility lookups
+  Map<String, String> _suggestionCompatibilityStatus = {}; // Track compatibility status for suggestions
+  bool _isCheckingCompatibility = false; // Track if compatibility check is in progress
+  Timer? _compatibilityDebounceTimer; // Debounce timer for compatibility checks
 
   @override
   void initState() {
@@ -70,6 +76,13 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     
     // Add listener to volume controller for real-time compatibility checks
     _volumeController.addListener(_onVolumeChanged);
+    
+    // Trigger compatibility check if there are existing fish selections
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_fishSelections.isNotEmpty) {
+        _updateSuggestionCompatibility();
+      }
+    });
   }
 
   // Preview group compatibility (non-blocking). Sets _isGroupIncompatible for UI button state
@@ -141,6 +154,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   void dispose() {
     _volumeController.removeListener(_onVolumeChanged);
     _volumeChangeTimer?.cancel();
+    _compatibilityDebounceTimer?.cancel();
     _volumeController.dispose();
     _fishController1.dispose();
     super.dispose();
@@ -204,17 +218,29 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     }
   }
 
-  // Get unique fish names from saved predictions for suggestions
+  // Get unique fish names from saved predictions and compatibility results for suggestions
   List<String> _getSuggestedFishNames() {
     try {
       final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
       final savedPredictions = logBookProvider.savedPredictions;
+      final compatibilityResults = logBookProvider.savedCompatibilityResults;
       
-      // Get unique fish names from saved predictions
+      // Get unique fish names from saved predictions AND compatibility results
       final uniqueFishNames = <String>{};
+      
+      // Add fish from saved predictions
       for (final prediction in savedPredictions) {
         if (prediction.commonName.isNotEmpty) {
           uniqueFishNames.add(prediction.commonName);
+        }
+      }
+      
+      // Add fish from saved compatibility results
+      for (final result in compatibilityResults) {
+        for (final fishName in result.selectedFish.keys) {
+          if (fishName.isNotEmpty) {
+            uniqueFishNames.add(fishName);
+          }
         }
       }
       
@@ -322,6 +348,169 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     );
   }
 
+  // Fast compatibility check for real-time filtering
+  Future<String> _getFastCompatibilityStatus(String fish1, String fish2) async {
+    // Create a cache key for this pair
+    final key = [fish1.toLowerCase(), fish2.toLowerCase()]..sort();
+    final cacheKey = key.join('|');
+    
+    // Check cache first
+    if (_compatibilityCache.containsKey(cacheKey)) {
+      return _compatibilityCache[cacheKey]!['status'] as String;
+    }
+    
+    try {
+      // Use a lightweight API call for quick compatibility check
+      final response = await http.post(
+        Uri.parse(ApiConfig.checkGroupEndpoint),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: json.encode({'fish_names': [fish1, fish2]}),
+      ).timeout(const Duration(seconds: 5)); // Short timeout for speed
+
+      if (response.statusCode == 200) {
+        final compatibilityData = json.decode(response.body);
+        final results = compatibilityData['results'] as List? ?? [];
+        
+        String status = 'compatible'; // Default to compatible
+        
+        // Check for any incompatible or conditional results
+        for (var result in results) {
+          final compatibility = result['compatibility'] as String?;
+          if (compatibility == 'Not Compatible') {
+            status = 'incompatible';
+            break;
+          } else if (compatibility == 'Conditional' || compatibility == 'Conditionally Compatible') {
+            status = 'conditional';
+            // Don't break here, continue checking for incompatible
+          }
+        }
+        
+        // Cache the result
+        _compatibilityCache[cacheKey] = {
+          'status': status,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        };
+        
+        return status;
+      }
+    } catch (e) {
+      print('Fast compatibility check failed: $e');
+    }
+    
+    // Default to compatible if check fails
+    return 'compatible';
+  }
+
+  // Check compatibility for all suggestions against selected fish
+  Future<void> _updateSuggestionCompatibility() async {
+    // Cancel previous timer if it exists
+    _compatibilityDebounceTimer?.cancel();
+    
+    // If no fish are selected, clear immediately
+    if (_fishSelections.isEmpty) {
+      await _performCompatibilityCheck();
+      return;
+    }
+    
+    // Debounce the compatibility check by 300ms for selections
+    _compatibilityDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
+      await _performCompatibilityCheck();
+    });
+  }
+  
+  // Perform the actual compatibility check
+  Future<void> _performCompatibilityCheck() async {
+    if (_fishSelections.isEmpty) {
+      setState(() {
+        _suggestionCompatibilityStatus.clear();
+        _isCheckingCompatibility = false;
+      });
+      return;
+    }
+    
+    // Prevent multiple simultaneous checks
+    if (_isCheckingCompatibility) return;
+    
+    setState(() {
+      _isCheckingCompatibility = true;
+    });
+    
+    final selectedFishNames = _fishSelections.keys.toList();
+    final suggestedFish = _getSuggestedFishNames();
+    
+    // Clear previous status
+    _suggestionCompatibilityStatus.clear();
+    
+    try {
+      print('Starting compatibility check for ${selectedFishNames.length} selected fish against ${suggestedFish.length} suggestions');
+      
+      // Update compatibility status for each suggestion
+      for (String suggestion in suggestedFish) {
+        String overallStatus = 'compatible';
+        
+        // Check compatibility with each selected fish
+        for (String selectedFish in selectedFishNames) {
+          if (suggestion != selectedFish) {
+            final status = await _getFastCompatibilityStatus(selectedFish, suggestion);
+            print('Checking $selectedFish vs $suggestion: $status');
+            if (status == 'incompatible') {
+              overallStatus = 'incompatible';
+              break;
+            } else if (status == 'conditional' && overallStatus == 'compatible') {
+              overallStatus = 'conditional';
+            }
+          }
+        }
+        
+        // Update status for this suggestion
+        _suggestionCompatibilityStatus[suggestion] = overallStatus;
+        print('Final status for $suggestion: $overallStatus');
+      }
+      
+      // Force UI update after all compatibility checks are done
+      if (mounted) {
+        setState(() {
+          _isCheckingCompatibility = false;
+        });
+      }
+    } catch (e) {
+      print('Error checking suggestion compatibility: $e');
+      if (mounted) {
+        setState(() {
+          _isCheckingCompatibility = false;
+        });
+      }
+    }
+  }
+
+  // Helper methods for compatibility display
+  IconData _getCompatibilityIcon(String level) {
+    switch (level) {
+      case 'compatible':
+        return Icons.check_circle;
+      case 'conditional':
+        return Icons.warning;
+      case 'incompatible':
+      default:
+        return Icons.cancel;
+    }
+  }
+
+  Color _getCompatibilityColor(String level) {
+    switch (level) {
+      case 'compatible':
+        return Colors.green;
+      case 'conditional':
+        return Colors.orange;
+      case 'incompatible':
+      default:
+        return Colors.red;
+    }
+  }
+
   // Build suggestion section widget
   Widget _buildSuggestionSection() {
     return Consumer<LogBookProvider>(
@@ -330,6 +519,17 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
         
         if (suggestedFish.isEmpty) {
           return const SizedBox.shrink();
+        }
+        
+        // Filter suggestions based on compatibility if fish are selected
+        List<String> filteredSuggestions = suggestedFish;
+        if (_fishSelections.isNotEmpty) {
+          filteredSuggestions = suggestedFish.where((fish) {
+            final status = _suggestionCompatibilityStatus[fish];
+            print('Fish: $fish, Status: $status, Selected: ${_fishSelections.keys.toList()}');
+            return status != 'incompatible'; // Show compatible and conditional, hide incompatible
+          }).toList();
+          print('Filtered suggestions: ${filteredSuggestions.length} out of ${suggestedFish.length}');
         }
         
         return Container(
@@ -386,12 +586,29 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                   color: Color(0xFF006064),
                                 ),
                               ),
-                              Text(
-                                '${suggestedFish.length} fish from your collection',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey[600],
-                                ),
+                              Row(
+                                children: [
+                                  Text(
+                                    _fishSelections.isNotEmpty 
+                                      ? '${filteredSuggestions.length} compatible fish'
+                                      : '${suggestedFish.length} fish from your saved results',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                  if (_isCheckingCompatibility) ...[
+                                    const SizedBox(width: 8),
+                                    const SizedBox(
+                                      width: 12,
+                                      height: 12,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00BCD4)),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ],
                           ),
@@ -428,40 +645,77 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                   alignment: WrapAlignment.start,
                                   spacing: 10,
                                   runSpacing: 10,
-                                  children: suggestedFish.take(8).map((fishName) {
+                                  children: filteredSuggestions.take(8).map((fishName) {
+                                    final isSelected = _fishSelections.containsKey(fishName);
+                                    final compatibilityStatus = _suggestionCompatibilityStatus[fishName] ?? 'compatible';
+                                    
                                     return GestureDetector(
                                       onTap: () {
+                                        // Don't add if fish already exists
+                                        if (_fishSelections.containsKey(fishName)) {
+                                          showCustomNotification(
+                                            context,
+                                            '$fishName is already added',
+                                            isError: true,
+                                          );
+                                          return;
+                                        }
+                                        
                                         setState(() {
-                                          // Add fish to selections
-                                          _fishSelections[fishName] = (_fishSelections[fishName] ?? 0) + 1;
+                                          // Add fish to selections with quantity always 1
+                                          _fishSelections[fishName] = 1;
                                         });
+                                        
+                                        // Check tank shape compatibility and update preview
+                                        _checkFishTankShapeCompatibility(fishName);
+                                        _checkAllFishTankShapeCompatibility();
+                                        _updateGroupCompatibilityPreview();
+                                        // Trigger compatibility update when selection changes
+                                        _updateSuggestionCompatibility();
                                       },
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                                         decoration: BoxDecoration(
-                                          color: Colors.grey[50],
+                                          color: isSelected 
+                                              ? const Color(0xFF00BCD4).withOpacity(0.15)
+                                              : _getCompatibilityColor(compatibilityStatus).withOpacity(0.1),
                                           borderRadius: BorderRadius.circular(6),
                                           border: Border.all(
-                                            color: Colors.grey[300]!,
-                                            width: 1.5,
+                                            color: isSelected 
+                                                ? const Color(0xFF00BCD4)
+                                                : _getCompatibilityColor(compatibilityStatus).withOpacity(0.3),
+                                            width: isSelected ? 2 : 1.5,
                                           ),
                                         ),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
+                                            // Compatibility indicator
+                                            if (_fishSelections.isNotEmpty && !isSelected) ...[
+                                              Icon(
+                                                _getCompatibilityIcon(compatibilityStatus),
+                                                size: 12,
+                                                color: _getCompatibilityColor(compatibilityStatus),
+                                              ),
+                                              const SizedBox(width: 6),
+                                            ],
                                             Text(
                                               fishName,
-                                              style: const TextStyle(
+                                              style: TextStyle(
                                                 fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                                color: Colors.black87,
+                                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                                color: isSelected 
+                                                    ? const Color(0xFF006064)
+                                                    : _fishSelections.isNotEmpty 
+                                                        ? _getCompatibilityColor(compatibilityStatus)
+                                                        : Colors.black87,
                                               ),
                                             ),
                                             const SizedBox(width: 8),
-                                            const Icon(
-                                              Icons.add_circle_outline,
+                                            Icon(
+                                              isSelected ? Icons.check_circle : Icons.add_circle_outline,
                                               size: 14,
-                                              color: Color(0xFF00BCD4),
+                                              color: const Color(0xFF00BCD4),
                                             ),
                                           ],
                                         ),
@@ -472,7 +726,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                               ),
                               
                               // Show more indicator if needed
-                              if (suggestedFish.length > 8) ...[
+                              if (filteredSuggestions.length > 8) ...[
                                 const SizedBox(height: 12),
                                 Center(
                                   child: Container(
@@ -482,7 +736,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                                       borderRadius: BorderRadius.circular(15),
                                     ),
                                     child: Text(
-                                      '+${suggestedFish.length - 8} more available',
+                                      '+${filteredSuggestions.length - 8} more available',
                                       style: TextStyle(
                                         fontSize: 12,
                                         color: Colors.grey[600],
@@ -536,13 +790,19 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
   void _addFishByName(String fishName) {
     if (!_fishSpecies.contains(fishName)) return;
     
+    // Don't add if fish already exists
+    if (_fishSelections.containsKey(fishName)) {
+      showCustomNotification(
+        context,
+        '$fishName is already added',
+        isError: true,
+      );
+      return;
+    }
+    
     setState(() {
-      // Add new fish
-      if (_fishSelections.containsKey(fishName)) {
-        _fishSelections[fishName] = _fishSelections[fishName]! + 1;
-      } else {
-        _fishSelections[fishName] = 1;
-      }
+      // Add new fish with quantity always 1
+      _fishSelections[fishName] = 1;
       
       // Clear search query to allow adding more fish
       _searchQueries['fish'] = '';
@@ -555,6 +815,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     _checkAllFishTankShapeCompatibility();
     // Update group compatibility preview
     _updateGroupCompatibilityPreview();
+    // Trigger compatibility update when selection changes
+    _updateSuggestionCompatibility();
   }
 
 
@@ -573,6 +835,9 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
       _isGroupIncompatible = false;
       _groupIncompatibilityPairs = [];
     });
+    
+    // Trigger compatibility update when fish are cleared
+    _updateSuggestionCompatibility();
   }
 
   Future<void> _saveCalculation() async {
@@ -660,7 +925,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
     final logBookProvider = Provider.of<LogBookProvider>(context, listen: false);
     await logBookProvider.addFishVolumeCalculation(calculation);
 
-    showCustomNotification(context, 'Fish volume calculation saved to history');
+    showCustomNotification(context, 'Fish count calculation saved');
     
     // Clear all inputs and reset state
     setState(() {
@@ -1633,6 +1898,8 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
                               _checkAllFishTankShapeCompatibility();
                               // Update group compatibility preview (re-enable Calculate when <2 fish)
                               _updateGroupCompatibilityPreview();
+                              // Trigger compatibility update when fish is removed
+                              _updateSuggestionCompatibility();
                             },
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
@@ -4974,7 +5241,7 @@ class _FishCalculatorVolumeState extends State<FishCalculatorVolume> {
           ),
           const SizedBox(height: 30),
           const Text(
-            'Calculating Tank Volume...',
+            'Calculating Fish Count...',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,

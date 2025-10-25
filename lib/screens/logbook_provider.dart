@@ -486,6 +486,7 @@ class LogBookProvider with ChangeNotifier {
     try {
       final response = await _supabase.from('fish_calculations').insert({
         'user_id': user.id,
+        'tank_shape': calculation.tankShape,
         'tank_volume': calculation.tankVolume,
         'temperature_range': calculation.temperatureRange,
         'ph_range': calculation.phRange,
